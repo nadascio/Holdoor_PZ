@@ -666,7 +666,7 @@ function HoldoorServer._reAggroZombies()
                             for i = 0, sz - 1 do
                                 local ok_g, obj = pcall(function() return objs:get(i) end)
                                 if ok_g and obj and instanceof(obj, "IsoZombie") then
-                                    -- Nuevo objetivo aleatorio cerca de la base
+                                    -- Path a punto aleatorio cerca de la base (no directo a la forja)
                                     local angD = ZombRand(360)
                                     local dD   = ZombRand(destRadio + 1)
                                     local tx   = math.floor(bx + math.cos(math.rad(angD)) * dD)
@@ -684,6 +684,73 @@ function HoldoorServer._reAggroZombies()
 
     if repathed > 0 then
         print("[Holdoor] Re-aggro: " .. repathed .. " zombies re-pathed hacia la base")
+    end
+end
+
+-- ─────────────────────────────────────────────
+-- COLCHÓN DE ZOMBIS: garantiza una densidad mínima durante la oleada
+-- Si los zombis vivos cerca de la base bajan del umbral Y todavía hay zombis
+-- en cola, spawnea refuerzos inmediatos. Evita que el user tenga que ir
+-- a buscar zombis lejanos en medio de una oleada.
+-- ─────────────────────────────────────────────
+HoldoorServer._colchonMinimo = 5  -- zombis vivos minimos en el radio durante fase activa
+
+function HoldoorServer._asegurarColchon()
+    local estado = HoldoorServer.estado
+    if estado.fase ~= "activa" then return end
+
+    -- Si no quedan zombis pendientes en cola, no spawnear refuerzo
+    local pendientes = 0
+    for _, t in ipairs(estado.encoladosTiers or {}) do pendientes = pendientes + t.count end
+    if pendientes == 0 then return end
+
+    -- Contar zombis vivos en el radio cerca de la base
+    local bx, by, bz = estado.baseX, estado.baseY, estado.baseZ
+    local radio = math.floor((estado.config.radioSpawn or 20) + 10)
+
+    local ok_cell, cell = pcall(getCell)
+    if not ok_cell or not cell then return end
+
+    local vivos = 0
+    for dx = -radio, radio do
+        for dy = -radio, radio do
+            if dx * dx + dy * dy <= radio * radio then
+                local sq
+                pcall(function() sq = cell:getGridSquare(bx + dx, by + dy, bz) end)
+                if sq then
+                    local objs
+                    pcall(function() objs = sq:getMovingObjects() end)
+                    if objs then
+                        local sz = 0
+                        pcall(function() sz = objs:size() end)
+                        for i = 0, sz - 1 do
+                            local obj
+                            pcall(function() obj = objs:get(i) end)
+                            if obj and instanceof(obj, "IsoZombie") then
+                                local muerto = false
+                                pcall(function() muerto = obj:isDead() end)
+                                if not muerto then vivos = vivos + 1 end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Si los vivos bajaron del colchon minimo, forzar la proxima tanda YA
+    -- (en vez de esperar al timing normal de tandaIntervalSec)
+    local minimo = HoldoorServer._colchonMinimo or 5
+    if vivos < minimo then
+        local faltan = math.min(minimo - vivos, pendientes)
+        print(string.format("[Holdoor] Colchon: solo %d vivos (min %d), forzando refuerzo de %d", vivos, minimo, faltan))
+        -- Adelantar el timing de la proxima tanda
+        estado.proximaTandaSec = os.time() - 1
+        -- Reducir el tamano de tanda al refuerzo necesario (temporal)
+        local origTamanoTanda = estado.tamanoTanda
+        estado.tamanoTanda = faltan
+        HoldoorServer._spawnTanda()
+        estado.tamanoTanda = origTamanoTanda
     end
 end
 
@@ -755,6 +822,13 @@ function HoldoorServer._oleadaCompletada()
         return
     end
 
+    -- Limpiar zombis vivos del radio antes de pausa: evita que queden vagando
+    -- y obliguen al user a salir a buscarlos durante el descanso.
+    local eliminadosFinOleada = HoldoorServer._limpiarZona()
+    if eliminadosFinOleada > 0 then
+        print("[Holdoor] Fin de oleada: " .. eliminadosFinOleada .. " zombis residuales limpiados")
+    end
+
     estado.fase        = "pausa"
     estado.pausaFinSec = os.time() + PAUSA_SEGS
 
@@ -795,25 +869,26 @@ function HoldoorServer.onTick()
         end
 
         -- HP polling cada 1s
+        -- HP del Trono = SOLO el HP de la pieza central (forja).
+        -- Las barricadas se rompen individualmente pero NO afectan al HP del Trono.
         if ahora >= (estado.ultimoHPTick or 0) + 1 then
             estado.ultimoHPTick = ahora
-            local totalHp = 0
-            for _, p in ipairs(estado.trono.piezas) do
-                local hp = 0
-                pcall(function() hp = p.obj:getHealth() end)
-                totalHp = totalHp + math.max(0, hp)
+            local centro = estado.trono.piezaCentral
+            local hpCentro = 0
+            if centro and centro.obj then
+                pcall(function() hpCentro = centro.obj:getHealth() end)
+                hpCentro = math.max(0, hpCentro)
             end
             local maxHp = estado.trono.maxHP or 1500
-            if totalHp ~= estado.tronoHP or maxHp ~= estado.tronoMaxHP then
-                -- Warnings: avisar al pasar umbrales hacia abajo
-                HoldoorServer._checkWarningsHP(estado.tronoHP or maxHp, totalHp, maxHp)
+            if hpCentro ~= estado.tronoHP or maxHp ~= estado.tronoMaxHP then
+                HoldoorServer._checkWarningsHP(estado.tronoHP or maxHp, hpCentro, maxHp)
 
-                estado.tronoHP = totalHp
+                estado.tronoHP = hpCentro
                 estado.tronoMaxHP = maxHp
-                HoldoorServer.notificarTodos("tronoHP", { hp = totalHp, maxHp = maxHp })
+                HoldoorServer.notificarTodos("tronoHP", { hp = hpCentro, maxHp = maxHp })
 
-                -- Game Over si modo defensa activado y trono cayo
-                if totalHp <= 0 and estado.config.modoDefensa and estado.fase ~= "derrotado" then
+                -- Game Over: forja a 0 = Trono caido
+                if hpCentro <= 0 and estado.config.modoDefensa and estado.fase ~= "derrotado" then
                     HoldoorServer._tronoCayo()
                 end
             end
@@ -863,6 +938,13 @@ function HoldoorServer.onTick()
         if ahora >= (estado.ultimoAggroSec or 0) + 12 then
             estado.ultimoAggroSec = ahora
             HoldoorServer._reAggroZombies()
+        end
+
+        -- Colchón de densidad cada 3s: si los zombis vivos cerca bajan demasiado
+        -- y todavía hay encolados, forzamos un refuerzo inmediato.
+        if ahora >= (estado.ultimoColchonSec or 0) + 3 then
+            estado.ultimoColchonSec = ahora
+            HoldoorServer._asegurarColchon()
         end
 
     elseif estado.fase == "pausa" then
@@ -1022,58 +1104,152 @@ end
 -- ─────────────────────────────────────────────
 
 -- Sprites candidatos para las piezas del Trono.
--- PRIORIDAD: sillas/sillones (look "asiento real"), luego muebles, luego fallbacks.
--- Cada sprite tiene 4 rotaciones (índices consecutivos). Probamos varios índices base
--- y los multiplos de 4 para cubrir las 4 caras de cada mueble.
+-- IMPORTANTE: en B42, los sprites INDOOR requieren estar dentro de un IsoRoom para
+-- renderizar bien. Por eso usamos SOLO outdoor / furniture exterior / crafted / fences.
 HoldoorServer._tronoSprites = {
     -- ────────────────────────────────────────
-    -- SILLONES grandes (mejor look para trono)
+    -- SILLAS / ASIENTOS OUTDOOR (mejor look para trono)
     -- ────────────────────────────────────────
-    "furniture_seating_indoor_couches_01_0",
-    "furniture_seating_indoor_couches_01_4",
-    "furniture_seating_indoor_couches_01_8",
-    "furniture_seating_indoor_couches_01_12",
-    "furniture_seating_indoor_couches_01_16",
-    "furniture_seating_indoor_couches_01_20",
-    "furniture_seating_indoor_couches_01_24",
-    "furniture_seating_indoor_couches_01_28",
-    "furniture_seating_indoor_couches_01_32",
-    "furniture_seating_indoor_couches_01_36",
-    "furniture_seating_indoor_couches_01_40",
-    "furniture_seating_indoor_couches_01_44",
-    "furniture_seating_indoor_couches_01_48",
-    "furniture_seating_indoor_couches_01_52",
-    -- ────────────────────────────────────────
-    -- SILLAS / asientos individuales indoor
-    -- ────────────────────────────────────────
-    "furniture_seating_indoor_chairs_01_0",
-    "furniture_seating_indoor_chairs_01_4",
-    "furniture_seating_indoor_chairs_01_8",
-    "furniture_seating_indoor_chairs_01_12",
-    "furniture_seating_indoor_chairs_01_16",
-    "furniture_seating_indoor_chairs_01_20",
-    "furniture_seating_indoor_chairs_01_24",
-    "furniture_seating_indoor_chairs_01_28",
-    "furniture_seating_indoor_chairs_01_32",
-    -- Sillones reclinables / armchairs
-    "furniture_seating_indoor_chairs_02_0",
-    "furniture_seating_indoor_chairs_02_4",
-    "furniture_seating_indoor_chairs_02_8",
-    "furniture_seating_indoor_chairs_02_12",
-    "furniture_seating_indoor_chairs_02_16",
-    -- ────────────────────────────────────────
-    -- Fallback de la lista vieja (compat)
-    -- ────────────────────────────────────────
-    "furniture_seating_indoor_general_01_8",
-    "furniture_seating_indoor_general_01_16",
-    "furniture_seating_indoor_general_01_24",
+    "furniture_seating_outdoor_01_0",
+    "furniture_seating_outdoor_01_4",
     "furniture_seating_outdoor_01_8",
+    "furniture_seating_outdoor_01_12",
     "furniture_seating_outdoor_01_16",
+    "furniture_seating_outdoor_01_20",
+    "furniture_seating_outdoor_01_24",
+    "furniture_seating_outdoor_01_28",
+    "furniture_seating_outdoor_01_32",
+    "furniture_seating_outdoor_01_36",
+    "furniture_seating_outdoor_01_40",
     -- ────────────────────────────────────────
-    -- Garantizado visible (último recurso)
+    -- FURNITURE OUTDOOR GENERAL
     -- ────────────────────────────────────────
+    "furniture_outdoor_01_0",
+    "furniture_outdoor_01_4",
+    "furniture_outdoor_01_8",
+    "furniture_outdoor_01_12",
+    "furniture_outdoor_01_16",
+    "furniture_outdoor_01_20",
+    "furniture_outdoor_01_24",
+    "furniture_outdoor_01_28",
+    "furniture_outdoor_general_01_0",
+    "furniture_outdoor_general_01_4",
+    "furniture_outdoor_general_01_8",
+    "furniture_outdoor_general_01_12",
+    -- ────────────────────────────────────────
+    -- CONSTRUCTED OBJECTS (sandbags, barricadas, cosas crafteadas grandes)
+    -- ────────────────────────────────────────
+    "constructedobjects_01_0",
+    "constructedobjects_01_4",
+    "constructedobjects_01_8",
+    "constructedobjects_01_12",
+    "constructedobjects_01_16",
+    "constructedobjects_01_20",
+    "constructedobjects_01_24",
+    "constructedobjects_01_28",
+    "constructedobjects_01_32",
+    -- ────────────────────────────────────────
+    -- CRAFTED (hogueras, items construidos a mano)
+    -- ────────────────────────────────────────
+    "crafted_01_0",
+    "crafted_01_4",
+    "crafted_01_8",
+    "crafted_01_12",
+    "crafted_01_16",
+    "crafted_01_20",
+    "crafted_01_24",
+    "crafted_01_28",
+    "crafted_01_32",
+    "crafted_01_40",
+    "crafted_01_48",
+    "crafted_01_56",
+    -- ────────────────────────────────────────
+    -- CAMPING (campfires, carpas, equipo exterior)
+    -- ────────────────────────────────────────
+    "camping_01_0",
+    "camping_01_4",
+    "camping_01_8",
+    "camping_01_12",
+    "camping_01_16",
+    "camping_01_20",
+    "camping_01_24",
+    "camping_01_28",
+    "camping_01_32",
+    -- ────────────────────────────────────────
+    -- INDUSTRIAL OUTDOOR (cosas grandes, metálicas, imponentes)
+    -- ────────────────────────────────────────
+    "industry_railroad_01_0",
+    "industry_railroad_01_4",
+    "industry_railroad_01_8",
+    "industry_railroad_01_12",
+    "industry_railroad_01_16",
+    "industry_railroad_01_20",
+    "industry_railroad_01_24",
+    "industry_railroad_01_28",
+    "industry_railroad_01_32",
+    "industry_01_0",
+    "industry_01_4",
+    "industry_01_8",
+    "industry_01_12",
+    "industry_01_16",
+    "industry_01_20",
+    "industry_01_24",
+    -- ────────────────────────────────────────
+    -- LIGHTING OUTDOOR (postes, faroles — verticales imponentes)
+    -- ────────────────────────────────────────
+    "lighting_outdoor_01_0",
+    "lighting_outdoor_01_4",
     "lighting_outdoor_01_8",
+    "lighting_outdoor_01_12",
     "lighting_outdoor_01_16",
+    "lighting_outdoor_01_20",
+    "lighting_outdoor_01_24",
+    "lighting_outdoor_01_28",
+    -- ────────────────────────────────────────
+    -- VEHICLES / DECORATIVO (partes de auto, estatuas)
+    -- ────────────────────────────────────────
+    "vehicles_01_0",
+    "vehicles_01_4",
+    "vehicles_01_8",
+    "vehicles_01_12",
+    "recreational_sports_01_0",
+    "recreational_sports_01_4",
+    "recreational_sports_01_8",
+    "recreational_sports_01_12",
+    -- ────────────────────────────────────────
+    -- WALLS / FENCES (paredes exteriores, cercas — para "trono de cien espadas")
+    -- ────────────────────────────────────────
+    "walls_exterior_brick_01_0",
+    "walls_exterior_brick_01_4",
+    "walls_exterior_brick_01_8",
+    "walls_exterior_brick_01_12",
+    "walls_exterior_wooden_01_0",
+    "walls_exterior_wooden_01_4",
+    "walls_exterior_wooden_01_8",
+    "fencing_01_0",
+    "fencing_01_4",
+    "fencing_01_8",
+    "fencing_01_12",
+    "fencing_01_16",
+    "fencing_01_20",
+    "fencing_01_24",
+    "fencing_01_28",
+    "fencing_01_32",
+    -- ────────────────────────────────────────
+    -- CARPENTRY (cosas construidas con carpinteria — fallback ultimo)
+    -- ────────────────────────────────────────
+    "carpentry_01_0",
+    "carpentry_01_4",
+    "carpentry_01_8",
+    "carpentry_01_12",
+    "carpentry_01_16",
+    "carpentry_02_0",
+    "carpentry_02_8",
+    "carpentry_02_16",
+    "carpentry_02_24",
+    "carpentry_02_32",
+    "carpentry_02_40",
+    "carpentry_02_48",
     "carpentry_02_56",
     "carpentry_02_64",
 }
@@ -1126,6 +1302,702 @@ function HoldoorServer.testSprite(nombreSprite)
         print("[Holdoor] testSprite: fallo al plantar con '" .. nombreSprite .. "'")
     end
     return ok
+end
+
+-- ─────────────────────────────────────────────
+-- PRESETS de TRONO COMPUESTO (para el boton "DEJAR TRONO COMPUESTO AQUI")
+-- Cada click avanza al siguiente preset, ciclando.
+-- Si un sprite no existe en este build, el plantado va a fallar — en ese caso
+-- ajustar el preset o probar manualmente con testTronoCompuesto.
+-- ─────────────────────────────────────────────
+-- ─────────────────────────────────────────────
+-- MODO BUILDER MANUAL: el user planta tile por tile y despues exporta su diseño.
+--
+-- Workflow:
+--   1) Pararse donde queres la PRIMER pieza del Trono.
+--   2) Tipear en Lua Command Line:
+--        HoldoorServer.dejarTile("furniture_seating_outdoor_01_32")
+--      Esto planta UN solo tile en tu posicion con ese sprite.
+--   3) Avanzar 1 tile (o donde quieras la siguiente pieza).
+--   4) Tipear:
+--        HoldoorServer.dejarTile("carpentry_02_40")
+--   5) Repetir cuantas piezas quieras (no hay limite, ni tamaño fijo, ni forma fija).
+--   6) Cuando termines, tipear:
+--        HoldoorServer.dumpTrono()
+--      Esto imprime en consola el codigo Lua exacto de tu Trono, que copio
+--      al preset para usarlo de default.
+--   7) (Opcional) LIMPIAR DEMOS para borrar lo construido.
+-- ─────────────────────────────────────────────
+
+function HoldoorServer.dejarTile(nombreSprite)
+    if type(nombreSprite) ~= "string" or nombreSprite == "" then
+        print("[Holdoor] dejarTile: pasame el nombre del sprite como string")
+        return false
+    end
+
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then
+        print("[Holdoor] dejarTile: no encontre al player local")
+        return false
+    end
+
+    local x, y, z
+    pcall(function()
+        x = math.floor(p:getX())
+        y = math.floor(p:getY())
+        z = math.floor(p:getZ())
+    end)
+    if not x then return false end
+
+    local cell
+    pcall(function() cell = getCell() end)
+    if not cell then return false end
+
+    local function spriteExiste(name)
+        local s
+        pcall(function() s = IsoSpriteManager.instance:getSprite(name) end)
+        if s then return s end
+        pcall(function() s = getSprite(name) end)
+        if s then return s end
+        return nil
+    end
+    local spriteObj = spriteExiste(nombreSprite)
+    if not spriteObj then
+        print("[Holdoor] dejarTile: sprite '" .. nombreSprite .. "' NO EXISTE en este build")
+        return false
+    end
+
+    local sq
+    pcall(function() sq = cell:getGridSquare(x, y, z) end)
+    if not sq then
+        print("[Holdoor] dejarTile: no hay GridSquare en (" .. x .. "," .. y .. "," .. z .. ")")
+        return false
+    end
+
+    local HP = 99999
+    local cfg = {
+        name                = "Builder: " .. nombreSprite,
+        thumpDmg            = 0,
+        health              = HP,
+        maxHealth           = HP,
+        canBarricade        = false,
+        isBlockAllTheSquare = true,
+        isCorner            = false,
+        isThumpable         = false,
+        canPassThrough      = false,
+        Material            = "Metal",
+        MaterialEng         = "Metal",
+    }
+
+    local thumpable
+    pcall(function() thumpable = IsoThumpable.new(cell, sq, nombreSprite, false, cfg) end)
+    if not thumpable then
+        pcall(function() thumpable = IsoThumpable:new(cell, sq, nombreSprite, false, cfg) end)
+    end
+    if not thumpable then
+        print("[Holdoor] dejarTile: no pude crear IsoThumpable con sprite '" .. nombreSprite .. "'")
+        return false
+    end
+
+    pcall(function() thumpable:setSprite(spriteObj) end)
+    local added = false
+    pcall(function() sq:AddSpecialObject(thumpable); added = true end)
+    if not added then pcall(function() sq:AddObject(thumpable); added = true end) end
+    if not added then return false end
+
+    pcall(function() thumpable:setMaxHealth(HP) end)
+    pcall(function() thumpable:setHealth(HP) end)
+    pcall(function() sq:RecalcAllWithNeighbours(true) end)
+
+    -- Registrar como construccion manual (separado de los presets compuestos)
+    HoldoorServer._builderTiles = HoldoorServer._builderTiles or {}
+    table.insert(HoldoorServer._builderTiles, {
+        sprite = nombreSprite, x = x, y = y, z = z, obj = thumpable,
+    })
+
+    -- Tambien agregar a galeriaTest para que LIMPIAR DEMOS lo borre
+    HoldoorServer.estado.galeriaTest = HoldoorServer.estado.galeriaTest or {}
+    table.insert(HoldoorServer.estado.galeriaTest, {
+        idx = -1, sprite = "BUILDER: " .. nombreSprite,
+        piezas = { { obj = thumpable, x = x, y = y, z = z } },
+        x = x, y = y, z = z,
+    })
+
+    print(string.format("[Holdoor] BUILDER tile #%d  pos=(%d,%d)  sprite='%s'",
+        #HoldoorServer._builderTiles, x, y, nombreSprite))
+    return true
+end
+
+-- Mata todos los zombis dentro de un radio (default 25 tiles) alrededor del player.
+-- Util cuando estas construyendo/testeando y los zombis joden.
+-- Uso:  HoldoorServer.matarZombiesCerca()       -- radio 25
+--       HoldoorServer.matarZombiesCerca(50)     -- radio 50
+function HoldoorServer.matarZombiesCerca(radio)
+    radio = radio or 25
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then
+        print("[Holdoor] matarZombiesCerca: no encontre al player local")
+        return 0
+    end
+
+    local px = math.floor(p:getX())
+    local py = math.floor(p:getY())
+    local cell
+    pcall(function() cell = getCell() end)
+    if not cell then return 0 end
+
+    local zombies
+    pcall(function() zombies = cell:getZombieList() end)
+    if not zombies then
+        print("[Holdoor] matarZombiesCerca: cell sin zombieList")
+        return 0
+    end
+
+    local n = 0
+    pcall(function() n = zombies:size() end)
+
+    local r2 = radio * radio
+    local matados = 0
+    for i = n - 1, 0, -1 do
+        local z
+        pcall(function() z = zombies:get(i) end)
+        if z then
+            local zx, zy
+            pcall(function() zx = z:getX(); zy = z:getY() end)
+            if zx and zy then
+                local dx = zx - px
+                local dy = zy - py
+                if (dx*dx + dy*dy) <= r2 then
+                    pcall(function() z:setHealth(0) end)
+                    pcall(function() z:Kill(p) end)  -- fallback por si setHealth no alcanza
+                    matados = matados + 1
+                end
+            end
+        end
+    end
+    print(string.format("[Holdoor] matarZombiesCerca: %d zombis muertos en radio %d", matados, radio))
+    return matados
+end
+
+-- APILAR un sprite en TU POSICION ACTUAL sin bloquear el tile.
+-- Permite tener varios sprites en el MISMO (x, y, z), uno renderizado sobre el otro.
+-- A diferencia de dejarTile (que usa isBlockAllTheSquare=true), esta version deja
+-- el square "abierto" para que se pueda agregar otro objeto despues.
+-- Uso:  HoldoorServer.apilarTile("crates_01_8")
+function HoldoorServer.apilarTile(nombreSprite)
+    if type(nombreSprite) ~= "string" or nombreSprite == "" then
+        print("[Holdoor] apilarTile: pasame el nombre del sprite como string")
+        return false
+    end
+
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then return false end
+
+    local x, y, z
+    pcall(function()
+        x = math.floor(p:getX())
+        y = math.floor(p:getY())
+        z = math.floor(p:getZ())
+    end)
+    if not x then return false end
+
+    local cell
+    pcall(function() cell = getCell() end)
+    if not cell then return false end
+
+    local spriteObj
+    pcall(function() spriteObj = IsoSpriteManager.instance:getSprite(nombreSprite) end)
+    if not spriteObj then
+        pcall(function() spriteObj = getSprite(nombreSprite) end)
+    end
+    if not spriteObj then
+        print("[Holdoor] apilarTile: sprite '" .. nombreSprite .. "' NO EXISTE")
+        return false
+    end
+
+    local sq
+    pcall(function() sq = cell:getGridSquare(x, y, z) end)
+    if not sq then return false end
+
+    local HP = 99999
+    local cfg = {
+        name                = "Apilado: " .. nombreSprite,
+        thumpDmg            = 0,
+        health              = HP,
+        maxHealth           = HP,
+        canBarricade        = false,
+        isBlockAllTheSquare = false,   -- CLAVE: permitir mas objetos en este square
+        isCorner            = false,
+        isThumpable         = false,
+        canPassThrough      = true,    -- no bloquear movimiento del player
+        Material            = "Wood",
+        MaterialEng         = "Wood",
+    }
+
+    local thumpable
+    pcall(function() thumpable = IsoThumpable.new(cell, sq, nombreSprite, false, cfg) end)
+    if not thumpable then
+        pcall(function() thumpable = IsoThumpable:new(cell, sq, nombreSprite, false, cfg) end)
+    end
+    if not thumpable then
+        print("[Holdoor] apilarTile: no pude crear IsoThumpable")
+        return false
+    end
+
+    pcall(function() thumpable:setSprite(spriteObj) end)
+    local added = false
+    pcall(function() sq:AddSpecialObject(thumpable); added = true end)
+    if not added then pcall(function() sq:AddObject(thumpable); added = true end) end
+    if not added then return false end
+
+    pcall(function() thumpable:setMaxHealth(HP) end)
+    pcall(function() thumpable:setHealth(HP) end)
+    pcall(function() sq:RecalcAllWithNeighbours(true) end)
+
+    HoldoorServer._builderTiles = HoldoorServer._builderTiles or {}
+
+    -- Contar cuantos objetos APILADOS ya hay en este mismo tile (antes de agregar el actual)
+    local apiladosPrevios = 0
+    for _, t in ipairs(HoldoorServer._builderTiles) do
+        if t.x == x and t.y == y and t.z == z then apiladosPrevios = apiladosPrevios + 1 end
+    end
+
+    -- Aplicar offset visual hacia ARRIBA proporcional a la altura del stack.
+    -- Cada "piso" sube ~32 pixeles en pantalla (que en mundo iso = una caja de altura).
+    -- setOffsetY con valor NEGATIVO mueve el sprite hacia arriba en pantalla.
+    local OFFSET_POR_PISO = 32
+    local offsetVisual = apiladosPrevios * OFFSET_POR_PISO
+    if offsetVisual > 0 then
+        local apliado = false
+        pcall(function() thumpable:setRenderYOffset(-offsetVisual); apliado = true end)
+        if not apliado then
+            pcall(function() thumpable:setOffsetY(-offsetVisual); apliado = true end)
+        end
+        if not apliado then
+            -- Fallback: tratar de hacerlo sobre el IsoSprite directamente
+            pcall(function() thumpable:getSprite():setOffsetY(-offsetVisual) end)
+        end
+    end
+
+    table.insert(HoldoorServer._builderTiles, {
+        sprite = nombreSprite, x = x, y = y, z = z, obj = thumpable, apilado = true,
+        offsetVisual = offsetVisual,
+    })
+
+    HoldoorServer.estado.galeriaTest = HoldoorServer.estado.galeriaTest or {}
+    table.insert(HoldoorServer.estado.galeriaTest, {
+        idx = -2, sprite = "APILADO: " .. nombreSprite,
+        piezas = { { obj = thumpable, x = x, y = y, z = z } },
+        x = x, y = y, z = z,
+    })
+
+    print(string.format("[Holdoor] APILADO en (%d,%d): '%s'  piso=%d  offsetY=-%d",
+        x, y, nombreSprite, apiladosPrevios + 1, offsetVisual))
+    return true
+end
+
+-- Borra el ULTIMO tile que plantaste (Ctrl+Z del builder).
+-- Uso:  HoldoorServer.deshacerTile()
+function HoldoorServer.deshacerTile()
+    local tiles = HoldoorServer._builderTiles
+    if not tiles or #tiles == 0 then
+        print("[Holdoor] deshacerTile: no hay tiles plantados para deshacer")
+        return false
+    end
+    local ultimo = table.remove(tiles)
+    pcall(function() ultimo.obj:removeFromSquare() end)
+    pcall(function() ultimo.obj:removeFromWorld() end)
+    -- Limpiar tambien de galeriaTest
+    local gt = HoldoorServer.estado.galeriaTest or {}
+    for i = #gt, 1, -1 do
+        local g = gt[i]
+        if g.piezas and #g.piezas == 1 and g.piezas[1].x == ultimo.x and g.piezas[1].y == ultimo.y then
+            table.remove(gt, i)
+            break
+        end
+    end
+    print(string.format("[Holdoor] deshacerTile: borrado tile en (%d,%d) sprite='%s' (quedan %d)",
+        ultimo.x, ultimo.y, ultimo.sprite, #tiles))
+    return true
+end
+
+-- Borra el tile builder que este EN TU POSICION ACTUAL (si hay uno).
+-- Util para corregir un tile especifico sin perder los demas.
+-- Uso:  pararse encima del tile que quieras borrar, despues:
+--       HoldoorServer.borrarTileAqui()
+function HoldoorServer.borrarTileAqui()
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then return false end
+    local x, y
+    pcall(function()
+        x = math.floor(p:getX())
+        y = math.floor(p:getY())
+    end)
+    if not x then return false end
+
+    local tiles = HoldoorServer._builderTiles or {}
+    for i = #tiles, 1, -1 do
+        if tiles[i].x == x and tiles[i].y == y then
+            local tile = table.remove(tiles, i)
+            pcall(function() tile.obj:removeFromSquare() end)
+            pcall(function() tile.obj:removeFromWorld() end)
+            local gt = HoldoorServer.estado.galeriaTest or {}
+            for j = #gt, 1, -1 do
+                local g = gt[j]
+                if g.piezas and #g.piezas == 1 and g.piezas[1].x == tile.x and g.piezas[1].y == tile.y then
+                    table.remove(gt, j)
+                    break
+                end
+            end
+            print(string.format("[Holdoor] borrarTileAqui: borrado tile en (%d,%d) sprite='%s' (quedan %d)",
+                x, y, tile.sprite, #tiles))
+            return true
+        end
+    end
+    print(string.format("[Holdoor] borrarTileAqui: no hay tile builder en (%d,%d). Caminate encima del tile a borrar primero.", x, y))
+    return false
+end
+
+-- Mover el ULTIMO tile plantado a tu posicion actual (= deshacer + dejar con mismo sprite donde estas).
+-- Util si te equivocaste de tile por uno o si lo querés correr a otro lado sin perder el sprite.
+-- Uso:  HoldoorServer.moverUltimoAqui()
+function HoldoorServer.moverUltimoAqui()
+    local tiles = HoldoorServer._builderTiles
+    if not tiles or #tiles == 0 then
+        print("[Holdoor] moverUltimoAqui: no hay tiles plantados")
+        return false
+    end
+    local sprite = tiles[#tiles].sprite
+    HoldoorServer.deshacerTile()
+    return HoldoorServer.dejarTile(sprite)
+end
+
+-- Imprime el codigo Lua del Trono construido manualmente.
+-- Coordenadas relativas a la esquina superior izquierda (min x, min y).
+function HoldoorServer.dumpTrono()
+    local tiles = HoldoorServer._builderTiles or {}
+    if #tiles == 0 then
+        print("[Holdoor] dumpTrono: no hay tiles construidos. Usa dejarTile() primero.")
+        return
+    end
+
+    -- Esquina superior izquierda (min x, min y)
+    local minX, minY = tiles[1].x, tiles[1].y
+    local maxX, maxY = tiles[1].x, tiles[1].y
+    for _, t in ipairs(tiles) do
+        if t.x < minX then minX = t.x end
+        if t.y < minY then minY = t.y end
+        if t.x > maxX then maxX = t.x end
+        if t.y > maxY then maxY = t.y end
+    end
+    local ancho = (maxX - minX) + 1
+    local alto  = (maxY - minY) + 1
+
+    print("================================================================")
+    print(string.format("[Holdoor] DUMP del Trono manual: %d tiles, area %dx%d", #tiles, ancho, alto))
+    print(string.format("    desde (%d,%d) hasta (%d,%d)", minX, minY, maxX, maxY))
+    print("================================================================")
+    print("-- Pega esto al final de HoldoorServer._tronosCompuestos como un preset nuevo:")
+    print("")
+    print("    {")
+    print('        nombre = "MI TRONO CUSTOM (' .. ancho .. 'x' .. alto .. ')",')
+    print("        tiles = {")
+    -- Imprime tile por tile con dx, dy y sprite
+    for _, t in ipairs(tiles) do
+        local dx = t.x - minX
+        local dy = t.y - minY
+        print(string.format('            { sprite = "%s", dx = %d, dy = %d },', t.sprite, dx, dy))
+    end
+    print("        },")
+    print("    },")
+    print("")
+    print("================================================================")
+    print("    O pasame este dump y yo lo agrego al preset.")
+    print("================================================================")
+end
+
+HoldoorServer._tronosCompuestos = {
+    {
+        nombre = "TRONO FORJA CRUZ metal (forja + 4 rejas)",
+        sprites = {
+            "",              "fencing_01_28", "",
+            "fencing_01_28", "crafted_01_16", "fencing_01_28",
+            "",              "fencing_01_28", "",
+        },
+        ancho = 3,
+    },
+    {
+        nombre = "TRONO FORJA CRUZ rejilla (fencing_01_32)",
+        sprites = {
+            "",              "fencing_01_32", "",
+            "fencing_01_32", "crafted_01_16", "fencing_01_32",
+            "",              "fencing_01_32", "",
+        },
+        ancho = 3,
+    },
+    {
+        nombre = "TRONO FORJA CRUZ con respaldo (fencing 24/28)",
+        sprites = {
+            "",              "fencing_01_24", "",
+            "fencing_01_24", "crafted_01_16", "fencing_01_24",
+            "",              "fencing_01_24", "",
+        },
+        ancho = 3,
+    },
+    {
+        nombre = "Bancas de parque (3x2)",
+        sprites = {
+            "furniture_seating_outdoor_01_32", "furniture_seating_outdoor_01_32", "furniture_seating_outdoor_01_32",
+            "furniture_seating_outdoor_01_8",  "furniture_seating_outdoor_01_8",  "furniture_seating_outdoor_01_8",
+        },
+        ancho = 3,
+    },
+    {
+        nombre = "Cajas apiladas (3x2)",
+        sprites = {
+            "carpentry_02_40", "carpentry_02_40", "carpentry_02_40",
+            "carpentry_02_16", "carpentry_02_16", "carpentry_02_16",
+        },
+        ancho = 3,
+    },
+    {
+        nombre = "Trono Imponente (4x2)",
+        sprites = {
+            "carpentry_02_40", "carpentry_02_40", "carpentry_02_40", "carpentry_02_40",
+            "carpentry_02_16", "carpentry_02_16", "carpentry_02_16", "carpentry_02_16",
+        },
+        ancho = 4,
+    },
+    {
+        nombre = "Mini compacto (2x2)",
+        sprites = {
+            "carpentry_02_40", "carpentry_02_40",
+            "carpentry_02_16", "carpentry_02_16",
+        },
+        ancho = 2,
+    },
+    {
+        nombre = "Trono mixto 3x3 (cajas + banca)",
+        sprites = {
+            "carpentry_02_40", "carpentry_02_40", "carpentry_02_40",
+            "carpentry_02_24", "furniture_seating_outdoor_01_32", "carpentry_02_24",
+            "carpentry_02_16", "carpentry_02_16", "carpentry_02_16",
+        },
+        ancho = 3,
+    },
+    {
+        nombre = "King's Landing (5x2)",
+        sprites = {
+            "carpentry_02_40", "carpentry_02_40", "carpentry_02_40", "carpentry_02_40", "carpentry_02_40",
+            "furniture_seating_outdoor_01_32", "furniture_seating_outdoor_01_32", "furniture_seating_outdoor_01_32", "furniture_seating_outdoor_01_32", "furniture_seating_outdoor_01_32",
+        },
+        ancho = 5,
+    },
+    {
+        nombre = "Industrial 3x2 (metal)",
+        sprites = {
+            "industry_railroad_01_8", "industry_railroad_01_8", "industry_railroad_01_8",
+            "constructedobjects_01_8", "constructedobjects_01_8", "constructedobjects_01_8",
+        },
+        ancho = 3,
+    },
+    {
+        nombre = "Crafted 3x2 (improvisado)",
+        sprites = {
+            "crafted_01_8",  "crafted_01_8",  "crafted_01_8",
+            "crafted_01_16", "crafted_01_16", "crafted_01_16",
+        },
+        ancho = 3,
+    },
+}
+HoldoorServer._tronoCompuestoIdx = 0
+
+-- Llamada desde el boton "DEJAR TRONO COMPUESTO AQUI" del panel F10.
+-- Avanza al siguiente preset y lo planta en la posicion del player.
+-- Devuelve nombre, idx para que el cliente pueda mostrarlo en HaloNote.
+function HoldoorServer.dejarTronoCompuestoAqui()
+    local n = #HoldoorServer._tronosCompuestos
+    if n == 0 then return nil, 0 end
+    HoldoorServer._tronoCompuestoIdx = (HoldoorServer._tronoCompuestoIdx % n) + 1
+    local preset = HoldoorServer._tronosCompuestos[HoldoorServer._tronoCompuestoIdx]
+    local ok = HoldoorServer.testTronoCompuesto(preset.sprites, preset.ancho)
+    if ok then
+        return preset.nombre, HoldoorServer._tronoCompuestoIdx
+    else
+        print("[Holdoor] Preset '" .. preset.nombre .. "' fallo al plantar (algun sprite no existe).")
+        return preset.nombre .. " (FALLO)", HoldoorServer._tronoCompuestoIdx
+    end
+end
+
+-- TESTER de "TRONO COMPUESTO": N piezas con sprites DISTINTOS en grilla AxB.
+-- Plantea un Trono donde estás parado, asignando un sprite distinto a cada pieza.
+-- Layout: las piezas se plantan en filas. La PRIMERA fila es la TRASERA (alta/respaldo)
+-- y la ULTIMA fila es la DELANTERA (asiento).
+--
+-- Uso desde Lua Command Line:
+--
+--   -- 2x2 clasico (4 sprites):
+--   HoldoorServer.testTronoCompuesto({"s1","s2","s3","s4"}, 2)
+--   --   [s1 s2]   <- fila trasera (respaldo)
+--   --   [s3 s4]   <- fila delantera (asiento)
+--
+--   -- 3x2 (6 sprites, mas ancho):
+--   HoldoorServer.testTronoCompuesto({
+--     "carpentry_02_40", "carpentry_02_40", "carpentry_02_40",  -- trasera (respaldo alto)
+--     "carpentry_02_16", "carpentry_02_16", "carpentry_02_16",  -- delantera (asiento)
+--   }, 3)
+--
+--   -- 4x2 (8 sprites, super ancho):
+--   HoldoorServer.testTronoCompuesto({s1,s2,s3,s4, s5,s6,s7,s8}, 4)
+--
+--   -- 2x3 (6 sprites, mas profundo):
+--   HoldoorServer.testTronoCompuesto({s1,s2, s3,s4, s5,s6}, 2)
+--
+-- ancho default: 2 (si no lo pasas, asume 2 columnas)
+function HoldoorServer.testTronoCompuesto(sprites, ancho)
+    ancho = ancho or 2
+    if type(sprites) ~= "table" or #sprites < 1 then
+        print("[Holdoor] testTronoCompuesto: pasame tabla con N sprites + ancho. Ej: {s1,s2,s3,s4,s5,s6}, 3")
+        return false
+    end
+    if ancho < 1 or #sprites % ancho ~= 0 then
+        print("[Holdoor] testTronoCompuesto: #sprites (" .. #sprites .. ") debe ser divisible por ancho (" .. ancho .. ")")
+        return false
+    end
+    local alto = #sprites / ancho
+
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then
+        print("[Holdoor] testTronoCompuesto: no encontre al player local")
+        return false
+    end
+
+    local x, y, z
+    pcall(function()
+        x = math.floor(p:getX())
+        y = math.floor(p:getY())
+        z = math.floor(p:getZ())
+    end)
+    if not x then return false end
+
+    local cell
+    pcall(function() cell = getCell() end)
+    if not cell then return false end
+
+    -- Validar los 4 sprites
+    local function spriteExiste(name)
+        local s
+        pcall(function() s = IsoSpriteManager.instance:getSprite(name) end)
+        if s then return s end
+        pcall(function() s = getSprite(name) end)
+        if s then return s end
+        return nil
+    end
+
+    -- Validar sprites. Si una celda es "" o nil = HUECO (no plantar nada ahi).
+    local spriteObjs = {}
+    for i = 1, #sprites do
+        local nombre = sprites[i]
+        if nombre == nil or nombre == "" or nombre == false then
+            spriteObjs[i] = false   -- marcador de hueco
+        else
+            local s = spriteExiste(nombre)
+            if not s then
+                print("[Holdoor] testTronoCompuesto: sprite #" .. i .. " no existe: '" .. tostring(nombre) .. "'")
+                return false
+            end
+            spriteObjs[i] = s
+        end
+    end
+
+    HoldoorServer.estado.galeriaTest = HoldoorServer.estado.galeriaTest or {}
+    HoldoorServer._galeriaIndice = (HoldoorServer._galeriaIndice or 0) + 1
+
+    local HP = 99999
+    local cfgBase = {
+        thumpDmg            = 0,
+        health              = HP,
+        maxHealth           = HP,
+        canBarricade        = false,
+        isBlockAllTheSquare = true,
+        isCorner            = false,
+        isThumpable         = false,
+        canPassThrough      = false,
+        Material            = "Metal",
+        MaterialEng         = "Metal",
+    }
+
+    -- Plantar en grilla ancho x alto, fila por fila a partir de (x, y).
+    -- pieza i va a posicion: col = (i-1) % ancho, fila = floor((i-1) / ancho)
+    -- Si spriteObjs[i] == false, salteamos esa celda (hueco).
+    local piezas = {}
+    local allOk = true
+    local esperadas = 0
+    for i = 1, #sprites do
+        if spriteObjs[i] then esperadas = esperadas + 1 end
+    end
+
+    for i = 1, #sprites do
+        if spriteObjs[i] then  -- skip si es hueco
+            local col = (i - 1) % ancho
+            local fila = math.floor((i - 1) / ancho)
+            local px = x + col
+            local py = y + fila
+
+            local sq
+            pcall(function() sq = cell:getGridSquare(px, py, z) end)
+            if not sq then allOk = false; break end
+
+            local cfg = {}
+            for k,v in pairs(cfgBase) do cfg[k] = v end
+            cfg.name = "Compuesto #" .. HoldoorServer._galeriaIndice .. " pieza " .. i
+
+            local thumpable
+            pcall(function() thumpable = IsoThumpable.new(cell, sq, sprites[i], false, cfg) end)
+            if not thumpable then
+                pcall(function() thumpable = IsoThumpable:new(cell, sq, sprites[i], false, cfg) end)
+            end
+            if not thumpable then allOk = false; break end
+
+            pcall(function() thumpable:setSprite(spriteObjs[i]) end)
+
+            local added = false
+            pcall(function() sq:AddSpecialObject(thumpable); added = true end)
+            if not added then pcall(function() sq:AddObject(thumpable); added = true end) end
+            if not added then allOk = false; break end
+
+            pcall(function() thumpable:setMaxHealth(HP) end)
+            pcall(function() thumpable:setHealth(HP) end)
+            pcall(function() sq:RecalcAllWithNeighbours(true) end)
+            table.insert(piezas, { obj = thumpable, x = px, y = py, z = z })
+        end
+    end
+
+    if allOk and #piezas == esperadas then
+        table.insert(HoldoorServer.estado.galeriaTest, {
+            idx = HoldoorServer._galeriaIndice,
+            sprite = "COMPUESTO " .. ancho .. "x" .. alto .. ": " .. table.concat(sprites, ", "),
+            piezas = piezas, x = x, y = y, z = z,
+        })
+        print("[Holdoor] TRONO COMPUESTO #" .. HoldoorServer._galeriaIndice .. " (" .. ancho .. "x" .. alto .. ") plantado en (" .. x .. "," .. y .. ")")
+        for i = 1, #sprites do
+            local col = (i - 1) % ancho
+            local fila = math.floor((i - 1) / ancho)
+            print(string.format("    pieza %d  fila=%d col=%d  sprite='%s'", i, fila, col, sprites[i]))
+        end
+        return true
+    else
+        for _, pp in ipairs(piezas) do
+            pcall(function() pp.obj:removeFromSquare() end)
+        end
+        print("[Holdoor] testTronoCompuesto: no pude plantar las " .. #sprites .. " piezas")
+        return false
+    end
 end
 
 -- Variante que planta el Trono en la posicion donde esta parado el jugador local.
@@ -1203,6 +2075,19 @@ HoldoorServer._braseroSprites = {
 -- TRONO DE HIERRO: estructura 2x2 (4 piezas) con HP combinado.
 -- Cada pieza es un IsoThumpable. HP total = suma de las 4 piezas (1500 = 375 c/u).
 -- Zombis pueden golpearlo desde cualquier lado.
+-- LAYOUT del Trono: forja + respaldo de madera detrás (2 piezas).
+--   - Forja al frente (la pieza con vida real del Trono): 1500 HP, game over si llega a 0.
+--   - Respaldo de madera detrás: 300 HP propio. Destructible pero no afecta al HP del Trono.
+--   - Como solo bloquea por un lado, los zombis pueden rodear y atacar la forja directamente.
+--   - El _reAggroZombies les setea path DIRECTO a la forja para forzar el comportamiento.
+HoldoorServer._tronoLayoutForja = {
+    -- {dx, dy, sprite, hpAbsoluto, esCentro}
+    -- Forja: alta y maciza. Los zombis la atacan SI o SI (no la saltan).
+    -- El overlay PNG del Trono de Hierro la cubre visualmente.
+    { 0, 0, "crafted_01_16", 1500, true },   -- FORJA (vida del Trono)
+}
+HoldoorServer._tronoHPTotal = 1500
+
 function HoldoorServer._plantarTrono(x, y, z)
     HoldoorServer._quitarTrono()
 
@@ -1214,29 +2099,7 @@ function HoldoorServer._plantarTrono(x, y, z)
         return false
     end
 
-    -- 4 posiciones en 2x2 ancladas en (x, y)
-    local offsets = { {0,0}, {1,0}, {0,1}, {1,1} }
-    local HP_POR_PIEZA = 375
-
-    local cfg = {
-        name                = "Trono de Hierro",
-        modData             = {},
-        thumpDmg            = 0,
-        health              = HP_POR_PIEZA,
-        maxHealth           = HP_POR_PIEZA,
-        canBarricade        = false,
-        isBlockAllTheSquare = true,
-        isCorner            = false,
-        isThumpable         = true,
-        canBePlastered      = false,
-        canPassThrough      = false,
-        isDismantable       = false,
-        Material            = "Metal",
-        MaterialEng         = "Metal",
-    }
-
-    -- Helper: verifica que el sprite EXISTE en este build de B42 antes de usarlo.
-    -- Sin esto, IsoThumpable.new acepta nombres inventados y crea objetos invisibles.
+    -- Helper: verifica que el sprite EXISTE en este build de B42.
     local function spriteExiste(name)
         local s
         pcall(function() s = IsoSpriteManager.instance:getSprite(name) end)
@@ -1246,63 +2109,86 @@ function HoldoorServer._plantarTrono(x, y, z)
         return nil
     end
 
-    for _, sprite in ipairs(HoldoorServer._tronoSprites) do
+    -- Validar que TODOS los sprites del layout existen
+    for _, pieza in ipairs(HoldoorServer._tronoLayoutForja) do
+        if not spriteExiste(pieza[3]) then
+            print("[Holdoor] FAIL: sprite del layout no existe: '" .. pieza[3] .. "'")
+            return false
+        end
+    end
+
+    local piezas = {}
+    local piezaCentral = nil   -- referencia a la forja (la que define el HP del Trono)
+    local allOk = true
+
+    for _, pieza in ipairs(HoldoorServer._tronoLayoutForja) do
+        local dx, dy, sprite, hpAbs, esCentro = pieza[1], pieza[2], pieza[3], pieza[4], pieza[5]
+        local px = x + dx
+        local py = y + dy
         local spriteObj = spriteExiste(sprite)
-        if spriteObj then
-            print("[Holdoor] Trono: sprite valido encontrado: " .. sprite)
-            local piezas = {}
-            local allOk = true
 
-            for _, off in ipairs(offsets) do
-                local px = x + off[1]
-                local py = y + off[2]
-                local ok_sq, sq = pcall(function() return cell:getGridSquare(px, py, z) end)
-                if not ok_sq or not sq then allOk = false; break end
+        local ok_sq, sq = pcall(function() return cell:getGridSquare(px, py, z) end)
+        if not ok_sq or not sq then allOk = false; break end
 
-                local thumpable
-                pcall(function() thumpable = IsoThumpable.new(cell, sq, sprite, false, cfg) end)
-                if not thumpable then
-                    pcall(function() thumpable = IsoThumpable:new(cell, sq, sprite, false, cfg) end)
-                end
-                if not thumpable then allOk = false; break end
+        local cfg = {
+            name                = (esCentro and "Trono (forja)" or "Trono (barricada)") .. ": " .. sprite,
+            modData             = {},
+            thumpDmg            = 0,
+            health              = hpAbs,
+            maxHealth           = hpAbs,
+            canBarricade        = false,
+            isBlockAllTheSquare = true,
+            isCorner            = false,
+            isThumpable         = true,
+            canBePlastered      = false,
+            canPassThrough      = false,
+            isDismantable       = false,
+            Material            = esCentro and "Stone" or "Sandbag",
+            MaterialEng         = esCentro and "Stone" or "Sandbag",
+        }
 
-                -- Forzar el sprite directamente sobre el objeto (no solo por nombre)
-                pcall(function() thumpable:setSprite(spriteObj) end)
+        local thumpable
+        pcall(function() thumpable = IsoThumpable.new(cell, sq, sprite, false, cfg) end)
+        if not thumpable then
+            pcall(function() thumpable = IsoThumpable:new(cell, sq, sprite, false, cfg) end)
+        end
+        if not thumpable then allOk = false; break end
 
-                local added = false
-                pcall(function() sq:AddSpecialObject(thumpable); added = true end)
-                if not added then pcall(function() sq:AddObject(thumpable); added = true end) end
-                if not added then allOk = false; break end
+        pcall(function() thumpable:setSprite(spriteObj) end)
 
-                pcall(function() thumpable:setMaxHealth(HP_POR_PIEZA) end)
-                pcall(function() thumpable:setHealth(HP_POR_PIEZA) end)
-                pcall(function() sq:RecalcAllWithNeighbours(true) end)
+        local added = false
+        pcall(function() sq:AddSpecialObject(thumpable); added = true end)
+        if not added then pcall(function() sq:AddObject(thumpable); added = true end) end
+        if not added then allOk = false; break end
 
-                table.insert(piezas, { obj = thumpable, x = px, y = py, z = z })
-            end  -- for off
+        pcall(function() thumpable:setMaxHealth(hpAbs) end)
+        pcall(function() thumpable:setHealth(hpAbs) end)
+        pcall(function() sq:RecalcAllWithNeighbours(true) end)
 
-            if allOk and #piezas == 4 then
-                HoldoorServer.estado.trono = {
-                    piezas = piezas,
-                    sprite = sprite,
-                    x = x, y = y, z = z,
-                    maxHP = HP_POR_PIEZA * 4,
-                }
-                HoldoorServer.estado.brasero = piezas[1].obj
-                HoldoorServer.estado.banderaTile = { x = x, y = y, z = z, sprite = sprite, isTrono = true }
-                print("[Holdoor] OK Trono de Hierro plantado en " .. x .. "," .. y .. " (sprite: " .. sprite .. ")")
-                return true
-            else
-                -- Rollback: limpiar piezas parciales si alguna fallo
-                for _, p in ipairs(piezas) do
-                    pcall(function() p.obj:removeFromSquare() end)
-                end
-            end
-        end  -- if spriteObj
-    end  -- for sprite
+        local registro = { obj = thumpable, x = px, y = py, z = z, sprite = sprite, hpMax = hpAbs, esCentro = esCentro }
+        table.insert(piezas, registro)
+        if esCentro then piezaCentral = registro end
+    end
 
-    print("[Holdoor] FAIL: ningun sprite valido encontrado para el Trono en este build de B42")
-    return false
+    if allOk and #piezas == #HoldoorServer._tronoLayoutForja and piezaCentral then
+        HoldoorServer.estado.trono = {
+            piezas = piezas,
+            piezaCentral = piezaCentral,   -- la forja: su HP = HP del Trono
+            sprite = "FORJA_CRUZ",
+            x = x, y = y, z = z,
+            maxHP = piezaCentral.hpMax,    -- maxHP del Trono = maxHP de la forja
+        }
+        HoldoorServer.estado.brasero = piezaCentral.obj
+        HoldoorServer.estado.banderaTile = { x = piezaCentral.x, y = piezaCentral.y, z = z, sprite = piezaCentral.sprite, isTrono = true }
+        print("[Holdoor] OK Trono Forja Cruz plantado en (" .. x .. "," .. y .. "). HP del Trono = forja " .. piezaCentral.hpMax .. " (+ " .. (#piezas - 1) .. " barricadas)")
+        return true
+    else
+        for _, p in ipairs(piezas) do
+            pcall(function() p.obj:removeFromSquare() end)
+        end
+        print("[Holdoor] FAIL: no se pudo plantar el Trono Forja Cruz")
+        return false
+    end
 end
 
 function HoldoorServer._quitarTrono()
@@ -1436,6 +2322,12 @@ function HoldoorServer._tronoCayo()
 
     print("[Holdoor] !!! EL TRONO HA CAIDO !!! Game Over (modo defensa)")
 
+    -- Limpiar zombis del radio al perder: no tiene sentido que sigan vagando
+    local eliminados = HoldoorServer._limpiarZona()
+    if eliminados > 0 then
+        print("[Holdoor] Game Over: " .. eliminados .. " zombis residuales limpiados")
+    end
+
     HoldoorServer.notificarTodos("tronoCayo", {
         oleadas = estado.oleadaActual or 0,
     })
@@ -1566,3 +2458,285 @@ Events.OnGameStart.Add(HoldoorServer.init)
 Events.OnTick.Add(HoldoorServer.onTick)
 Events.OnZombieDead.Add(HoldoorServer.onZombieMuerto)
 Events.OnClientCommand.Add(HoldoorServer.onComandoCliente)
+
+-- ─────────────────────────────────────────────
+-- GALERIA DE TRONOS (modo diagnóstico visual)
+-- Planta N Tronos "demo" en fila al lado del player, cada uno con un sprite
+-- distinto, para que se vean todos al mismo tiempo y se pueda elegir.
+-- Las piezas son IsoThumpable con HP alto y NO atacables (isThumpable=false)
+-- asi los zombis las ignoran durante el test.
+--
+-- Uso desde Lua Command Line:
+--   HoldoorServer.testGaleria()        — planta TODOS los sprites de _tronoSprites
+--   HoldoorServer.testGaleria(10)      — planta los primeros 10
+--   HoldoorServer.testGaleria(10, 5)   — primeros 10, separados 5 tiles cada uno
+--   HoldoorServer.quitarGaleria()      — limpia toda la galería
+-- ─────────────────────────────────────────────
+
+function HoldoorServer.testGaleria(maxN, spacing)
+    spacing = spacing or 4   -- Trono ocupa 2x2 + 2 tiles libres entre uno y otro
+    local lista = HoldoorServer._tronoSprites or {}
+    if maxN and maxN > 0 and maxN < #lista then
+        local sub = {}
+        for i = 1, maxN do sub[i] = lista[i] end
+        lista = sub
+    end
+
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then
+        print("[Holdoor] testGaleria: no encontre al player local (necesita SP/host)")
+        return false
+    end
+
+    HoldoorServer.quitarGaleria()
+    HoldoorServer.estado.galeriaTest = {}
+
+    local startX = math.floor(p:getX()) + 2   -- 2 tiles al este del player
+    local baseY = math.floor(p:getY())
+    local z = math.floor(p:getZ())
+
+    local cell
+    pcall(function() cell = getCell() end)
+    if not cell then
+        print("[Holdoor] testGaleria: no hay cell, abortando")
+        return false
+    end
+
+    local HP = 99999  -- inerte para la demo
+    local offsets = { {0,0}, {1,0}, {0,1}, {1,1} }
+    local cfgBase = {
+        thumpDmg            = 0,
+        health              = HP,
+        maxHealth           = HP,
+        canBarricade        = false,
+        isBlockAllTheSquare = true,
+        isCorner            = false,
+        isThumpable         = false,   -- NO atacable durante el test
+        canBePlastered      = false,
+        canPassThrough      = false,
+        isDismantable       = false,
+        Material            = "Metal",
+        MaterialEng         = "Metal",
+    }
+
+    local function spriteExiste(name)
+        local s
+        pcall(function() s = IsoSpriteManager.instance:getSprite(name) end)
+        if s then return s end
+        pcall(function() s = getSprite(name) end)
+        if s then return s end
+        return nil
+    end
+
+    local plantados = 0
+    for i, sprite in ipairs(lista) do
+        local spriteObj = spriteExiste(sprite)
+        if spriteObj then
+            local x0 = startX + plantados * spacing
+            local piezas = {}
+            local allOk = true
+            for _, off in ipairs(offsets) do
+                local px = x0 + off[1]
+                local py = baseY + off[2]
+                local sq
+                pcall(function() sq = cell:getGridSquare(px, py, z) end)
+                if not sq then allOk = false; break end
+
+                local cfg = {}
+                for k,v in pairs(cfgBase) do cfg[k] = v end
+                cfg.name = "Test #" .. (plantados + 1) .. ": " .. sprite
+
+                -- Firma correcta en B42: IsoThumpable.new(cell, sq, sprite, false, cfg)
+                local thumpable
+                pcall(function() thumpable = IsoThumpable.new(cell, sq, sprite, false, cfg) end)
+                if not thumpable then
+                    pcall(function() thumpable = IsoThumpable:new(cell, sq, sprite, false, cfg) end)
+                end
+                if not thumpable then allOk = false; break end
+
+                pcall(function() thumpable:setSprite(spriteObj) end)
+
+                local added = false
+                pcall(function() sq:AddSpecialObject(thumpable); added = true end)
+                if not added then pcall(function() sq:AddObject(thumpable); added = true end) end
+                if not added then allOk = false; break end
+
+                pcall(function() thumpable:setMaxHealth(HP) end)
+                pcall(function() thumpable:setHealth(HP) end)
+                pcall(function() sq:RecalcAllWithNeighbours(true) end)
+                table.insert(piezas, { obj = thumpable, x = px, y = py, z = z })
+            end
+
+            if allOk and #piezas == 4 then
+                plantados = plantados + 1
+                table.insert(HoldoorServer.estado.galeriaTest, {
+                    idx = plantados, sprite = sprite, piezas = piezas, x = x0, y = baseY, z = z,
+                })
+                print(string.format("[Holdoor] Galeria #%d  x=%d  sprite='%s'", plantados, x0, sprite))
+            else
+                for _, pp in ipairs(piezas) do
+                    pcall(function() pp.obj:removeFromSquare() end)
+                end
+            end
+        else
+            print(string.format("[Holdoor] Galeria: sprite '%s' NO EXISTE en este build", sprite))
+        end
+    end
+
+    print(string.format("[Holdoor] === Galeria lista: %d Tronos plantados desde X=%d, baseY=%d, spacing=%d ===", plantados, startX, baseY, spacing))
+    print("[Holdoor] Pasea al ESTE del player. Cada Trono ocupa 2x2 tiles, con 2 tiles libres entre uno y otro.")
+    print("[Holdoor] Para identificar uno, mira el listado de arriba: index #N = sprite usado.")
+    print("[Holdoor] Para limpiar: HoldoorServer.quitarGaleria()")
+    return true
+end
+
+function HoldoorServer.quitarGaleria()
+    if not HoldoorServer.estado.galeriaTest then
+        HoldoorServer.estado.galeriaTest = {}
+        return
+    end
+    local n = 0
+    for _, demo in ipairs(HoldoorServer.estado.galeriaTest) do
+        for _, pp in ipairs(demo.piezas or {}) do
+            pcall(function() pp.obj:removeFromSquare() end)
+            pcall(function() pp.obj:removeFromWorld() end)
+        end
+        n = n + 1
+    end
+    HoldoorServer.estado.galeriaTest = {}
+    HoldoorServer._galeriaIndice = 0      -- reset al limpiar
+    HoldoorServer._builderTiles = {}      -- reset del builder manual
+    print("[Holdoor] Galeria limpiada (" .. n .. " Tronos removidos)")
+end
+
+-- ─────────────────────────────────────────────
+-- DEJAR PROXIMO SPRITE AQUI (modo interactivo)
+-- Llamada desde el boton del panel F10. Cada invocacion:
+--   1) avanza el indice de sprite (rotando al inicio si llega al final)
+--   2) planta un Trono demo en la posicion del player con ESE sprite
+--   3) lo agrega a la galeria (NO toca el Trono principal de las oleadas)
+-- Devuelve el nombre del sprite usado (string) o nil si fallo.
+-- ─────────────────────────────────────────────
+HoldoorServer._galeriaIndice = HoldoorServer._galeriaIndice or 0
+
+function HoldoorServer.dejarSpriteAqui()
+    local lista = HoldoorServer._tronoSprites or {}
+    if #lista == 0 then
+        print("[Holdoor] dejarSpriteAqui: lista de sprites vacia")
+        return nil
+    end
+
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then
+        print("[Holdoor] dejarSpriteAqui: no encontre al player local")
+        return nil
+    end
+
+    local x, y, z
+    pcall(function()
+        x = math.floor(p:getX())
+        y = math.floor(p:getY())
+        z = math.floor(p:getZ())
+    end)
+    if not x then return nil end
+
+    local cell
+    pcall(function() cell = getCell() end)
+    if not cell then return nil end
+
+    HoldoorServer.estado.galeriaTest = HoldoorServer.estado.galeriaTest or {}
+
+    -- Buscar el proximo sprite VALIDO en la lista (skipea los que no existen)
+    local function spriteExiste(name)
+        local s
+        pcall(function() s = IsoSpriteManager.instance:getSprite(name) end)
+        if s then return s end
+        pcall(function() s = getSprite(name) end)
+        if s then return s end
+        return nil
+    end
+
+    local intentos = 0
+    local sprite, spriteObj
+    while intentos < #lista do
+        HoldoorServer._galeriaIndice = (HoldoorServer._galeriaIndice % #lista) + 1
+        sprite = lista[HoldoorServer._galeriaIndice]
+        spriteObj = spriteExiste(sprite)
+        if spriteObj then break end
+        intentos = intentos + 1
+        sprite = nil
+    end
+
+    if not sprite then
+        print("[Holdoor] dejarSpriteAqui: ningun sprite de la lista existe en este build")
+        return nil
+    end
+
+    -- Plantar 4 piezas en 2x2 a partir de (x, y)
+    local HP = 99999
+    local offsets = { {0,0}, {1,0}, {0,1}, {1,1} }
+    local cfgBase = {
+        thumpDmg            = 0,
+        health              = HP,
+        maxHealth           = HP,
+        canBarricade        = false,
+        isBlockAllTheSquare = true,
+        isCorner            = false,
+        isThumpable         = false,
+        canPassThrough      = false,
+        Material            = "Metal",
+        MaterialEng         = "Metal",
+    }
+
+    local piezas = {}
+    local allOk = true
+    for _, off in ipairs(offsets) do
+        local px = x + off[1]
+        local py = y + off[2]
+        local sq
+        pcall(function() sq = cell:getGridSquare(px, py, z) end)
+        if not sq then allOk = false; break end
+
+        local cfg = {}
+        for k,v in pairs(cfgBase) do cfg[k] = v end
+        cfg.name = "Demo #" .. HoldoorServer._galeriaIndice .. ": " .. sprite
+
+        -- Firma correcta en B42: IsoThumpable.new(cell, sq, sprite, false, cfg)
+        local thumpable
+        pcall(function() thumpable = IsoThumpable.new(cell, sq, sprite, false, cfg) end)
+        if not thumpable then
+            pcall(function() thumpable = IsoThumpable:new(cell, sq, sprite, false, cfg) end)
+        end
+        if not thumpable then allOk = false; break end
+
+        -- Forzar el sprite directamente
+        pcall(function() thumpable:setSprite(spriteObj) end)
+
+        -- AddSpecialObject (primario), fallback AddObject
+        local added = false
+        pcall(function() sq:AddSpecialObject(thumpable); added = true end)
+        if not added then pcall(function() sq:AddObject(thumpable); added = true end) end
+        if not added then allOk = false; break end
+
+        pcall(function() thumpable:setMaxHealth(HP) end)
+        pcall(function() thumpable:setHealth(HP) end)
+        pcall(function() sq:RecalcAllWithNeighbours(true) end)
+        table.insert(piezas, { obj = thumpable, x = px, y = py, z = z })
+    end
+
+    if allOk and #piezas == 4 then
+        table.insert(HoldoorServer.estado.galeriaTest, {
+            idx = HoldoorServer._galeriaIndice, sprite = sprite, piezas = piezas, x = x, y = y, z = z,
+        })
+        print(string.format("[Holdoor] DEMO #%d plantado en (%d,%d): sprite='%s'", HoldoorServer._galeriaIndice, x, y, sprite))
+        return sprite
+    else
+        for _, pp in ipairs(piezas) do
+            pcall(function() pp.obj:removeFromSquare() end)
+        end
+        print("[Holdoor] dejarSpriteAqui: no pude plantar las 4 piezas en (" .. x .. "," .. y .. ")")
+        return nil
+    end
+end

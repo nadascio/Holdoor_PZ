@@ -118,3 +118,49 @@ Decisión: documentación del mod vive en su repo (`Documents/Holdoor_PZ/docs/`)
 - Botón "TEST UBICACION" en el panel del F10 (queda como herramienta de diagnóstico permanente).
 
 **Pendiente activo:** encontrar el sprite vanilla que mejor queda visualmente para el Trono. Si ninguno convence, plan B = sprite custom PNG del Trono de las Cien Espadas.
+
+---
+
+## 2026-06-13 — Visual del Trono de Hierro + balance de combate
+
+**Logros de la sesión:**
+
+### Visual del Trono (camino C0 — overlay PNG flotante)
+- Implementado overlay UI fullscreen (`HoldoorOverlayUI` derivado de `ISUIElement`) que dibuja la PNG real del Trono de Hierro encima del tile de la forja vanilla (`crafted_01_16`).
+- La PNG (~1.5 MB, 1024x1024) vive en `media/textures/Holdoor_TronoHierro.png` y se replica a las 4 ubicaciones del mod al sincronizar.
+- API de render que funciona en B42: `self:drawTextureScaled(texture, x, y, w, h, alpha)` (6 args). NO funciona `getRenderer():render(...)` con 9 args ni `drawTextureScaledColor` con 9 args — la firma esperada es distinta.
+- API de coords mundo→pantalla que funciona en B42: `IsoUtils.XToScreenExact(x, y, z, ofs)` con **4 args**, NO 5. Mi código original con `(x, y, z, 0, 0)` rompía.
+- Posición/tamaño del overlay: W=180, H=270 a zoom 1, offset Y = `H * 0.72` (proporción del alto que sale arriba del tile).
+- **Transparencia por proximidad**: cuando player o cualquier zombi están a ≤4 tiles del Trono, el alpha baja proporcional (min 0.3, max 1.0). Cache de 100ms para no iterar zombis cada frame (eficiente).
+
+### Estructura del Trono lógica
+- Layout final: **1 sola pieza** = la forja `crafted_01_16` con 1500 HP.
+- Decisión: el sistema de "respaldo + forja" o "cruz de 5 piezas" se descartó porque las rejas vanilla son saltables por zombis y se veían apiladas/feas.
+- La forja `crafted_01_16` es alta, maciza y los zombis la atacan sí o sí (no la saltan).
+- Game over cuando HP de la forja llega a 0.
+
+### Re-aggro reverteado
+- Se intentó cambiar `_reAggroZombies` para hacer path DIRECTO a la forja y subir frecuencia a 4s. Resultado: peor que antes — zombis se amontonaban torpemente.
+- Revertido al comportamiento original: path aleatorio en radio del 30% del spawn, cada 12s. **El bug NO era la frecuencia, era el target específico.**
+
+### Mejoras de balance de oleada
+- **Colchón de zombis** (`_asegurarColchon`): cada 3s durante oleada activa, si vivos cerca de la base < 5 Y hay encolados pendientes, forzar `_spawnTanda` inmediato con tamaño reducido. Evita que el user tenga que ir a buscar zombis lejanos.
+- **Limpieza al terminar oleada**: en `_oleadaCompletada`, llamar `_limpiarZona()` antes de fase pausa. No quedan zombis residuales vagando.
+- **Limpieza al game over (Trono caído)**: en `_tronoCayo`, llamar `_limpiarZona()`. No tiene sentido que sigan zombis después de perder.
+
+### Comandos de diagnóstico agregados (vivos en HoldoorServer)
+- `testSprite(name)`, `testSpriteAqui(name)`, `testTronoCompuesto(sprites, ancho)`, `testGaleria(N)`, `dejarTile(name)`, `apilarTile(name)`, `deshacerTile()`, `borrarTileAqui()`, `moverUltimoAqui()`, `dumpTrono()`, `matarZombiesCerca(radio)`.
+- Solo accesibles vía Lua Command Line del debugger. No molestan al jugador.
+- Útiles para investigar nuevos sprites, debug, o futuras adiciones al mod.
+
+### Bugs / aprendizajes técnicos
+- En B42, no se puede crear un IsoThumpable con cualquier sprite name: si el sprite no existe, el thumpable se crea invisible pero igual ocupa el tile. **Hay que validar con `IsoSpriteManager.instance:getSprite(name)` antes de plantar.**
+- Los sprites **indoor** (couches, chairs) en B42 NO renderizan correctamente al aire libre (requieren estar dentro de un IsoRoom). Por eso terminamos usando solo **outdoor / carpentry / industry / constructed / fencing**.
+- Los **cadáveres siguen siendo `IsoZombie`** después de morir → el damage boost los contaba como zombis vivos. Fix: filtrar `not obj:isDead()`.
+- La firma de `IsoUtils.XToScreenExact` en B42 es **4 args** (`x, y, z, offsetXorY`), no 5.
+- La firma de render de textura útil en B42 es `self:drawTextureScaled(texture, x, y, w, h, alpha)`. Los otros métodos (`drawTextureScaledColor` con 9 args, `getRenderer():render` con 9 args) NO están implementados o tienen otra firma.
+- Para el render del overlay UI: hay que usar un `ISUIElement` fullscreen + sobreescribir `render()`. Calcular coords mundo→pantalla con `IsoUtils.XToScreenExact` y ajustar por zoom (`getCore():getZoom(0)`).
+
+**Pendiente activo (ver `next_steps.md`):**
+- Próximo sprint: **ajuste de drops + balance de tienda**.
+- Nice to have lejano: sprite custom isométrico real del Trono (camino C2). Requeriría TileZed + arte de pixel art skill medio-alto.

@@ -766,3 +766,179 @@ Events.OnGameStart.Add(HoldoorClient.init)
 Events.OnKeyStartPressed.Add(HoldoorClient.onKeyPressed)
 Events.OnTick.Add(HoldoorClient.onTick)
 Events.OnZombieDead.Add(HoldoorClient.onZombieMuertoLocal)
+
+-- ════════════════════════════════════════════════════════════════════
+-- OVERLAY VISUAL DEL TRONO DE HIERRO (C0)
+-- Dibuja la PNG real del Trono como imagen flotante encima del tile de la forja.
+-- La forja real (crafted_01_16) sigue debajo con HP, atacable, etc. — esto es PURAMENTE visual.
+-- 
+-- Setup: poner la PNG en media/textures/Holdoor_TronoHierro.png
+-- ════════════════════════════════════════════════════════════════════
+
+HoldoorOverlayTrono = HoldoorOverlayTrono or {}
+HoldoorOverlayTrono.textura = nil
+HoldoorOverlayTrono._intentado = false
+
+function HoldoorOverlayTrono.cargar()
+    if HoldoorOverlayTrono._intentado then return end
+    HoldoorOverlayTrono._intentado = true
+    -- Probar varios paths posibles (depende de como PZ resuelve el nombre)
+    local candidatos = {
+        "media/textures/Holdoor_TronoHierro.png",
+        "media/textures/Holdoor_TronoHierro",
+        "Holdoor_TronoHierro",
+        "Holdoor_TronoHierro.png",
+    }
+    for _, name in ipairs(candidatos) do
+        local tex
+        pcall(function() tex = getTexture(name) end)
+        if tex then
+            HoldoorOverlayTrono.textura = tex
+            print("[Holdoor] Overlay Trono: textura cargada como '" .. name .. "'")
+            return
+        end
+    end
+    print("[Holdoor] Overlay Trono: textura NO encontrada. Pone la PNG en Documents/Holdoor_PZ/media/textures/Holdoor_TronoHierro.png")
+end
+
+-- En B42, getRenderer():render(...) con 9 args NO existe.
+-- Usamos un ISUIElement fullscreen que dibuja con drawTextureScaledColor (API que sí anda).
+HoldoorOverlayUI = ISUIElement:derive("HoldoorOverlayUI")
+
+function HoldoorOverlayUI:new()
+    local sw = getCore():getScreenWidth()
+    local sh = getCore():getScreenHeight()
+    local o = ISUIElement.new(self, 0, 0, sw, sh)
+    o.background = false
+    return o
+end
+
+-- Flag para desactivar el overlay si ninguna API de render funciona en B42.
+-- Evita spammear errores cada frame.
+HoldoorOverlayTrono._renderDeshabilitado = false
+
+function HoldoorOverlayUI:render()
+    if HoldoorOverlayTrono._renderDeshabilitado then return end
+    if not HoldoorOverlayTrono.textura then return end
+    if not HoldoorServer or not HoldoorServer.estado then return end
+    local trono = HoldoorServer.estado.trono
+    if not trono or not trono.piezaCentral then return end
+
+    local hp = 0
+    pcall(function() hp = trono.piezaCentral.obj:getHealth() end)
+    if hp <= 0 then return end
+
+    local forja = trono.piezaCentral
+    local fx, fy, fz = forja.x, forja.y, forja.z
+
+    local sx, sy
+    pcall(function() sx = IsoUtils.XToScreenExact(fx, fy, fz, 0) end)
+    pcall(function() sy = IsoUtils.YToScreenExact(fx, fy, fz, 0) end)
+    if not sx or not sy then
+        pcall(function() sx = IsoUtils.XToScreen(fx, fy, fz, 0) end)
+        pcall(function() sy = IsoUtils.YToScreen(fx, fy, fz, 0) end)
+    end
+    if not sx or not sy then return end
+
+    local zoom = 1.0
+    pcall(function() zoom = getCore():getZoom(0) end)
+    local zdiv = (zoom > 0) and zoom or 1.0
+
+    -- Tamaño base del Trono en pixels a zoom 1.0.
+    -- W=180, H=270.  offset 0.72 → bajado un poquito para tapar la base de la forja.
+    local W = 180 / zdiv
+    local H = 270 / zdiv
+    local drawX = (sx / zdiv) - W / 2
+    local drawY = (sy / zdiv) - H * 0.72
+
+    -- Z-order workaround: si HAY player o zombi cerca del Trono, bajamos alpha.
+    -- Imita el comportamiento nativo de PZ con muebles altos.
+    -- Cache de 100ms para no iterar zombis cada frame (60fps = caro).
+    local ms = 0
+    pcall(function() ms = getTimestampMs() end)
+    if ms == 0 then ms = os.time() * 1000 end
+
+    if ms - (HoldoorOverlayTrono._cacheAlphaMs or 0) > 100 then
+        HoldoorOverlayTrono._cacheAlphaMs = ms
+        local distMin = 999
+
+        -- Player local
+        local p
+        pcall(function() p = getSpecificPlayer(0) end)
+        if p then
+            local px, py
+            pcall(function() px = p:getX(); py = p:getY() end)
+            if px and py then
+                local d = math.sqrt((px-fx)*(px-fx) + (py-fy)*(py-fy))
+                if d < distMin then distMin = d end
+            end
+        end
+
+        -- Zombis cercanos al Trono (iteramos la lista del cell, no los tiles)
+        pcall(function()
+            local cell = getCell()
+            if not cell then return end
+            local zombies = cell:getZombieList()
+            if not zombies then return end
+            local sz = zombies:size()
+            for i = 0, sz - 1 do
+                local z = zombies:get(i)
+                if z then
+                    local zx, zy = z:getX(), z:getY()
+                    if zx and zy then
+                        local zdx = zx - fx
+                        local zdy = zy - fy
+                        local d2 = zdx*zdx + zdy*zdy
+                        if d2 <= 16 then  -- pre-filtro radio 4 tiles
+                            local d = math.sqrt(d2)
+                            if d < distMin then distMin = d end
+                        end
+                    end
+                end
+            end
+        end)
+
+        if distMin <= 4 then
+            HoldoorOverlayTrono._cacheAlpha = math.max(0.3, distMin / 4)
+        else
+            HoldoorOverlayTrono._cacheAlpha = 1.0
+        end
+    end
+    local alpha = HoldoorOverlayTrono._cacheAlpha or 1.0
+
+    -- En B42, varios métodos de render pueden NO estar implementados.
+    -- Si todos fallan, deshabilitamos el overlay para no spammear errores cada frame.
+    local ok = false
+    pcall(function()
+        self:drawTextureScaled(HoldoorOverlayTrono.textura, drawX, drawY, W, H, alpha)
+        ok = true
+    end)
+    if not ok then
+        pcall(function()
+            self:drawTexture(HoldoorOverlayTrono.textura, drawX, drawY, 1.0, 1.0, 1.0, alpha)
+            ok = true
+        end)
+    end
+    if not ok then
+        HoldoorOverlayTrono._renderDeshabilitado = true
+        print("[Holdoor] Overlay Trono: ninguna API de render funciona en B42. Overlay deshabilitado.")
+    end
+end
+
+function HoldoorOverlayUI:onMouseDown(x, y) return false end
+function HoldoorOverlayUI:onMouseUp(x, y) return false end
+function HoldoorOverlayUI:isMouseOver() return false end
+
+HoldoorOverlayTrono._uiInstance = nil
+
+function HoldoorOverlayTrono.crearUI()
+    if HoldoorOverlayTrono._uiInstance then return end
+    local ui = HoldoorOverlayUI:new()
+    ui:initialise()
+    ui:addToUIManager()
+    HoldoorOverlayTrono._uiInstance = ui
+    print("[Holdoor] Overlay Trono: UI element creado")
+end
+
+Events.OnGameStart.Add(HoldoorOverlayTrono.cargar)
+Events.OnGameStart.Add(HoldoorOverlayTrono.crearUI)

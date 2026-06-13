@@ -247,4 +247,64 @@ Antes de bucear en lógica compleja cuando algo del mod no funciona, **chequear 
 
 ---
 
-**Última actualización:** 2026-06-12
+---
+
+## 🔥 10. APIs de B42 con firmas que NO matchean la documentación pre-B42
+
+**Síntoma:** `java.lang.RuntimeException: No implementation found for function: <X>(args...)` o `expected 4 arguments, got 5`.
+
+**Causa:** Entre B41 y B42 cambiaron varias firmas de funciones. Tutoriales y docs viejas del Internet citan la firma B41 que ya no existe.
+
+**Firmas confirmadas que SÍ funcionan en B42 (2026-06-13):**
+
+| API | Firma B42 confirmada | Firma B41 que NO anda |
+|---|---|---|
+| `IsoUtils.XToScreenExact(x, y, z, ofs)` | **4 args** | NO usa 5 args con `(x, y, z, 0, 0)` |
+| `IsoUtils.YToScreenExact(x, y, z, ofs)` | **4 args** | Igual |
+| `IsoThumpable.new(cell, sq, sprite, n, cfg)` | **5 args con `cell` PRIMERO** | NO usa `(sq, sprite, n, cfg)` (4 args) |
+| `self:drawTextureScaled(tex, x, y, w, h, a)` | **6 args** (last = alpha) | Funciona en ISUIElement |
+| `getRenderer():render(tex, x, y, w, h, r, g, b, a)` | NO está implementado en B42 (9 args falla) | — |
+| `self:drawTextureScaledColor(tex, x, y, w, h, r, g, b, a)` | NO está implementado con 9 args | — |
+
+**Estrategia defensiva al usar APIs de PZ:**
+1. **Wrappear en `pcall`** todas las llamadas Java desde Lua. Si una API falla, `pcall` evita que el mod entero crashee.
+2. **Fallbacks múltiples**: si una firma no funciona, probar otra variante. Ej: primero `drawTextureScaled`, después `drawTexture`.
+3. **Flag de "deshabilitado"** después de N fallos consecutivos para evitar spammear el error log cada frame.
+4. **Diagnóstico antes de codear "para producción"**: probar la API en aislado con `print()` de los args antes de meterla en código crítico.
+
+**Cuando rompió:** 2026-06-13 al implementar el overlay PNG del Trono. Tuve que iterar 3 veces hasta encontrar la firma correcta.
+
+---
+
+## 🔥 11. Sprites INDOOR de B42 no renderizan al aire libre
+
+**Síntoma:** Plantás un `IsoThumpable` con un sprite indoor (couches, chairs, beds, etc.) en un tile abierto del campo y queda **invisible** (pero ocupa el tile, los zombis lo perciben como bloqueo).
+
+**Causa:** Los sprites con namespace `furniture_seating_indoor_*`, `furniture_storage_indoor_*`, etc. están diseñados para renderizar **dentro de un `IsoRoom`** (habitación con paredes construidas). Al ponerlos al aire libre, PZ los esconde o no los dibuja.
+
+**Sprites que SÍ funcionan al aire libre:**
+- `furniture_seating_outdoor_*` (sillas/bancos outdoor)
+- `furniture_outdoor_*`
+- `crafted_*` (items crafteados a mano)
+- `constructedobjects_*` (sandbags, barricadas)
+- `carpentry_*` (paredes/objetos de carpintería)
+- `industry_*`, `industry_railroad_*`
+- `fencing_*` (cercas)
+- `lighting_outdoor_*`
+
+**Cuando rompió:** 2026-06-12 al armar la galería de sprites para elegir el Trono. La lista inicial incluía indoor, ninguno se veía. Filtramos a solo outdoor y funcionó todo.
+
+---
+
+## 🔥 12. Para visuales custom: overlay UI > sprite custom (en costo)
+
+**Si el sprite vanilla no alcanza:**
+- **Camino fácil (~1h)**: PNG overlay con `ISUIElement` + `drawTextureScaled`. Limitación: no se integra al z-order del mundo, hay que hackear con transparencia por proximidad.
+- **Camino medio (~3-5h)**: editar/modificar la PNG existente para que se integre mejor (sombras, recorte). Requiere skill básico de GIMP/Photoshop.
+- **Camino caro (~5-8h + Fiverr $30-50)**: sprite custom iso real con TileZed + pipeline `.pack` + registro como sprite nuevo.
+
+**Lección de la sesión:** el camino fácil funciona muy bien para la mayoría de casos. Solo escalar a iso custom si el mod va a publicarse en serio y se vende como producto pulido. Para uso personal/co-op casual, el overlay PNG alcanza.
+
+---
+
+**Última actualización:** 2026-06-13
