@@ -1,14 +1,18 @@
 name=Holdoor
-poster=preview.png
+poster=poster.png
 id=Holdoor
-description=Sistema de defensa de base con oleadas de zombis para Project Zomboid Build 42.
-
-Activá las oleadas cuando quieras, configurá el tamaño, frecuencia y radio de spawn. Funciona en multijugador sin romper tu partida de survival.
-
-"Hold the door..." — Hodor
-
-Comandos: /holdoor para abrir el panel de configuración.
+description=Sistema de oleadas de zombis al estilo Game of Thrones para Project Zomboid B42.
+description=
+description=Defendi tu base contra hordas crecientes. Gana monedas (Bronce/Plata/Oro) y materiales (Cuero/Hierro/Acero/Valyrio/Obsidiana) por cada oleada.
+description=
+description=Gasta tus recompensas en la TIENDA: consumibles, armas, armaduras, XP en habilidades, lujos. Transferi monedas a otros jugadores en multiplayer.
+description=
+description=5 modos: Facil / Normal / Dificil / Pesadilla / Test.
+description=
+description=Presiona F10 para abrir el panel. Marca tu base y arrancan las oleadas.
+description=
+description=Hold the door... Hodor.
 url=https://github.com/nadascio/Holdoor_PZ
-modversion=0.1
+modversion=0.4
 pzversion=42
 tags=Multiplayer;Build 42;Survival;Wave Defense
