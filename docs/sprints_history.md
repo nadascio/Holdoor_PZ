@@ -101,6 +101,63 @@ Decisión: documentación del mod vive en su repo (`Documents/Holdoor_PZ/docs/`)
 
 ---
 
+## 2026-06-13 — Sprint mayor: HP por modo + drops materiales + items + tienda expandida + traits
+
+**Implementado en una sola sesión (sprint #1):**
+
+### HP del Trono por dificultad
+- Tabla `HoldoorConfig.tronoHPPorModo`: facil 1500 / normal 1250 / dificil 1100 / pesadilla 1000 / test 1500.
+- `_plantarTrono` usa el HP del modo activo.
+- Panel F10 muestra "Vida del Trono: X HP" al elegir el modo.
+- Modo Defensa activado ON por default (más atractivo).
+
+### Sistema de drops por oleada (función única `_distribuirRecompensaOleada`)
+- Multiplicadores por modo: facil 0.7x / normal 1x / dificil 1.5x / pesadilla 2.2x.
+- Monedas base 2x más bronce (`floor(zombis/2)` en vez de `/4`).
+- Chances de plata/oro +50%.
+- **Drop de materiales** nuevo: Cuero / Hierro / Acero / Valyrio / Obsidiana con probabilidades escaladas por modo.
+- **Drop de items reales** nuevo: pool extensible con categorías (médico, comida, armas, tesorosGoT vacío esperando).
+- Rarezas: común / poco_común / raro / épico.
+- **Performance bonus**: +10% monedas si player mató >70% zombis.
+- **Perfect run bonus**: +25% monedas + 15% materiales si Trono terminó oleada con HP completo.
+
+### HUD lateral rediseñado
+- 2 líneas: monedas (Bronce/Plata/Oro) + materiales (Cu/Hi/Ac/Va/Ob).
+- Cada moneda y material con su color temático (marrón, gris, dorado, violeta, púrpura).
+- Render custom con `drawText()` directo (ASCII porque kahlua no procesa escapes UTF-8 `\xHH`).
+
+### Tienda expandida (5 categorías nuevas + rebalance médico/comida)
+- **Consumibles**: 3 tiers (individuales baratos → packs medianos → kits grandes). 11 items médicos y de comida.
+- **Libros de Guerra**: 15 libros XP de combate (5 lite a 80 bronce, 9 full a 1 silver, 1 legendario a 1 oro).
+- **Rasgos Heroicos** (NUEVO): 6 traits positivos. Máximo 1 por vida del personaje.
+- **Milagros del Maestre** (NUEVO): 5 cura traits negativos. Máximo 1 por vida del personaje.
+- **Botón "[TEST] DARME"** en panel F10: da monedas/materiales/items para testing rápido.
+- Scroll vertical con paginación (6 filas + botones ▲/▼).
+- Header con colores por moneda/material.
+
+### Bugs aprendidos a la fuerza (APIs de B42 distintas)
+- `Base.FirstAidKit`, `Base.WaterBottleFull`, `Base.Alcohol`, `Base.Hat_ArmyHelmet`, `Base.Vest_BulletKevlar` NO existen en B42. Reemplazados por items reales: `Base.AlcoholBandage`, `Base.AlcoholedCottonBalls`, `Base.WineBottle`, `Base.Hat_Hardhat`, `Base.Vest_HighVis_Blue`.
+- `Perks.FromString("Strength")` puede devolver nil → agregado fallback a `Perks[name]`.
+- `getTraits():add()` cambió API → cascada de 4 APIs intentadas (descriptor:getTraits():add, getTraits():add, TraitFactory:applyToPlayer, HasTrait+add).
+- `traits:contains()` no existe → reemplazado por `jugador:HasTrait()`.
+- `stats:setHunger(0)` puede haber cambiado a `setHunger(0.0)`, agregado `getNutrition():setCalories()` como fallback.
+- `bd:isInfected()` puede no existir → cascada de APIs + validación defensiva (si no podemos verificar, dejamos pasar).
+- ñ/tildes en strings de UI: el font de PZ B42 NO renderiza UTF-8 multi-byte. Solo ASCII puro en labels y drawText. Identificadores Lua tampoco soportan ñ (kahlua).
+
+### UI fixes pre-commit
+- Header de tienda: panel ampliado a 820px, labels reposicionados a x=220 para no cortarse.
+- Header con colores por moneda/material (Saldo y Materiales).
+- Bug crítico Z-order: click derecho del mundo no funcionaba cuando estaba el overlay del Trono PNG abierto. Causa: faltaba `onRightMouseDown` y `onRightMouseUp` devolviendo false en HoldoorOverlayUI. ISUIElement por default devuelve true en handlers de mouse y consume eventos.
+
+### Pendiente para próximos sprints (en `next_steps.md`)
+- Tutorial de bienvenida + about-me + footer creador + botón reportar bugs (sprint #2).
+- i18n ES + EN (sprint #3-#4).
+- "Raise up John Snow" — seguro de vida (sprint #5).
+- Sprite custom iso del Trono (nice to have).
+- MVP2 White Walkers.
+
+---
+
 ## 2026-06-13 — Confirmación empírica: PZ carga del Workshop/42/
 
 **Idea de Nahuel:** agregar un botón al panel del mod que muestre desde qué ubicación del filesystem cargó el HoldoorUI.lua. Cada copia (source / mods / Workshop/media / Workshop/42) tiene un identificador distinto en `HoldoorUI._UBICACION`. Al apretar el botón, PZ revela la verdad.

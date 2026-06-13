@@ -13,7 +13,7 @@ HoldoorUI.overlay   = nil
 
 
 local PANEL_W = 500
-local PANEL_H = 540  -- vuelta al alto original sin botones de test
+local PANEL_H = 600  -- +18 por lbl HP Trono + +42 por boton TEST
 
 local COLOR_FONDO      = { r=0.05, g=0.04, b=0.03, a=0.97 }
 local COLOR_BORDE      = { r=0.6,  g=0.4,  b=0.1,  a=1    }
@@ -287,6 +287,11 @@ function HoldoorPanel:crearContenido()
     self:addChild(self.lblModoDetalle)
     y = y + 18
 
+    -- HP del Trono segun el modo (1500/1250/1100/1000) — info importante para el player
+    self.lblModoHP = ISLabel:new(pad, y, 16, "", 0.95, 0.55, 0.35, 1, UIFont.Small, true)
+    self:addChild(self.lblModoHP)
+    y = y + 18
+
     self.lblModoRecord = ISLabel:new(pad, y, 16, "", 0.30, 0.85, 0.45, 1, UIFont.Small, true)
     self:addChild(self.lblModoRecord)
     y = y + 22
@@ -318,13 +323,13 @@ function HoldoorPanel:crearContenido()
     y = y + 24
 
     -- Checkbox real: Modo defensa (defender el brasero)
-    self.modoDefensa = false
+    self.modoDefensa = true   -- ON por defecto: hace el mod mas atractivo (perdes si cae el Trono)
     self.tickDefensa = ISTickBox:new(pad, y, 220, 22, "", self, HoldoorPanel.onToggleDefensa)
     self.tickDefensa:initialise()
     self.tickDefensa:instantiate()
     self.tickDefensa:addOption("Modo Defensa: defender el Trono de Hierro")
     self.tickDefensa.choicesColor = { r=0.95, g=0.85, b=0.55, a=1 }
-    self.tickDefensa.selected[1] = false
+    self.tickDefensa.selected[1] = true
     self:addChild(self.tickDefensa)
 
     -- Status label al lado del check
@@ -369,6 +374,14 @@ function HoldoorPanel:crearContenido()
     self:addChild(self.btnDetener)
     y = y + bh + 8
 
+    -- BOTON TESTING: da monedas + materiales + items a uno mismo (para probar la tienda)
+    self.btnTest = ISButton:new(pad, y, PANEL_W - pad * 2, 26,
+        "[TEST] DARME MONEDAS + MATERIALES + ITEMS",
+        self, self.onTestDarme)
+    self.btnTest.backgroundColor = { r=0.30, g=0.15, b=0.40, a=1 }
+    self.btnTest.borderColor     = { r=0.7,  g=0.4,  b=0.85, a=1 }
+    self:addChild(self.btnTest)
+    y = y + 26 + 8
 
     self.btnCerrar = ISButton:new(pad, y, PANEL_W - pad * 2, 26, "Cerrar  (F10)", self, self.onCerrar)
     self.btnCerrar.backgroundColor = { r=0.1, g=0.1, b=0.1, a=1 }
@@ -384,6 +397,53 @@ end
 -- ─────────────────────────────────────────────
 
 function HoldoorPanel:doNothing(button) end
+
+-- [TEST ONLY] Auto-darse monedas + materiales + items para probar la tienda.
+-- Solo funciona en SP/host. Es trampa intencional pensada para testeo del balance.
+function HoldoorPanel:onTestDarme()
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then return end
+
+    local md
+    pcall(function() md = p:getModData() end)
+    if not md then return end
+
+    -- Monedas: 500 bronce, 100 plata, 100 oro
+    md.Holdoor_Bronze = (md.Holdoor_Bronze or 0) + 500
+    md.Holdoor_Silver = (md.Holdoor_Silver or 0) + 100
+    md.Holdoor_Gold   = (md.Holdoor_Gold   or 0) + 100
+
+    -- Materiales: 50 de cada uno
+    md.Holdoor_Cuero     = (md.Holdoor_Cuero     or 0) + 50
+    md.Holdoor_Hierro    = (md.Holdoor_Hierro    or 0) + 50
+    md.Holdoor_Acero     = (md.Holdoor_Acero     or 0) + 50
+    md.Holdoor_Valyrio   = (md.Holdoor_Valyrio   or 0) + 50
+    md.Holdoor_Obsidiana = (md.Holdoor_Obsidiana or 0) + 50
+
+    -- Items utiles para tener algo en inventario
+    local items = {
+        "Base.Bandage", "Base.Bandage", "Base.Bandage",
+        "Base.Pills", "Base.Pills",
+        "Base.Antibiotics",
+        "Base.Sandwich", "Base.WaterBottleFull",
+        "Base.Crowbar",
+    }
+    local inv
+    pcall(function() inv = p:getInventory() end)
+    if inv then
+        for _, name in ipairs(items) do
+            pcall(function() inv:AddItem(name) end)
+        end
+    end
+
+    pcall(function() p:setHaloNote("[TEST] +500B +100P +100O +50 c/u de materiales + items", 200, 220, 255, 360) end)
+    print("[Holdoor] TEST DARME: monedas+materiales+items entregados a " .. p:getUsername())
+
+    -- Refrescar el HUD/tienda si está abierta
+    if HoldoorShop and HoldoorShop.refrescar then HoldoorShop.refrescar() end
+    if HoldoorUI and HoldoorUI.actualizarTodo then HoldoorUI.actualizarTodo() end
+end
 
 function HoldoorPanel:onToggleDefensa(idx, selected)
     -- ISTickBox callback: idx=1, selected=true/false
@@ -445,6 +505,12 @@ function HoldoorPanel:_actualizarInfoModo(idx)
     self.lblLore2:setName(l2)
 
     self.lblModoDetalle:setName(modo.detalle or "")
+
+    -- Mostrar HP del Trono para este modo
+    if self.lblModoHP then
+        local hpModo = (HoldoorConfig.tronoHPPorModo or {})[modo.id] or 1500
+        self.lblModoHP:setName("Vida del Trono: " .. hpModo .. " HP")
+    end
 
     local record = HoldoorClient.obtenerRecord(modo.id)
     local maxOl  = modo.maxOleadas or 0
@@ -618,10 +684,20 @@ end
 HoldoorHUD = ISPanel:derive("HoldoorHUD")
 HoldoorHUD.instance = nil
 
-local HUD_W          = 255
+local HUD_W          = 265   -- +10 para que entren los simbolos de materiales
 local HUD_H_HEAD     = 28
-local HUD_H_BODY     = 304  -- +20 por HP del brasero
-local HUD_H_BODY_EXT = 424  -- altura con radar activo
+local HUD_H_BODY     = 326   -- +22 por nueva linea de materiales
+local HUD_H_BODY_EXT = 446   -- +22 igual con radar
+
+-- Paleta de colores por moneda/material (símbolos + colores temáticos)
+local COL_BRONCE    = { r=0.72, g=0.45, b=0.20, a=1 }
+local COL_PLATA     = { r=0.78, g=0.78, b=0.80, a=1 }
+local COL_ORO       = { r=0.89, g=0.65, b=0.28, a=1 }
+local COL_CUERO     = { r=0.55, g=0.35, b=0.18, a=1 }
+local COL_HIERRO    = { r=0.65, g=0.65, b=0.65, a=1 }
+local COL_ACERO     = { r=0.60, g=0.78, b=0.92, a=1 }
+local COL_VALYRIO   = { r=0.70, g=0.40, b=0.85, a=1 }
+local COL_OBSIDIANA = { r=0.45, g=0.20, b=0.50, a=1 }
 
 local COLOR_HUD_BG   = { r=0.05, g=0.04, b=0.03, a=0.93 }
 local COLOR_HUD_ORO  = { r=0.85, g=0.65, b=0.25, a=1    }
@@ -717,10 +793,12 @@ function HoldoorHUD:_crearContenido()
     self:addChild(self.lblKillsPartidaHUD)
     y = y + 22
 
-    -- Saldo de monedas
-    self.lblMonedasHUD = ISLabel:new(pad, y, 16, "Monedas: -- B  -- P  -- O", 0.95, 0.78, 0.30, 1, UIFont.Small, true)
-    self:addChild(self.lblMonedasHUD)
-    y = y + 22
+    -- Saldo de monedas y materiales — render custom en :render() con simbolos+colores
+    self.yMonedasHUD    = y
+    y = y + 18
+    self.yMaterialesHUD = y
+    y = y + 18
+    y = y + 4
 
     -- Boton enviar monedas a otro jugador
     self.btnEnviar = ISButton:new(pad, y, HUD_W - pad * 2, 24, "Enviar monedas a otro jugador", self, HoldoorHUD.onEnviar)
@@ -773,7 +851,7 @@ function HoldoorHUD:_setExpandido(v)
         self.lblFzaHUD, self.lblAmenHUD, self.lblBaseDir, self.lblTronoHP,
         self.lblNotifHUD,
         self.lblKillsHUD, self.lblKillsPartidaHUD,
-        self.lblMonedasHUD, self.btnEnviar, self.btnTienda,
+        self.btnEnviar, self.btnTienda,   -- monedas/materiales dibujados en :render()
     }
     for _, c in ipairs(hijos) do if c then c:setVisible(v) end end
     -- Radar: visible solo si expandido Y radarVisible
@@ -1059,11 +1137,7 @@ function HoldoorHUD:actualizarHUD()
         end
     end
 
-    -- Saldo de monedas (lee ModData del jugador)
-    if self.lblMonedasHUD and HoldoorClient.getSaldo then
-        local b, s, g = HoldoorClient.getSaldo()
-        self.lblMonedasHUD:setName("Monedas: " .. b .. " B   " .. s .. " P   " .. g .. " O")
-    end
+    -- Las monedas y materiales se dibujan en el render principal con simbolos+colores
 end
 
 -- Escanea tiles alrededor del JUGADOR buscando IsoZombies vivos.
@@ -1113,6 +1187,29 @@ function HoldoorHUD:render()
         -- Separador entre info de oleada y stats personales
         local sepY = HUD_H_HEAD + 148
         self:drawRect(8, sepY, HUD_W - 16, 1, 0.35, 0.45, 0.25, 0.7)
+
+        -- Linea de MONEDAS con prefijos ASCII + colores: B / P / O
+        -- Nota: PZ B42 (kahlua) no procesa escapes \xHH en strings, asi que usamos letras planas.
+        if self.yMonedasHUD and HoldoorClient and HoldoorClient.getSaldo then
+            local b, s, g = HoldoorClient.getSaldo()
+            local x = 8
+            local y = self.yMonedasHUD
+            self:drawText("Bronce: " .. b, x,       y, COL_BRONCE.r, COL_BRONCE.g, COL_BRONCE.b, 1, UIFont.Small)
+            self:drawText("Plata: "  .. s, x + 86,  y, COL_PLATA.r,  COL_PLATA.g,  COL_PLATA.b,  1, UIFont.Small)
+            self:drawText("Oro: "    .. g, x + 158, y, COL_ORO.r,    COL_ORO.g,    COL_ORO.b,    1, UIFont.Small)
+        end
+
+        -- Linea de MATERIALES: Cu / Hi / Ac / Va / Ob (abreviaturas de 2 letras)
+        if self.yMaterialesHUD and HoldoorClient and HoldoorClient.getMateriales then
+            local m = HoldoorClient.getMateriales()
+            local x = 8
+            local y = self.yMaterialesHUD
+            self:drawText("Cu " .. (m.cuero     or 0), x,       y, COL_CUERO.r,     COL_CUERO.g,     COL_CUERO.b,     1, UIFont.Small)
+            self:drawText("Hi " .. (m.hierro    or 0), x + 48,  y, COL_HIERRO.r,    COL_HIERRO.g,    COL_HIERRO.b,    1, UIFont.Small)
+            self:drawText("Ac " .. (m.acero     or 0), x + 96,  y, COL_ACERO.r,     COL_ACERO.g,     COL_ACERO.b,     1, UIFont.Small)
+            self:drawText("Va " .. (m.valyrio   or 0), x + 144, y, COL_VALYRIO.r,   COL_VALYRIO.g,   COL_VALYRIO.b,   1, UIFont.Small)
+            self:drawText("Ob " .. (m.obsidiana or 0), x + 192, y, COL_OBSIDIANA.r, COL_OBSIDIANA.g, COL_OBSIDIANA.b, 1, UIFont.Small)
+        end
     end
 
     -- Radar: escanear cada ~90 frames y dibujar cuando es visible

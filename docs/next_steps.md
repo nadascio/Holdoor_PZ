@@ -45,6 +45,169 @@ Solo cuando se vuelva al testing MP. SP funciona OK.
 
 ---
 
+## 🎓 TUTORIAL DE BIENVENIDA (sprint #1, primero después del sprint actual)
+
+**Estado:** sin tutorial. Cuando el user nuevo abre el mod, no sabe qué hacer.
+
+**Plan:**
+1. Detectar primer uso vía `player:getModData().Holdoor_TutorialVisto`.
+2. Wizard modal con 7 pasos (Bienvenida / F10-chat / Base+modos / Oleadas+Defensa / Monedas-Materiales-Tienda / Tip balance / "Hold the door!").
+3. Cada paso: título + texto + [Atrás] [Siguiente] [Saltar].
+4. Botón "Ver tutorial" en panel F10 para revisarlo de nuevo.
+5. **Solo en castellano por ahora** (después se traduce en sprint #2).
+
+**Tiempo estimado:** ~2-3h.
+
+---
+
+## 🌍 INTERNACIONALIZACIÓN (sprint #2-#4, después del tutorial)
+
+### Holdoor versión ENG + ESP (sistema nativo de PZ)
+
+**Estado:** mod actualmente solo en español. Queremos versión inglés para alcanzar audiencia global del Workshop.
+
+**Camino A elegido — sistema nativo de PZ con archivos `Translate/<lang>/`:**
+
+1. **Sweep de strings hardcoded** en:
+   - `HoldoorClient.lua` (notificaciones de chat, mensajes server→client)
+   - `HoldoorUI.lua` (todos los labels, botones, tooltips del panel y HUD)
+   - `HoldoorShop.lua` (UI de tienda)
+   - `HoldoorConfig.lua` (nombres de modos, descripciones)
+   - `HoldoorServer.lua` (notificaciones de oleada, prints visibles)
+
+2. **Reemplazar cada string** por `getText("Holdoor_<KeyName>")`.
+
+3. **Crear archivos de traducción:**
+   ```
+   media/lua/shared/Translate/ES/Holdoor_ES.txt
+   media/lua/shared/Translate/EN/Holdoor_EN.txt
+   ```
+   Formato: `Holdoor_KeyName = "valor en idioma X",`
+
+4. **Aclarar en el título del mod** (mod.info + workshop.txt):
+   ```
+   Holdoor — Wave Defense GoT [ENG/ESP] (Beta)
+   ```
+   Que quede claro que soporta ambos idiomas.
+
+5. **Workshop description bilingüe**: opción A (texto largo dividido en 2 mitades ENG arriba / ESP abajo) o opción B (publicar como item único con bandera 🇬🇧🇪🇸 al principio).
+
+**Por qué Camino A y no B (mod separado):** mantener 2 mods sincronizados es doloroso. El sistema nativo de PZ resuelve esto correctamente y permite agregar más idiomas (PT, FR, RU) fácil después.
+
+**Cuándo:** después del tutorial (sprint #1). Es importante para crecimiento del mod en Workshop.
+
+---
+
+## 👤 ABOUT ME / CREADOR / FOOTER / REPORTE DE BUGS (sprint #1, junto con tutorial)
+
+**Estado:** mod actualmente NO menciona al creador ni cómo reportar bugs.
+
+**Plan de TODO lo "informacional del mod" que va junto al tutorial:**
+
+### 1. Autoría in-game (que quede asentado el creador)
+- **`mod.info`**: agregar `author=Nahuel Scioro`.
+- **`workshop.txt`**: sección "Sobre el creador" al final con el about-me.
+- **Footer pequeño en panel F10**: línea en gris sutil tipo `Holdoor v0.5 — by Nahuel Scioro` en la esquina inferior del panel.
+- **Footer en HUD lateral**: opcional, una línea chiquita "by Nahuel" abajo del HUD.
+- **Paso final del tutorial**: "Creado por Nahuel Scioro — desde Argentina".
+
+### 2. Botón "Acerca del autor" en panel F10
+Abre un modal con el about-me + foto/avatar opcional + link a perfil de Steam/github.
+
+### 3. Botón "Reportar un bug" en panel F10
+Abre un modal con:
+- Link al github issues: `https://github.com/nadascio/Holdoor_PZ/issues`
+- Instrucciones cortas: "Pegá el error que viste + qué estabas haciendo".
+- Botón "Copiar link al portapapeles" (si la API de PZ lo permite, sino solo mostrar el link).
+
+### 4. About-me text (versión pulida, confirmada por Nahuel 2026-06-13)
+```
+¡Hola! Soy Nahuel Scioro, desde Argentina.
+
+Soy contador público de profesión, pero giré hacia el lado
+tecnológico. Hoy me dedico a automatizar procesos de impuestos
+con IA, RPA y otras herramientas.
+
+Este mod nació como un proyecto personal — un homenaje a
+Game of Thrones y a las largas tardes jugando Project Zomboid
+con amigos.
+
+Quería compartirles algo de lo que disfruto haciendo. Espero
+que les guste y se diviertan tanto como yo armándolo.
+
+Hold the door!
+— Nahuel
+```
+
+**Cuándo:** TODO se implementa junto con el tutorial (sprint #1) en castellano. La traducción inglés va en sprint #3.
+
+---
+
+## ⚰️ "RAISE UP JOHN SNOW" — Seguro de Vida (sprint #5 o cuando convenga)
+
+**Estado:** diseño completo cerrado 2026-06-13. Implementación ~3-5h.
+
+### Concepto
+
+Item endgame de la tienda que da al player una **resurrección automática** la próxima vez que muera por CUALQUIER causa (zombi, caída, hambre, etc.). No requiere oleada activa.
+
+### Approach técnico: INTERCEPCIÓN (no respawn)
+
+En lugar de "morir y crear personaje nuevo" (que perdería apariencia/build), interceptamos el daño letal ANTES de matar al player vía `OnPlayerGetDamage` / `OnPlayerDeath` y curamos al mismo IsoPlayer.
+
+**Ventajas**: conserva cara/pelo/género/edad/ropa/construcciones/vehículos/skills/traits/saldo — todo intacto.
+
+### Flow definitivo
+
+1. Player compra "Raise up John Snow" en tienda → flag `md.Holdoor_RaiseUpActivo = true`.
+2. Player muere por cualquier causa.
+3. **Servidor intercepta**, cancela el daño, ejecuta:
+   - HP → 100%
+   - Heridas / sangrado / infección / mordeduras → limpios
+   - Hunger / thirst / fatigue / stress → razonables
+   - Body damage → limpio
+4. **Pantalla negra 3 segundos** + sonido épico (campanas/coro) + texto centrado:
+   > **"¡John Snow ha sido levantado por el R'hllor!"**
+5. **Teletransporte al lugar seguro (approach C híbrido)**:
+   - Buscar tile sin zombis adyacentes cerca del Trono (radio 3 → 15).
+   - Si no encuentra, buscar a 20-30 tiles del lugar de muerte.
+   - Fallback: posición original con invulnerabilidad larga.
+6. **Invulnerabilidad temporal 2-3 segundos** (god mode) para que el player se reposicione si la zona se complica.
+7. Flag consumido. Próxima compra es full price de nuevo.
+
+### Decisiones lockeadas
+
+| | |
+|---|---|
+| Approach | **C híbrido** (Trono primero, lugar de muerte secundario) |
+| Invulnerabilidad post-respawn | **2-3 segundos god mode** |
+| Animación | **Pantalla negra 3s + texto épico + sonido** |
+| Precio | **5 oro + 3 valyrio + 5 obsidiana** |
+| Cuándo se puede comprar | **Cualquier momento** (no hay bloqueo por oleadas) |
+| Cuándo se activa | **Cualquier momento que muera** el player (oleada o no) |
+| Cantidad de revives | **1 sola por compra** (re-comprable después) |
+
+### Categoría en tienda
+
+Va en categoría **"Milagros del Maestre"** o en una nueva **"R'hllor"** dedicada solo a esto. Decidimos al implementar.
+
+### Item key sugerido
+
+```lua
+{ id="raise_up_jon",
+  nombre="Levanten a John Snow",
+  desc="Una segunda chance. El R'hllor te levantara una vez antes de morir definitivamente.",
+  precio={gold=5, valyrio=3, obsidiana=5},
+  accion={tipo="raise_up"} }
+```
+
+### Limitaciones honestas
+
+- Si el daño es **instantáneo y masivo** (caída altura gigante, explosión), el evento puede no interceptarse a tiempo. Backup: check de HP cada tick.
+- **Construcciones/vehículos del player en el mapa NO se afectan** (sobreviven a la muerte de su creador). En este approach tampoco se tocan, así que perfecto.
+
+---
+
 ## 🛠 SPRINTS CHICOS (1-2h cada uno)
 
 ### 3. Balance de daño Trono
@@ -140,15 +303,37 @@ Guardar entre saves:
 
 ---
 
-## ✅ CERRADO RECIENTEMENTE (2026-06-13)
+## ✅ CERRADO 2026-06-13 — SPRINT MAYOR
 
 Movido a `sprints_history.md`:
+- **HP del Trono variable por dificultad** (facil 1500 / normal 1250 / dificil 1100 / pesadilla 1000).
+- **Modo Defensa ON por defecto** + bonus "perfect run" (Trono sin daño = +25% monedas + 15% materiales).
+- **Sistema de drops completo en `_distribuirRecompensaOleada`**: monedas 2x más + materiales (Cuero/Hierro/Acero/Valyrio/Obsidiana) + items reales del juego con pool extensible.
+- **Performance bonus**: +10% monedas si player mató >70% zombis de la oleada.
+- **HUD lateral con colores**: monedas + materiales con tonos temáticos. ASCII puro (kahlua no soporta UTF-8).
+- **Tienda expandida**: 3 tiers en consumibles (médico + comida) con balance progresivo. 15 libros XP de combate. 6 Rasgos Heroicos (1 por vida). 5 Milagros del Maestre (1 por vida).
+- **Botón [TEST] DARME** en panel F10 para autodarse monedas/items y probar la tienda.
+- **Scroll vertical en tienda** con paginación (6 filas + ▲/▼).
+- **Header tienda con colores por moneda/material**.
+- **Bug del click derecho del mundo** arreglado (faltaba `onRightMouseDown` en overlay del Trono).
+- **Fixes de APIs B42**: items que no existen reemplazados (`Base.FirstAidKit` → packages reales, `Base.WaterBottleFull` → `Base.WineBottle`, etc.), traits con cascada de 4 APIs, cura_trait con `HasTrait()`, stats restore defensivo.
+
+## ✅ CERRADO 2026-06-13 (previo)
+
 - **Visual del Trono de Hierro (camino C0)**: overlay PNG flotante sobre la forja. Funciona, se transparenta al acercarse player/zombis (cache 100ms).
-- **Layout del Trono**: 1 pieza (forja `crafted_01_16`, 1500 HP). Game over cuando llega a 0.
-- **Colchón de zombis**: cada 3s, si vivos < 5 y hay encolados → spawn inmediato. Evita "ir a buscarlos".
-- **Limpieza al terminar oleada y al perder (game over)**: `_limpiarZona()` en `_oleadaCompletada` y `_tronoCayo`.
-- **Comandos de diagnóstico vivos**: `testSprite`, `testGaleria`, `dejarTile`, `apilarTile`, `dumpTrono`, `matarZombiesCerca`, etc.
-- **APIs B42 documentadas en gotchas**: `IsoUtils.XToScreenExact` con 4 args, `drawTextureScaled` con 6 args.
+- **Layout del Trono**: 1 pieza (forja `crafted_01_16`, 1500 HP base).
+- **Colchón de zombis**: cada 3s, si vivos < 5 y hay encolados → spawn inmediato.
+- **Limpieza al terminar oleada y al perder**: `_limpiarZona()`.
+- **Comandos de diagnóstico vivos**: `testSprite`, `testGaleria`, `dejarTile`, `apilarTile`, `dumpTrono`, `matarZombiesCerca`.
+- **APIs B42 documentadas**: `IsoUtils.XToScreenExact` con 4 args, `drawTextureScaled` con 6 args.
+
+## ⚠️ PENDIENTE de validar en juego antes del próximo sprint
+
+- Rasgos Heroicos: ¿la cascada de 4 APIs funciona en este build? (probar Strong primero, ver log STEP A/B/C/D).
+- Milagros del Maestre: cura_trait defensivo, debería permitir paso si no puede verificar.
+- Festín de Invernalia: restore stats con cascada.
+- Magia de Asshai: cure_bite defensivo.
+- Balance general: precios/drops sentirse correctos en runs reales.
 
 ## ✅ CERRADO 2026-06-12
 

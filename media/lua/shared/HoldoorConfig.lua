@@ -89,35 +89,70 @@ HoldoorConfig.modos = {
     },
 }
 
--- ─── TABLA DE RECOMPENSAS POR MODO ───────────────────────────
+-- ─── HP DEL TRONO POR MODO ──────────────────────────────────
+-- HP máximo de la forja (pieza central del Trono). Game over cuando llega a 0.
+-- Suben las dificultades altas tienen menos HP — combinan más zombis + Trono más frágil.
+HoldoorConfig.tronoHPPorModo = {
+    facil     = 1500,
+    normal    = 1250,
+    dificil   = 1100,
+    pesadilla = 1000,
+    test      = 1500,
+}
+
+-- ─── MULTIPLICADORES GLOBALES DE DROP POR MODO ──────────────
+-- Se aplican a TODO: monedas, materiales, items reales.
+-- Permite afinar el balance de cada modo sin tocar todas las tablas.
+HoldoorConfig.dropMult = {
+    facil     = { monedas = 0.7, materiales = 0.6, items = 0.5 },
+    normal    = { monedas = 1.0, materiales = 1.0, items = 1.0 },
+    dificil   = { monedas = 1.5, materiales = 1.6, items = 1.5 },
+    pesadilla = { monedas = 2.2, materiales = 2.5, items = 2.2 },
+    test      = { monedas = 0,   materiales = 0,   items = 0   },
+}
+
+-- ─── PERFORMANCE BONUS ──────────────────────────────────────
+-- Si el player mato >= performanceThreshold % de los zombis de la oleada,
+-- recibe +performanceCoinBonus en monedas (NO en items/materiales).
+HoldoorConfig.performanceThreshold  = 0.70   -- 70% de kills
+HoldoorConfig.performanceCoinBonus  = 0.10   -- +10% solo monedas
+
+-- ─── PERFECT RUN BONUS ──────────────────────────────────────
+-- Si el Trono termina la oleada con HP completo (no recibio daño), bonus extra.
+-- Indica al jugador que defendio impecablemente.
+HoldoorConfig.perfectRunCoinBonus   = 0.25   -- +25% en monedas si HP del Trono = 100% al fin de oleada
+HoldoorConfig.perfectRunMatBonus    = 0.15   -- +15% en chances de materiales
+
+-- ─── TABLA DE RECOMPENSAS POR MODO (monedas) ─────────────────
 -- Cada oleada: bronce garantizado + tirada por plata/oro extra (drop raro)
 -- Final de modo: plata garantizada + tirada por oro final
+-- 2026-06-13: Bronce base 2x (floor(zombis/2)) + chances +50%.
 HoldoorConfig.rewardTable = {
     facil = {
-        bonusSilverChance = 0.05,   -- 5% chance de +1 plata por oleada (drop raro)
-        bonusGoldChance   = 0.00,   -- en facil nunca cae oro mid-run
-        endGoldChance     = 0.50,   -- 50% de chance al ganar todo el modo
+        bonusSilverChance = 0.08,   -- 8% (antes 5%)
+        bonusGoldChance   = 0.00,
+        endGoldChance     = 0.55,
         endGoldMin        = 1,
         endGoldMax        = 1,
     },
     normal = {
-        bonusSilverChance = 0.12,
-        bonusGoldChance   = 0.02,   -- 2% por oleada (jackpot inesperado)
-        endGoldChance     = 0.70,
+        bonusSilverChance = 0.18,   -- 18% (antes 12%)
+        bonusGoldChance   = 0.03,   -- 3% (antes 2%)
+        endGoldChance     = 0.75,
         endGoldMin        = 1,
         endGoldMax        = 1,
     },
     dificil = {
-        bonusSilverChance = 0.20,
-        bonusGoldChance   = 0.05,
-        endGoldChance     = 0.90,
+        bonusSilverChance = 0.30,   -- 30% (antes 20%)
+        bonusGoldChance   = 0.08,   -- 8% (antes 5%)
+        endGoldChance     = 0.95,
         endGoldMin        = 1,
         endGoldMax        = 2,
     },
     pesadilla = {
-        bonusSilverChance = 0.30,
-        bonusGoldChance   = 0.10,
-        endGoldChance     = 1.00,   -- garantizado por la dificultad
+        bonusSilverChance = 0.45,   -- 45% (antes 30%)
+        bonusGoldChance   = 0.15,   -- 15% (antes 10%)
+        endGoldChance     = 1.00,
         endGoldMin        = 2,
         endGoldMax        = 3,
     },
@@ -128,6 +163,101 @@ HoldoorConfig.rewardTable = {
         endGoldMin        = 0,
         endGoldMax        = 0,
     },
+}
+
+-- ─── TABLA DE DROP DE MATERIALES POR MODO ───────────────────
+-- Cada material tiene {chance, minQty, maxQty} por modo.
+-- Chance final = chance_base * dropMult.materiales[modo].
+HoldoorConfig.materialDropTable = {
+    facil = {
+        cuero     = { chance = 0.30, min = 1, max = 2 },
+        hierro    = { chance = 0.15, min = 1, max = 1 },
+        acero     = { chance = 0.05, min = 1, max = 1 },
+        valyrio   = { chance = 0.00, min = 0, max = 0 },
+        obsidiana = { chance = 0.00, min = 0, max = 0 },
+    },
+    normal = {
+        cuero     = { chance = 0.50, min = 1, max = 3 },
+        hierro    = { chance = 0.30, min = 1, max = 2 },
+        acero     = { chance = 0.12, min = 1, max = 1 },
+        valyrio   = { chance = 0.03, min = 1, max = 1 },
+        obsidiana = { chance = 0.01, min = 1, max = 1 },
+    },
+    dificil = {
+        cuero     = { chance = 0.70, min = 2, max = 3 },
+        hierro    = { chance = 0.50, min = 1, max = 2 },
+        acero     = { chance = 0.25, min = 1, max = 2 },
+        valyrio   = { chance = 0.08, min = 1, max = 1 },
+        obsidiana = { chance = 0.04, min = 1, max = 1 },
+    },
+    pesadilla = {
+        cuero     = { chance = 0.90, min = 2, max = 4 },
+        hierro    = { chance = 0.70, min = 2, max = 3 },
+        acero     = { chance = 0.45, min = 1, max = 2 },
+        valyrio   = { chance = 0.18, min = 1, max = 1 },
+        obsidiana = { chance = 0.12, min = 1, max = 1 },
+    },
+    test = {  -- todo 0 para que test no inunde de drops
+        cuero     = { chance = 0, min = 0, max = 0 },
+        hierro    = { chance = 0, min = 0, max = 0 },
+        acero     = { chance = 0, min = 0, max = 0 },
+        valyrio   = { chance = 0, min = 0, max = 0 },
+        obsidiana = { chance = 0, min = 0, max = 0 },
+    },
+}
+
+-- ─── POOL DE ITEMS REALES DEL JUEGO (random drop por oleada) ─
+-- Extensible: agregar items nuevos en cualquier pool sin tocar la lógica.
+-- Pool "tesorosGoT" vacío esperando items de Game of Thrones cuando los agreguemos.
+--
+-- Cada item: { item="Base.X", rareza="comun|poco_comun|raro|epico", qty={min,max} }
+HoldoorConfig.itemDropPool = {
+    medico = {
+        nombre = "Médico",
+        items = {
+            { item = "Base.Bandage",          rareza = "comun",      qty = {1, 2} },
+            { item = "Base.Pills",            rareza = "comun",      qty = {1, 1} },
+            { item = "Base.Antibiotics",      rareza = "poco_comun", qty = {1, 1} },
+            { item = "Base.FirstAidKit",      rareza = "raro",       qty = {1, 1} },
+        },
+    },
+    comida = {
+        nombre = "Comida",
+        items = {
+            { item = "Base.Sandwich",         rareza = "comun",      qty = {1, 1} },
+            { item = "Base.WaterBottleFull",  rareza = "comun",      qty = {1, 1} },
+            { item = "Base.TinnedSoup",       rareza = "comun",      qty = {1, 2} },
+            { item = "Base.Steak",            rareza = "poco_comun", qty = {1, 1} },
+        },
+    },
+    armas = {
+        nombre = "Armas",
+        items = {
+            { item = "Base.HuntingKnife",     rareza = "poco_comun", qty = {1, 1} },
+            { item = "Base.Crowbar",          rareza = "poco_comun", qty = {1, 1} },
+            { item = "Base.Pistol",           rareza = "raro",       qty = {1, 1} },
+            { item = "Base.Bullets9mm",       rareza = "poco_comun", qty = {1, 1} },  -- caja
+            { item = "Base.HuntingRifle",     rareza = "epico",      qty = {1, 1} },
+        },
+    },
+    -- Placeholder para items GoT custom — vacio por ahora, se agregan despues
+    tesorosGoT = {
+        nombre = "Tesoros de Westeros",
+        items = {
+            -- ejemplo cuando agreguemos items GoT:
+            -- { item = "Holdoor.CuernoDelInvierno", rareza = "epico", qty = {1, 1} },
+        },
+    },
+}
+
+-- ─── CHANCES BASE POR RAREZA ────────────────────────────────
+-- Probabilidad de que SE ROLE un item de esta rareza en una oleada.
+-- Chance final = chance_base * dropMult.items[modo].
+HoldoorConfig.rarezaChances = {
+    comun       = 0.40,   -- 40% de rolear un comun
+    poco_comun  = 0.18,
+    raro        = 0.06,
+    epico       = 0.015,
 }
 
 -- ─── MODO CUSTOM (sliders libres) ───────────────────────────
@@ -173,4 +303,4 @@ HoldoorConfig.frases = {
 }
 
 HoldoorConfig.MODULE  = "Holdoor"
-HoldoorConfig.VERSION = "0.3"
+HoldoorConfig.VERSION = "0.5"

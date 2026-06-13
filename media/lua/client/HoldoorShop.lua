@@ -9,7 +9,7 @@ require "HoldoorClient"
 HoldoorShop = HoldoorShop or {}
 HoldoorShop.instance = nil
 
-local SHOP_W = 720
+local SHOP_W = 820   -- ampliado para que entre el header completo de materiales
 local SHOP_H = 540
 
 local PAD       = 14
@@ -22,9 +22,15 @@ local COLOR_BORDE_S    = { r=0.6,  g=0.4,  b=0.1,  a=1    }
 local COLOR_BTN_OK_S   = { r=0.18, g=0.45, b=0.20, a=1    }
 local COLOR_BTN_BAD_S  = { r=0.35, g=0.10, b=0.10, a=1    }
 local COLOR_BTN_DIS_S  = { r=0.18, g=0.18, b=0.20, a=1    }
-local COLOR_BRONCE     = { r=0.85, g=0.55, b=0.30, a=1    }
-local COLOR_PLATA      = { r=0.80, g=0.85, b=0.95, a=1    }
-local COLOR_ORO        = { r=0.95, g=0.78, b=0.20, a=1    }
+local COLOR_BRONCE     = { r=0.72, g=0.45, b=0.20, a=1    }
+local COLOR_PLATA      = { r=0.78, g=0.78, b=0.80, a=1    }
+local COLOR_ORO        = { r=0.89, g=0.65, b=0.28, a=1    }
+local COLOR_CUERO      = { r=0.55, g=0.35, b=0.18, a=1    }
+local COLOR_HIERRO     = { r=0.65, g=0.65, b=0.65, a=1    }
+local COLOR_ACERO      = { r=0.60, g=0.78, b=0.92, a=1    }
+local COLOR_VALYRIO    = { r=0.70, g=0.40, b=0.85, a=1    }
+local COLOR_OBSIDIANA  = { r=0.45, g=0.20, b=0.50, a=1    }
+local COLOR_HEADER_LBL = { r=0.95, g=0.85, b=0.55, a=1    }   -- label "Saldo:" / "Materiales:"
 
 -- ─────────────────────────────────────────────
 --  ENTRY POINT
@@ -62,9 +68,13 @@ function HoldoorShopPanel:new(x, y, w, h)
     o.borderColor     = COLOR_BORDE_S
     o.moveWithMouse   = true
     o.categoriaActual = 1
+    o.scrollOffset    = 0   -- indice del primer item visible (paginacion)
     o.filasItems      = {}  -- guarda referencias a las filas para destruirlas al cambiar de cat
     return o
 end
+
+-- Maximo de items visibles a la vez en la lista (resto se ve con scroll)
+local MAX_FILAS_VISIBLES = 6
 
 function HoldoorShopPanel:initialise()
     ISPanel.initialise(self)
@@ -78,11 +88,10 @@ function HoldoorShopPanel:_crearContenido()
     self.lblTit = ISLabel:new(pad, 12, 24, "TIENDA HOLDOOR", 0.95, 0.78, 0.30, 1, UIFont.Medium, true)
     self:addChild(self.lblTit)
 
-    self.lblSaldo = ISLabel:new(SHOP_W - 380, 14, 16, "", 1, 1, 1, 1, UIFont.Small, true)
-    self:addChild(self.lblSaldo)
-
-    self.lblMateriales = ISLabel:new(SHOP_W - 380, 38, 14, "", 0.85, 0.75, 0.45, 1, UIFont.Small, true)
-    self:addChild(self.lblMateriales)
+    -- Saldo y materiales se dibujan en :render() con colores por moneda/material.
+    -- Posicion Y: 14 (saldo) y 38 (materiales). X base: 220 (despues del titulo).
+    self._yMonedasHeader   = 14
+    self._yMaterialesHeader = 38
 
     self.btnClose = ISButton:new(SHOP_W - 36, 12, 24, 22, "X", self, HoldoorShopPanel.onClose)
     self.btnClose.backgroundColor = { r=0.35, g=0.10, b=0.10, a=1 }
@@ -132,24 +141,57 @@ function HoldoorShopPanel:render()
             self:drawRect(d.x, d.y, d.w, d.h, 0.5, 0.6, 0.4, 0.15)
         end
     end
+
+    -- Linea de SALDO con colores por moneda
+    if HoldoorClient and HoldoorClient.getSaldo then
+        local b, s, g = HoldoorClient.getSaldo()
+        local y = self._yMonedasHeader or 14
+        local x = 220
+        self:drawText("Saldo: ",      x,        y, COLOR_HEADER_LBL.r, COLOR_HEADER_LBL.g, COLOR_HEADER_LBL.b, 1, UIFont.Small)
+        x = x + 50
+        self:drawText(b .. " Bronce", x,        y, COLOR_BRONCE.r,     COLOR_BRONCE.g,     COLOR_BRONCE.b,     1, UIFont.Small)
+        x = x + 110
+        self:drawText(s .. " Plata",  x,        y, COLOR_PLATA.r,      COLOR_PLATA.g,      COLOR_PLATA.b,      1, UIFont.Small)
+        x = x + 100
+        self:drawText(g .. " Oro",    x,        y, COLOR_ORO.r,        COLOR_ORO.g,        COLOR_ORO.b,        1, UIFont.Small)
+    end
+
+    -- Linea de MATERIALES con colores por material
+    if HoldoorClient and HoldoorClient.getMateriales then
+        local m = HoldoorClient.getMateriales()
+        local y = self._yMaterialesHeader or 38
+        local x = 220
+        self:drawText("Materiales: ",        x,         y, COLOR_HEADER_LBL.r, COLOR_HEADER_LBL.g, COLOR_HEADER_LBL.b, 1, UIFont.Small)
+        x = x + 80
+        self:drawText(m.cuero .. " Cuero",    x,         y, COLOR_CUERO.r,      COLOR_CUERO.g,      COLOR_CUERO.b,      1, UIFont.Small)
+        x = x + 90
+        self:drawText(m.hierro .. " Hierro",  x,         y, COLOR_HIERRO.r,     COLOR_HIERRO.g,     COLOR_HIERRO.b,     1, UIFont.Small)
+        x = x + 95
+        self:drawText(m.acero .. " Acero",    x,         y, COLOR_ACERO.r,      COLOR_ACERO.g,      COLOR_ACERO.b,      1, UIFont.Small)
+        x = x + 90
+        self:drawText(m.valyrio .. " Valyrio", x,        y, COLOR_VALYRIO.r,    COLOR_VALYRIO.g,    COLOR_VALYRIO.b,    1, UIFont.Small)
+        x = x + 95
+        self:drawText(m.obsidiana .. " Obsidiana", x,    y, COLOR_OBSIDIANA.r,  COLOR_OBSIDIANA.g,  COLOR_OBSIDIANA.b,  1, UIFont.Small)
+    end
 end
 
 function HoldoorShopPanel:_refrescarSaldo()
-    if self.lblSaldo then
-        local b, s, g = HoldoorClient.getSaldo()
-        self.lblSaldo:setName("Saldo:  " .. b .. " Bronce   " .. s .. " Plata   " .. g .. " Oro")
-    end
-    if self.lblMateriales and HoldoorClient.getMateriales then
-        local m = HoldoorClient.getMateriales()
-        self.lblMateriales:setName(
-            "Materiales:  " .. m.cuero .. " Cuero   " .. m.hierro .. " Hierro   " ..
-            m.acero .. " Acero   " .. m.valyrio .. " Valyrio   " .. m.obsidiana .. " Obsidiana"
-        )
-    end
+    -- El render custom en :render() se encarga de leer getSaldo/getMateriales cada frame.
 end
 
 function HoldoorShopPanel:onSelectCat(button)
     self.categoriaActual = button.holdoorCatIdx
+    self.scrollOffset    = 0   -- reset al cambiar de categoria
+    self:_renderCategoria()
+end
+
+function HoldoorShopPanel:onScrollUp()
+    self.scrollOffset = math.max(0, (self.scrollOffset or 0) - MAX_FILAS_VISIBLES)
+    self:_renderCategoria()
+end
+
+function HoldoorShopPanel:onScrollDown()
+    self.scrollOffset = (self.scrollOffset or 0) + MAX_FILAS_VISIBLES
     self:_renderCategoria()
 end
 
@@ -210,7 +252,41 @@ function HoldoorShopPanel:_renderCategoria()
     local mats = HoldoorClient.getMateriales and HoldoorClient.getMateriales() or
                  { cuero=0, hierro=0, acero=0, valyrio=0, obsidiana=0 }
 
-    for _, item in ipairs(cat.items) do
+    -- Clamp del scroll para que no se vaya de rango
+    local totalItems = #cat.items
+    local maxScroll = math.max(0, totalItems - MAX_FILAS_VISIBLES)
+    if self.scrollOffset > maxScroll then self.scrollOffset = maxScroll end
+    if self.scrollOffset < 0 then self.scrollOffset = 0 end
+
+    local startIdx = (self.scrollOffset or 0) + 1
+    local endIdx   = math.min(totalItems, startIdx + MAX_FILAS_VISIBLES - 1)
+
+    -- Indicador "viendo X-Y de Z" arriba a la derecha del area de items
+    if totalItems > MAX_FILAS_VISIBLES then
+        local lblPag = ISLabel:new(SHOP_W - PAD - 110, areaY - 26, 14,
+            "(" .. startIdx .. "-" .. endIdx .. " de " .. totalItems .. ")",
+            0.65, 0.65, 0.60, 1, UIFont.Small, true)
+        self:addChild(lblPag)
+        table.insert(self.filasItems, { _hijos = { lblPag } })
+
+        -- Botones ARRIBA/ABAJO al final del area
+        local btnUp = ISButton:new(SHOP_W - PAD - 52, areaY - 28, 24, 22, "^",
+            self, HoldoorShopPanel.onScrollUp)
+        btnUp.backgroundColor = { r=0.20, g=0.25, b=0.35, a=1 }
+        btnUp.borderColor     = { r=0.5, g=0.7, b=0.9, a=1 }
+        self:addChild(btnUp)
+        table.insert(self.filasItems, { _hijos = { btnUp } })
+
+        local btnDn = ISButton:new(SHOP_W - PAD - 26, areaY - 28, 24, 22, "v",
+            self, HoldoorShopPanel.onScrollDown)
+        btnDn.backgroundColor = { r=0.20, g=0.25, b=0.35, a=1 }
+        btnDn.borderColor     = { r=0.5, g=0.7, b=0.9, a=1 }
+        self:addChild(btnDn)
+        table.insert(self.filasItems, { _hijos = { btnDn } })
+    end
+
+    for i = startIdx, endIdx do
+        local item = cat.items[i]
         local hijos = {}
 
         -- Nombre
@@ -244,13 +320,60 @@ function HoldoorShopPanel:_renderCategoria()
                   and (mats.valyrio   >= (item.precio.valyrio   or 0))
                   and (mats.obsidiana >= (item.precio.obsidiana or 0))
 
-        local btn = ISButton:new(SHOP_W - PAD - 110, areaY + 16, 105, 30,
-            puede and "COMPRAR" or "Sin saldo",
-            self, puede and HoldoorShopPanel.onComprar or HoldoorShopPanel.doNothing)
-        btn.holdoorItem = { categoriaId = cat.id, itemId = item.id }
-        btn.backgroundColor = puede and COLOR_BTN_OK_S or COLOR_BTN_DIS_S
-        btn.borderColor     = puede and { r=0.4, g=0.75, b=0.4, a=1 } or { r=0.3, g=0.3, b=0.3, a=1 }
-        if not puede then btn.textColor = { r=0.55, g=0.55, b=0.5, a=1 } end
+        -- Validacion adicional para traits "1 por vida"
+        local consumido = false
+        local consumidoTxt = nil
+        if item.accion then
+            local player
+            pcall(function() player = getSpecificPlayer(0) end)
+            if player then
+                local md
+                pcall(function() md = player:getModData() end)
+                if md then
+                    if item.accion.tipo == "trait" and md.Holdoor_TraitComprado then
+                        consumido = true
+                        consumidoTxt = "Ya invocaste: " .. tostring(md.Holdoor_TraitComprado)
+                    elseif item.accion.tipo == "cura_trait" and md.Holdoor_TraitCurado then
+                        consumido = true
+                        consumidoTxt = "Ya curaste: " .. tostring(md.Holdoor_TraitCurado)
+                    end
+                end
+            end
+        end
+
+        -- Si esta consumido, mostrar nota debajo del precio
+        if consumidoTxt then
+            local lblConsum = ISLabel:new(areaX, areaY + 60, 14, consumidoTxt, 1.0, 0.5, 0.4, 1, UIFont.Small, true)
+            self:addChild(lblConsum); table.insert(hijos, lblConsum)
+        end
+
+        -- Boton: prioridad 1) consumido => YA USADO  2) sin saldo  3) COMPRAR
+        local btnTexto, btnHandler, btnBg, btnBorder, btnTextColor
+        if consumido then
+            btnTexto     = "YA USADO"
+            btnHandler   = HoldoorShopPanel.doNothing
+            btnBg        = COLOR_BTN_DIS_S
+            btnBorder    = { r=0.50, g=0.25, b=0.25, a=1 }
+            btnTextColor = { r=0.85, g=0.45, b=0.45, a=1 }
+        elseif puede then
+            btnTexto     = "COMPRAR"
+            btnHandler   = HoldoorShopPanel.onComprar
+            btnBg        = COLOR_BTN_OK_S
+            btnBorder    = { r=0.4, g=0.75, b=0.4, a=1 }
+            btnTextColor = nil
+        else
+            btnTexto     = "Sin saldo"
+            btnHandler   = HoldoorShopPanel.doNothing
+            btnBg        = COLOR_BTN_DIS_S
+            btnBorder    = { r=0.3, g=0.3, b=0.3, a=1 }
+            btnTextColor = { r=0.55, g=0.55, b=0.5, a=1 }
+        end
+
+        local btn = ISButton:new(SHOP_W - PAD - 110, areaY + 16, 105, 30, btnTexto, self, btnHandler)
+        btn.holdoorItem     = { categoriaId = cat.id, itemId = item.id }
+        btn.backgroundColor = btnBg
+        btn.borderColor     = btnBorder
+        if btnTextColor then btn.textColor = btnTextColor end
         self:addChild(btn); table.insert(hijos, btn)
 
         table.insert(self.filasItems, { _hijos = hijos })

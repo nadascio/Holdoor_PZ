@@ -239,25 +239,49 @@ local function ejecutarAccion(jugador, accion)
         return any
 
     elseif accion.tipo == "xp" then
-        local ok = pcall(function()
+        -- En B42, Perks.FromString puede devolver nil para algunos nombres (Strength, etc).
+        -- Fallback: probar acceso directo Perks[name].
+        local ok = false
+        pcall(function()
             local perk = Perks.FromString(accion.perk)
-            if perk then jugador:getXp():AddXP(perk, accion.amount or 0) end
+            if not perk then perk = Perks[accion.perk] end
+            if perk then
+                jugador:getXp():AddXP(perk, accion.amount or 0)
+                ok = true
+            else
+                print("[Holdoor] xp FAIL: perk '" .. tostring(accion.perk) .. "' no encontrado")
+            end
         end)
         return ok
 
     elseif accion.tipo == "restore" then
+        -- Reseteo de stats vitales. En B42 algunas APIs cambiaron, usamos cascada con pcall
+        -- por cada stat para que falle silenciosamente si la firma no existe.
         local stats = jugador:getStats()
         local bd    = jugador:getBodyDamage()
+        local nutr
+        pcall(function() nutr = jugador:getNutrition() end)
+
         for _, s in ipairs(accion.stats or {}) do
-            pcall(function()
-                if     s == "hunger"   then stats:setHunger(0)
-                elseif s == "thirst"   then stats:setThirst(0)
-                elseif s == "fatigue"  then stats:setFatigue(0)
-                elseif s == "stress"   then stats:setStress(0)
-                elseif s == "endurance" then stats:setEndurance(1)
-                elseif s == "sleep"    then bd:setFatigue(0)
-                end
-            end)
+            if s == "hunger" then
+                local ok = pcall(function() stats:setHunger(0.0) end)
+                if not ok then pcall(function() stats:setHunger(0) end) end
+                if nutr then pcall(function() nutr:setCalories(2200) end) end
+            elseif s == "thirst" then
+                pcall(function() stats:setThirst(0.0) end)
+            elseif s == "fatigue" then
+                pcall(function() stats:setFatigue(0.0) end)
+                pcall(function() bd:setFatigue(0.0) end)
+            elseif s == "stress" then
+                pcall(function() stats:setStress(0.0) end)
+            elseif s == "endurance" then
+                pcall(function() stats:setEndurance(1.0) end)
+            elseif s == "sleep" then
+                pcall(function() bd:setFatigue(0.0) end)
+                pcall(function() stats:setFatigue(0.0) end)
+            elseif s == "boredom" then
+                pcall(function() stats:setBoredom(0.0) end)
+            end
         end
         return true
 
@@ -287,6 +311,92 @@ local function ejecutarAccion(jugador, accion)
             end
         end)
         return true
+
+    elseif accion.tipo == "trait" then
+        if not accion.trait then return false end
+        local md = jugador:getModData()
+        local ok = false
+        local traitId = tostring(accion.trait)
+
+        print("[Holdoor] trait STEP A: intentando agregar '" .. traitId .. "'")
+
+        -- ── API 1: jugador:getDescriptor():getTraits():add()
+        -- En B42, IsoPlayer.descriptor.traits es ArrayList<String> con method add(String).
+        local desc = nil
+        local err1 = pcall(function() desc = jugador:getDescriptor() end)
+        if desc then
+            print("[Holdoor] trait STEP B: descriptor OK")
+            local traits = nil
+            pcall(function() traits = desc:getTraits() end)
+            if traits then
+                print("[Holdoor] trait STEP C: descriptor:getTraits OK")
+                local ok1 = pcall(function() traits:add(traitId) end)
+                if ok1 then
+                    ok = true
+                    print("[Holdoor] trait STEP D: AGREGADO via descriptor:getTraits:add")
+                end
+            else
+                print("[Holdoor] trait STEP C: descriptor:getTraits = nil")
+            end
+        else
+            print("[Holdoor] trait STEP B: descriptor = nil")
+        end
+
+        -- ── API 2: jugador:getTraits():add() (player directo)
+        if not ok then
+            local traits = nil
+            pcall(function() traits = jugador:getTraits() end)
+            if traits then
+                print("[Holdoor] trait STEP E: jugador:getTraits OK")
+                local ok2 = pcall(function() traits:add(traitId) end)
+                if ok2 then
+                    ok = true
+                    print("[Holdoor] trait STEP F: AGREGADO via jugador:getTraits:add")
+                end
+            else
+                print("[Holdoor] trait STEP E: jugador:getTraits = nil")
+            end
+        end
+
+        -- ── API 3: TraitFactory.getTrait():applyToPlayer()
+        if not ok then
+            pcall(function()
+                local tr = TraitFactory.getTrait(traitId)
+                if tr then
+                    tr:applyToPlayer(jugador)
+                    ok = true
+                    print("[Holdoor] trait STEP G: AGREGADO via TraitFactory:applyToPlayer")
+                end
+            end)
+        end
+
+        -- ── API 4: HasTrait + manipulacion directa del array (último recurso)
+        if not ok then
+            pcall(function()
+                if not jugador:HasTrait(traitId) then
+                    jugador:getTraits():add(traitId)
+                    ok = true
+                    print("[Holdoor] trait STEP H: AGREGADO via HasTrait+add")
+                end
+            end)
+        end
+
+        if ok and md then md.Holdoor_TraitComprado = accion.trait end
+        if not ok then print("[Holdoor] trait FAIL TOTAL: '" .. traitId .. "' — ninguna API funciono") end
+        return ok
+
+    elseif accion.tipo == "cura_trait" then
+        if not accion.trait then return false end
+        local md = jugador:getModData()
+        local ok = false
+        if not ok then pcall(function() jugador:getTraits():remove(accion.trait); ok = true end) end
+        if not ok then pcall(function() jugador:getDescriptor():getTraits():remove(accion.trait); ok = true end) end
+        if not ok then pcall(function() jugador:getTraits():removeStringTrait(accion.trait); ok = true end) end
+        if not ok then pcall(function() jugador:getDescriptor():getTraits():removeStringTrait(accion.trait); ok = true end) end
+        if not ok then pcall(function() jugador:getTraits():removeTrait(TraitFactory.getTrait(accion.trait)); ok = true end) end
+        if ok and md then md.Holdoor_TraitCurado = accion.trait end
+        if not ok then print("[Holdoor] cura_trait FAIL: no encontre API para quitar '" .. accion.trait .. "'") end
+        return ok
     end
 
     return false
@@ -306,6 +416,86 @@ function HoldoorServer._comprar(jugador, args)
 
     local md = jugador:getModData()
     local mdKeyMap = HoldoorShopCatalog.mdKeyMap
+
+    -- Pre-validacion: traits son "1 por vida del personaje"
+    if item.accion and item.accion.tipo == "trait" and md and md.Holdoor_TraitComprado then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
+              { motivo = "Ya invocaste tu Rasgo Heroico en esta vida. Solo uno por personaje." })
+        return
+    end
+    if item.accion and item.accion.tipo == "cura_trait" and md and md.Holdoor_TraitCurado then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
+              { motivo = "Ya usaste tu Milagro del Maestre. Solo uno por personaje." })
+        return
+    end
+    -- Para cura_trait: validar que efectivamente tenga ese trait. Defensivo: si la
+    -- validacion misma falla por API B42 desconocida, dejamos pasar (mejor permitir que
+    -- bloquear todo). Probamos varias APIs en cascada.
+    if item.accion and item.accion.tipo == "cura_trait" then
+        local tieneTrait = false
+        local validoCheck = false
+        -- API 1: jugador:HasTrait() (la mas comun en B42)
+        pcall(function() tieneTrait = jugador:HasTrait(item.accion.trait); validoCheck = true end)
+        -- API 2: traits:contains() (B41 style)
+        if not validoCheck then
+            pcall(function()
+                local traits = jugador:getTraits()
+                tieneTrait = traits and traits:contains(item.accion.trait)
+                validoCheck = true
+            end)
+        end
+        -- API 3: descriptor:getTraits():contains()
+        if not validoCheck then
+            pcall(function()
+                local traits = jugador:getDescriptor():getTraits()
+                tieneTrait = traits and traits:contains(item.accion.trait)
+                validoCheck = true
+            end)
+        end
+        -- Si la validacion no pudo correr ninguna API → dejamos pasar (no bloqueamos)
+        if validoCheck and not tieneTrait then
+            pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
+                  { motivo = "No tienes ese rasgo, no hay nada que curar." })
+            return
+        end
+    end
+    -- Para cure_bite: validar que el player tenga mordedura/infeccion.
+    -- Defensivo: si la validacion misma falla por API B42 desconocida, PERMITIMOS la compra
+    -- (mejor cobrar al pedo que bloquear todo por error de validacion).
+    if item.accion and item.accion.tipo == "cure_bite" then
+        local esta_mordido = false
+        local valido_check = false
+        pcall(function()
+            local bd = jugador:getBodyDamage()
+            if not bd then return end
+            -- Probar APIs en cascada — cualquiera que funcione marca valido_check
+            pcall(function() esta_mordido = bd:isInfected(); valido_check = true end)
+            if not valido_check then pcall(function() esta_mordido = bd:IsInfected(); valido_check = true end) end
+            -- Iterar body parts buscando mordeduras
+            if not esta_mordido then
+                pcall(function()
+                    local parts = bd:getBodyParts()
+                    if not parts then return end
+                    for i = 0, parts:size() - 1 do
+                        local part = parts:get(i)
+                        if part then
+                            local b = false
+                            pcall(function() b = part:bitten() end)
+                            if not b then pcall(function() b = part:IsBitten() end) end
+                            if b then esta_mordido = true; break end
+                        end
+                    end
+                end)
+            end
+        end)
+        -- Si pudimos chequear Y no esta mordido → bloquear
+        -- Si la validacion misma fallo (valido_check=false) → dejar pasar
+        if valido_check and not esta_mordido then
+            pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
+                  { motivo = "No estas mordido. No hay nada que curar." })
+            return
+        end
+    end
 
     -- Validar que tenga saldo suficiente para CADA componente del precio
     for k, costo in pairs(item.precio or {}) do
@@ -799,31 +989,230 @@ function HoldoorServer._limpiarZona()
 end
 
 
+-- ─────────────────────────────────────────────
+-- DISTRIBUCION DE RECOMPENSAS - funcion unica
+-- Orquesta: monedas + materiales + items reales.
+-- Inputs: modoId (string), numOleada (int), statsJugador (tabla de kills por player).
+-- Output: tabla resumen con lo entregado (bronze, silver, gold, materiales, items).
+-- ─────────────────────────────────────────────
+function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugador)
+    local cfg = HoldoorServer.estado.config or {}
+    local zombisTotalOleada = HoldoorServer.estado.zombiesTotal or 0
+
+    local mult = HoldoorConfig.dropMult[modoId] or HoldoorConfig.dropMult.normal
+    local rewardTbl = HoldoorConfig.rewardTable[modoId] or HoldoorConfig.rewardTable.normal
+
+    -- ── 1) Calcular kills del player local (para performance bonus) ──
+    -- En MP suma todos los players. En SP solo el player 0.
+    local killsTotalesPlayers = 0
+    for _, kills in pairs(statsJugador or {}) do
+        killsTotalesPlayers = killsTotalesPlayers + (kills or 0)
+    end
+    local ratioKills = 0
+    if zombisTotalOleada > 0 then
+        ratioKills = killsTotalesPlayers / zombisTotalOleada
+    end
+    local hayPerformanceBonus = ratioKills >= (HoldoorConfig.performanceThreshold or 0.70)
+
+    -- Perfect run: Trono termino la oleada con HP COMPLETO (no recibio daño)
+    local hayPerfectRun = false
+    local trono = HoldoorServer.estado.trono
+    if trono and trono.piezaCentral and trono.maxHP then
+        local hpActual = 0
+        pcall(function() hpActual = trono.piezaCentral.obj:getHealth() end)
+        if hpActual >= trono.maxHP then
+            hayPerfectRun = true
+        end
+    end
+
+    -- ── 2) MONEDAS ──
+    -- Bronce: base por zombis matados (2x el viejo: floor/2 en vez de floor/4)
+    local bronzeBase = math.max(1, math.floor(zombisTotalOleada / 2)) + ZombRand(5)
+    -- Bonus oleada tardia: +5% por oleada despues de la 3a
+    local bonusTardio = math.max(0, (numOleada - 3)) * 0.05
+    -- Multiplicador final monedas
+    local multMonedas = (mult.monedas or 1.0) * (1.0 + bonusTardio)
+    if hayPerformanceBonus then
+        multMonedas = multMonedas * (1.0 + (HoldoorConfig.performanceCoinBonus or 0.10))
+    end
+    if hayPerfectRun then
+        multMonedas = multMonedas * (1.0 + (HoldoorConfig.perfectRunCoinBonus or 0.25))
+    end
+    local bronze = math.floor(bronzeBase * multMonedas + 0.5)
+
+    -- Plata bonus (chance%): tirada modificada por mult
+    local silverChance = (rewardTbl.bonusSilverChance or 0) * multMonedas
+    local silver = (ZombRand(1000) < math.floor(silverChance * 1000)) and 1 or 0
+
+    -- Oro bonus (chance%)
+    local goldChance = (rewardTbl.bonusGoldChance or 0) * multMonedas
+    local gold = (ZombRand(1000) < math.floor(goldChance * 1000)) and 1 or 0
+
+    HoldoorServer._distribuirMonedas(bronze, silver, gold)
+
+    -- ── 3) MATERIALES ──
+    local matTbl = HoldoorConfig.materialDropTable[modoId] or HoldoorConfig.materialDropTable.normal
+    local multMat = mult.materiales or 1.0
+    if hayPerfectRun then
+        multMat = multMat * (1.0 + (HoldoorConfig.perfectRunMatBonus or 0.15))
+    end
+    local matsEntregados = {}
+    for _, matKey in ipairs(HoldoorShopCatalog.materialesOrden or {"cuero","hierro","acero","valyrio","obsidiana"}) do
+        local def = matTbl[matKey]
+        if def and def.chance > 0 then
+            local chanceFinal = def.chance * multMat
+            if ZombRand(1000) < math.floor(chanceFinal * 1000) then
+                local qty = def.min
+                if def.max > def.min then qty = qty + ZombRand(def.max - def.min + 1) end
+                matsEntregados[matKey] = qty
+            end
+        end
+    end
+    if next(matsEntregados) then
+        HoldoorServer._distribuirMateriales(matsEntregados)
+    end
+
+    -- ── 4) ITEMS REALES ──
+    local multItems = mult.items or 1.0
+    local rarezasChances = HoldoorConfig.rarezaChances or {}
+    local itemsEntregados = {}   -- lista de strings "Base.X" para el resumen
+
+    for _, pool in pairs(HoldoorConfig.itemDropPool or {}) do
+        if pool.items and #pool.items > 0 then
+            -- Por cada item del pool, tirar dado segun su rareza
+            for _, def in ipairs(pool.items) do
+                local chanceBase = rarezasChances[def.rareza or "comun"] or 0
+                local chanceFinal = chanceBase * multItems
+                if ZombRand(1000) < math.floor(chanceFinal * 1000) then
+                    local qty = def.qty and def.qty[1] or 1
+                    local maxQ = def.qty and def.qty[2] or qty
+                    if maxQ > qty then qty = qty + ZombRand(maxQ - qty + 1) end
+                    for _ = 1, qty do
+                        table.insert(itemsEntregados, def.item)
+                    end
+                end
+            end
+        end
+    end
+    if #itemsEntregados > 0 then
+        HoldoorServer._distribuirItems(itemsEntregados)
+    end
+
+    print(string.format("[Holdoor] Recompensa oleada %d (%s): %dB %dP %dO | mats=%s | items=%d | perf=%.0f%% (%s) | perfectRun=%s",
+        numOleada, modoId, bronze, silver, gold,
+        next(matsEntregados) and "si" or "no",
+        #itemsEntregados,
+        ratioKills * 100,
+        hayPerformanceBonus and "BONUS" or "no",
+        hayPerfectRun and "BONUS" or "no"
+    ))
+
+    return {
+        bronze = bronze, silver = silver, gold = gold,
+        materiales = matsEntregados, items = itemsEntregados,
+        performanceBonus = hayPerformanceBonus,
+        perfectRun = hayPerfectRun,
+    }
+end
+
+-- Distribuye materiales a todos los players online (en MP) o al player local (en SP).
+-- materiales: tabla {cuero=N, hierro=N, acero=N, valyrio=N, obsidiana=N}
+function HoldoorServer._distribuirMateriales(materiales)
+    if not materiales or not next(materiales) then return end
+    local mdKeyMap = HoldoorShopCatalog.mdKeyMap or {}
+
+    local function darMatsA(p)
+        if not p then return end
+        local ok, md = pcall(function() return p:getModData() end)
+        if not ok or not md then return end
+        for matKey, qty in pairs(materiales) do
+            local mdKey = mdKeyMap[matKey]
+            if mdKey then
+                md[mdKey] = (md[mdKey] or 0) + qty
+            end
+        end
+    end
+
+    local entregado = false
+    local ok, players = pcall(getOnlinePlayers)
+    if ok and players then
+        local ok2, n = pcall(function() return players:size() end)
+        if ok2 and n and n > 0 then
+            for i = 0, n - 1 do
+                local ok3, p = pcall(function() return players:get(i) end)
+                if ok3 and p then darMatsA(p); entregado = true end
+            end
+        end
+    end
+    if not entregado then
+        local ok2, p = pcall(getSpecificPlayer, 0)
+        if ok2 and p then darMatsA(p) end
+    end
+
+    HoldoorServer.notificarTodos("materialesActualizados", {})
+end
+
+-- Distribuye items reales al inventario del player.
+-- items: lista de strings "Base.X" (puede haber duplicados).
+-- En B42 InventoryItemFactory puede fallar; fallback: dropear al suelo en el tile del player.
+function HoldoorServer._distribuirItems(items)
+    if not items or #items == 0 then return end
+
+    local function darItemA(p, itemFullName)
+        if not p then return false end
+        local inv
+        pcall(function() inv = p:getInventory() end)
+        if not inv then return false end
+        local ok = pcall(function() inv:AddItem(itemFullName) end)
+        return ok
+    end
+
+    local entregado = false
+    local ok, players = pcall(getOnlinePlayers)
+    if ok and players then
+        local ok2, n = pcall(function() return players:size() end)
+        if ok2 and n and n > 0 then
+            for i = 0, n - 1 do
+                local ok3, p = pcall(function() return players:get(i) end)
+                if ok3 and p then
+                    for _, itemName in ipairs(items) do
+                        if darItemA(p, itemName) then entregado = true end
+                    end
+                end
+            end
+        end
+    end
+    if not entregado then
+        local ok2, p = pcall(getSpecificPlayer, 0)
+        if ok2 and p then
+            for _, itemName in ipairs(items) do
+                darItemA(p, itemName)
+            end
+        end
+    end
+end
+
 function HoldoorServer._oleadaCompletada()
     local estado = HoldoorServer.estado
     if estado.fase ~= "activa" then return end
 
-    -- Bronce garantizado: base por zombies eliminados
-    local bronze = math.max(1, math.floor((estado.zombiesTotal or 0) / 4)) + ZombRand(3)
-
-    -- Tirada de drops extra segun el modo
-    local rewardTbl = HoldoorConfig.rewardTable[estado.config.modoId or "normal"]
-                    or HoldoorConfig.rewardTable.normal
-    local bonusSilver = (ZombRand(100) < math.floor(rewardTbl.bonusSilverChance * 100)) and 1 or 0
-    local bonusGold   = (ZombRand(100) < math.floor(rewardTbl.bonusGoldChance   * 100)) and 1 or 0
-
-    HoldoorServer._distribuirMonedas(bronze, bonusSilver, bonusGold)
+    -- Llamada a la funcion UNICA que distribuye TODO (monedas + materiales + items).
+    -- Devuelve un resumen con lo que se entrego (para notificar al cliente).
+    local resumen = HoldoorServer._distribuirRecompensaOleada(
+        estado.config.modoId or "normal",
+        estado.oleadaActual or 1,
+        estado.killsOleada or {}
+    )
 
     -- Si fue la ultima oleada: ir directo a victoria, sin los 10s de pausa
     local esUltima = (estado.oleadaActual >= (estado.config.maxOleadas or 0))
     if esUltima then
         estado.killsOleada = {}
-        HoldoorServer.detenerPorLimite(bonusSilver, bonusGold)
+        HoldoorServer.detenerPorLimite(resumen.silver or 0, resumen.gold or 0)
         return
     end
 
-    -- Limpiar zombis vivos del radio antes de pausa: evita que queden vagando
-    -- y obliguen al user a salir a buscarlos durante el descanso.
+    -- Limpiar zombis vivos del radio antes de pausa
     local eliminadosFinOleada = HoldoorServer._limpiarZona()
     if eliminadosFinOleada > 0 then
         print("[Holdoor] Fin de oleada: " .. eliminadosFinOleada .. " zombis residuales limpiados")
@@ -838,15 +1227,15 @@ function HoldoorServer._oleadaCompletada()
         pausa     = PAUSA_SEGS,
         killsStr  = killsStr,
         killsData = estado.killsOleada,
-        bronze    = bronze,
-        silver    = bonusSilver,
-        gold      = bonusGold,
-        lucky     = (bonusSilver + bonusGold) > 0,
+        bronze    = resumen.bronze or 0,
+        silver    = resumen.silver or 0,
+        gold      = resumen.gold or 0,
+        materiales = resumen.materiales or {},  -- {cuero=2, hierro=1, ...}
+        items      = resumen.items or {},       -- {"Base.Bandage", "Base.Pills", ...}
+        lucky      = (resumen.silver or 0) + (resumen.gold or 0) > 0,
     })
 
-    -- Reset kills de oleada (pero no del total)
     estado.killsOleada = {}
-
     print("[Holdoor] Oleada " .. estado.oleadaActual .. " completada. Kills: " .. (killsStr ~= "" and killsStr or "sin datos"))
 end
 
@@ -2080,13 +2469,18 @@ HoldoorServer._braseroSprites = {
 --   - Respaldo de madera detrás: 300 HP propio. Destructible pero no afecta al HP del Trono.
 --   - Como solo bloquea por un lado, los zombis pueden rodear y atacar la forja directamente.
 --   - El _reAggroZombies les setea path DIRECTO a la forja para forzar el comportamiento.
+-- Layout del Trono: 1 sola pieza (la forja). HP se calcula por modo en _plantarTrono.
+-- El sprite real queda tapado por el overlay PNG del Trono de Hierro.
 HoldoorServer._tronoLayoutForja = {
-    -- {dx, dy, sprite, hpAbsoluto, esCentro}
-    -- Forja: alta y maciza. Los zombis la atacan SI o SI (no la saltan).
-    -- El overlay PNG del Trono de Hierro la cubre visualmente.
-    { 0, 0, "crafted_01_16", 1500, true },   -- FORJA (vida del Trono)
+    -- {dx, dy, sprite, esCentro}  -- HP se asigna por modo, no hardcoded
+    { 0, 0, "crafted_01_16", true },
 }
-HoldoorServer._tronoHPTotal = 1500
+
+-- Devuelve el HP del Trono para un modo dado. Default = facil (1500) si no se encuentra.
+function HoldoorServer._getHPTronoPorModo(modoId)
+    local tabla = HoldoorConfig.tronoHPPorModo or {}
+    return tabla[modoId or "normal"] or 1500
+end
 
 function HoldoorServer._plantarTrono(x, y, z)
     HoldoorServer._quitarTrono()
@@ -2117,12 +2511,18 @@ function HoldoorServer._plantarTrono(x, y, z)
         end
     end
 
+    -- HP del modo actual (1500 facil, 1250 normal, 1100 dificil, 1000 pesadilla)
+    local modoId = (HoldoorServer.estado.config and HoldoorServer.estado.config.modoId) or "normal"
+    local hpModo = HoldoorServer._getHPTronoPorModo(modoId)
+    HoldoorServer._tronoHPTotal = hpModo
+
     local piezas = {}
-    local piezaCentral = nil   -- referencia a la forja (la que define el HP del Trono)
+    local piezaCentral = nil
     local allOk = true
 
     for _, pieza in ipairs(HoldoorServer._tronoLayoutForja) do
-        local dx, dy, sprite, hpAbs, esCentro = pieza[1], pieza[2], pieza[3], pieza[4], pieza[5]
+        local dx, dy, sprite, esCentro = pieza[1], pieza[2], pieza[3], pieza[4]
+        local hpAbs = hpModo   -- la pieza central usa el HP del modo (es la única pieza)
         local px = x + dx
         local py = y + dy
         local spriteObj = spriteExiste(sprite)

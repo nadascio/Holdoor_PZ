@@ -307,4 +307,77 @@ Antes de bucear en lógica compleja cuando algo del mod no funciona, **chequear 
 
 ---
 
+## 🔥 13. Items de Base que existen en B41 pero NO en B42 (sweep 2026-06-13)
+
+**Síntoma:** Compras un item de la tienda, mensaje en consola `Item: can't find Base.XYZ`, el item no aparece en el inventario pero la moneda se descuenta.
+
+**Items conocidos que NO existen en B42:**
+- `Base.FirstAidKit` → reemplazar por package `{Base.Bandage, Base.Antibiotics, Base.Pills}`
+- `Base.WaterBottleFull` → usar `Base.WineBottle` o sin agua
+- `Base.Alcohol` → usar `Base.AlcoholedCottonBalls` o `Base.AlcoholBandage`
+- `Base.Hat_ArmyHelmet` → usar `Base.Hat_Hardhat`
+- `Base.Vest_BulletKevlar` → usar `Base.Vest_HighVis_Blue` u otro
+- `Base.Pop` → usar otra bebida (`Base.WineBottle`)
+
+**Items NUEVOS y útiles de B42 médico:**
+- `Base.AlcoholBandage` — Venda Esterilizada (mejor que Bandage)
+- `Base.AlcoholedCottonBalls` — Algodón con Alcohol
+- `Base.AlcoholRippedSheets` — Tela Esterilizada
+- `Base.AlcoholWipes` — Toallitas con Alcohol
+
+**Diagnóstico:**
+Usar el **"Buscador de objetos"** del debug menu de PZ (Items List) para verificar si un item ID existe en este build. Filtrar por nombre o categoría (Medical, Weapon, Food, etc.).
+
+**Cuando rompió:** 2026-06-13 al expandir el catálogo de la tienda. Items que asumimos que existían no estaban en B42.
+
+---
+
+## 🔥 14. APIs de player/traits/stats que cambiaron de B41 a B42
+
+**Síntoma:** Acción de tienda (`trait`, `cura_trait`, `restore`, `cure_bite`) falla silenciosamente o tira error de Lua. La moneda se descuenta pero el efecto no se aplica.
+
+**APIs que cambiaron en B42:**
+
+| Función B41 | Estado en B42 | Workaround |
+|---|---|---|
+| `player:getTraits():add(name)` | Puede fallar | Cascada: probar `getDescriptor():getTraits():add()` primero |
+| `player:getTraits():contains(name)` | NO existe en B42 | Usar `player:HasTrait(name)` |
+| `Perks.FromString("Strength")` | Devuelve nil para algunos perks | Fallback: `Perks[name]` |
+| `stats:setHunger(0)` | Puede requerir `setHunger(0.0)` o `getNutrition():setCalories()` | Cascada de pcall |
+| `bd:isInfected()` | Case sensitive cambió | Probar `IsInfected()`, `bd:bitten()`, `bd:IsBitten()` |
+| `part:bitten()` | Idem | Probar variantes con case distinto |
+
+**Estrategia defensiva al usar APIs de PZ:**
+1. **Cascada con pcall**: probar la API más común primero, fallback a variantes.
+2. **Flag "valido_check"**: si NINGUNA variante de la validación funciona, dejar pasar el efecto. Mejor que bloquear todo por error de check.
+3. **Log de debug**: agregar `print()` paso a paso para diagnosticar en qué step falla la API.
+
+**Cuando rompió:** 2026-06-13 al implementar Rasgos Heroicos + Milagros del Maestre + Festín de Invernalia.
+
+---
+
+## 🔥 15. ISUIElement debe sobreescribir TODOS los handlers de mouse (incluido onRightMouseDown)
+
+**Síntoma:** Cuando tu mod tiene un UIElement fullscreen invisible activo (overlay del Trono, overlay del marker de base, etc.), el **click derecho del mundo deja de funcionar**. Las acciones contextuales del juego (Destruir / Sentarse / Ir a / etc.) no responden.
+
+**Causa:** `ISUIElement` por default tiene TODOS los handlers de mouse devolviendo **true** (consume el evento). Si tu overlay solo overridea `onMouseDown` y `onMouseUp` pero NO `onRightMouseDown`/`onRightMouseUp`, el click derecho llega a tu UI, se consume, y el juego nunca lo recibe.
+
+**Solución obligatoria** en CUALQUIER UIElement invisible fullscreen del mod:
+```lua
+function MiOverlay:onMouseDown(x, y)        return false end
+function MiOverlay:onMouseUp(x, y)          return false end
+function MiOverlay:onMouseMove(dx, dy)      return false end
+function MiOverlay:onMouseMoveOutside(dx,dy) return false end
+function MiOverlay:onMouseDownOutside(x,y)  return false end
+function MiOverlay:onMouseUpOutside(x,y)    return false end
+function MiOverlay:onRightMouseDown(x, y)   return false end
+function MiOverlay:onRightMouseUp(x, y)     return false end
+function MiOverlay:onMouseWheel(del)        return false end
+function MiOverlay:isMouseOver()            return false end
+```
+
+**Cuando rompió:** 2026-06-13. El `HoldoorOverlayUI` (el del Trono PNG) tenía solo 3 handlers overrideados. Le faltaban los del right click → bug del click derecho que persiguió al user durante varias sesiones.
+
+---
+
 **Última actualización:** 2026-06-13

@@ -651,15 +651,20 @@ end
 --  ABRIR PANEL CON F10
 -- ─────────────────────────────────────────────
 
--- F10 funciona SOLO en single player (donde no hay chat ni jugadores a quienes molestar).
--- En multiplayer F10 es no-op y el unico acceso es /holdoor (admin-gated por diseno de PZ).
+-- F10 funciona EXCLUSIVAMENTE en single player.
+-- En MULTIPLAYER (tanto host como cliente) F10 es no-op.
+-- El unico acceso al panel en MP es el comando /holdoor en el chat, admin-only.
 function HoldoorClient.onKeyPressed(key)
     if key ~= Keyboard.KEY_F10 then return end
 
-    local ok, esCliente = pcall(isClient)
-    if ok and esCliente then return end  -- MP: F10 no hace nada
+    -- Detectar contexto MP: isClient()=true (cliente conectado) O isServer()=true (host).
+    -- En SP puro (offline) ambas devuelven false.
+    local esCliente, esServer = false, false
+    pcall(function() esCliente = isClient() end)
+    pcall(function() esServer  = isServer() end)
+    if esCliente or esServer then return end   -- cualquier MP: F10 no hace nada
 
-    -- SP: abrir directo (sos el unico jugador, sos admin por default)
+    -- SP puro: abrir directo
     HoldoorUI.abrir()
 end
 
@@ -925,9 +930,19 @@ function HoldoorOverlayUI:render()
     end
 end
 
-function HoldoorOverlayUI:onMouseDown(x, y) return false end
-function HoldoorOverlayUI:onMouseUp(x, y) return false end
-function HoldoorOverlayUI:isMouseOver() return false end
+-- Overlay fullscreen invisible — NO debe capturar NINGÚN evento de mouse.
+-- Si falta cualquiera de estos overrides, el click derecho del mundo deja de funcionar
+-- porque ISUIElement los devuelve true por defecto (consume el evento).
+function HoldoorOverlayUI:onMouseDown(x, y)        return false end
+function HoldoorOverlayUI:onMouseUp(x, y)          return false end
+function HoldoorOverlayUI:onMouseMove(dx, dy)      return false end
+function HoldoorOverlayUI:onMouseMoveOutside(dx,dy) return false end
+function HoldoorOverlayUI:onMouseDownOutside(x,y)  return false end
+function HoldoorOverlayUI:onMouseUpOutside(x,y)    return false end
+function HoldoorOverlayUI:onRightMouseDown(x, y)   return false end
+function HoldoorOverlayUI:onRightMouseUp(x, y)     return false end
+function HoldoorOverlayUI:onMouseWheel(del)        return false end
+function HoldoorOverlayUI:isMouseOver()            return false end
 
 HoldoorOverlayTrono._uiInstance = nil
 
