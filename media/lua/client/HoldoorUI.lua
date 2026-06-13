@@ -11,8 +11,21 @@ HoldoorUI = HoldoorUI or {}
 HoldoorUI.instancia = nil
 HoldoorUI.overlay   = nil
 
+-- ─────────────────────────────────────────────
+-- IDENTIFICADOR DE UBICACION (diagnostico)
+-- Cada copia del mod en distinto folder tiene un valor distinto aca.
+-- El boton "TEST UBICACION" del panel muestra este valor para confirmar
+-- desde donde esta cargando PZ realmente.
+-- VALORES POSIBLES:
+--   "SOURCE (Documents/Holdoor_PZ)"   — repo git, no deberia cargar de aca
+--   "MODS (Zomboid/mods/Holdoor)"     — mod local
+--   "WORKSHOP MEDIA"                  — Workshop, root /media/
+--   "WORKSHOP 42 (overlay B42)"       — Workshop, subcarpeta /42/
+-- ─────────────────────────────────────────────
+HoldoorUI._UBICACION = "SOURCE (Documents/Holdoor_PZ)"
+
 local PANEL_W = 500
-local PANEL_H = 540  -- +38 por el checkbox de modo defensa
+local PANEL_H = 574  -- +34 por el boton TEST UBICACION (diagnostico)
 
 local COLOR_FONDO      = { r=0.05, g=0.04, b=0.03, a=0.97 }
 local COLOR_BORDE      = { r=0.6,  g=0.4,  b=0.1,  a=1    }
@@ -368,6 +381,13 @@ function HoldoorPanel:crearContenido()
     self:addChild(self.btnDetener)
     y = y + bh + 8
 
+    -- DIAGNOSTICO: boton que muestra de que ubicacion del filesystem cargo este archivo.
+    self.btnTestBase = ISButton:new(pad, y, PANEL_W - pad * 2, 26, "TEST UBICACION (de donde cargo el mod)", self, self.onTestUbicacion)
+    self.btnTestBase.backgroundColor = { r=0.3, g=0.15, b=0.4, a=1 }
+    self.btnTestBase.borderColor = { r=0.6, g=0.3, b=0.7, a=1 }
+    self:addChild(self.btnTestBase)
+    y = y + 26 + 8
+
     self.btnCerrar = ISButton:new(pad, y, PANEL_W - pad * 2, 26, "Cerrar  (F10)", self, self.onCerrar)
     self.btnCerrar.backgroundColor = { r=0.1, g=0.1, b=0.1, a=1 }
     self.btnCerrar.borderColor = { r=0.3, g=0.3, b=0.3, a=1 }
@@ -590,6 +610,33 @@ function HoldoorPanel:onCerrar()
     self:setVisible(false)
     self:removeFromUIManager()
     HoldoorUI.instancia = nil  -- clear ref para que el overlay sepa que el panel se cerro
+end
+
+-- ─────────────────────────────────────────────
+-- DIAGNOSTICO: muestra de que ubicacion del filesystem cargo este HoldoorUI.lua.
+-- Cada copia del mod tiene HoldoorUI._UBICACION con un valor distinto.
+-- Al ver el mensaje, sabes exactamente cual ubicacion esta usando PZ.
+-- ─────────────────────────────────────────────
+function HoldoorPanel:onTestUbicacion()
+    local ubic = HoldoorUI._UBICACION or "DESCONOCIDA"
+    local msg = "[HOLDOOR] Mod cargado desde: " .. ubic
+
+    -- 1) Print a consola del debugger
+    print("================================================================")
+    print(msg)
+    print("================================================================")
+
+    -- 2) HaloNote arriba del personaje (visible en pantalla 8 segundos)
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if p then
+        pcall(function() p:setHaloNote(msg, 255, 220, 100, 480) end)  -- amarillo, 480 ticks ~ 8s
+    end
+
+    -- 3) Mensaje en chat para que quede registro
+    if processGeneralMessage then
+        pcall(function() processGeneralMessage(msg) end)
+    end
 end
 
 function HoldoorPanel:onKeyPressed(key)

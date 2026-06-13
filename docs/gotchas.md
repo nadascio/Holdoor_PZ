@@ -27,17 +27,24 @@ Después chequear si están dentro de strings/comments (`--`, `"..."`, `'...'`, 
 
 ---
 
-## 🔥 2. PZ B42 hace OVERLAY de `42/` sobre `media/` — y el mod vive en 4 ubicaciones
+## 🔥 2. La subcarpeta `42/` del Workshop es la ÚNICA que PZ carga (confirmado empíricamente 2026-06-13)
 
-**El comportamiento real de PZ B42 (clave para entender todo lo demás):**
+**Verificación empírica:** Agregamos un botón "TEST UBICACION" al panel del mod con 4 valores distintos en las 4 copias del filesystem. Resultado al apretarlo: `[HOLDOOR] Mod cargado desde: WORKSHOP 42 (overlay B42)`.
 
-Cuando un mod tiene una subcarpeta `42/` Y una `media/` en el root, PZ B42 hace **overlay**: lee archivos de `42/media/lua/...` **PRIMERO**, y para todo archivo que NO esté en `42/`, cae al `media/` del root. **No es "una u otra"**, es **merge con prioridad**.
+**Esto significa:** de las 4 ubicaciones, PZ usa una sola: `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/42/`. Las otras 3 son irrelevantes a nivel runtime.
 
-Esto significa que si tenés:
-- `42/media/lua/server/HoldoorServer.lua` (versión nueva con Trono)
-- `media/lua/client/HoldoorUI.lua` (versión vieja sin Trono)
+**Por qué pasa esto:**
 
-PZ va a usar el server NUEVO + cliente VIEJO. Tu mod va a estar parcialmente actualizado y se va a comportar raro.
+- El mod está **publicado en Steam Workshop** y suscripto en esta máquina.
+- Steam descarga la versión publicada al folder del Workshop.
+- PZ B42 dentro del Workshop prioriza la subcarpeta versionada `42/` sobre `media/` raíz (mecanismo de soporte dual B41/B42).
+- PZ **no usa** `Zomboid/mods/Holdoor/` cuando hay una versión del Workshop activa para el mismo mod ID.
+
+**El bug del 2026-06-12** (perdimos toda la sesión a esto):
+
+Asumí que tener 4 copias era duplicación a limpiar y borré la `42/`. PZ perdió la única ubicación que cargaba y cayó al `Workshop/media/` que tenía archivos del commit inicial (sin Trono, sin F10). Todo el laburo "desapareció".
+
+**Implicancia: la `42/` es la fuente de la verdad RUNTIME**, aunque el source of truth EDITORIAL siga siendo `Documents/Holdoor_PZ/` (git).
 
 **Las 4 ubicaciones del mod:**
 

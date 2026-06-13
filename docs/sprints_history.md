@@ -98,3 +98,23 @@ Decisión: documentación del mod vive en su repo (`Documents/Holdoor_PZ/docs/`)
 ---
 
 **Próxima sesión arranca por:** Visual del Trono (punto 1 de `next_steps.md`) + reseñas del user pendientes.
+
+---
+
+## 2026-06-13 — Confirmación empírica: PZ carga del Workshop/42/
+
+**Idea de Nahuel:** agregar un botón al panel del mod que muestre desde qué ubicación del filesystem cargó el HoldoorUI.lua. Cada copia (source / mods / Workshop/media / Workshop/42) tiene un identificador distinto en `HoldoorUI._UBICACION`. Al apretar el botón, PZ revela la verdad.
+
+**Resultado:** botón "TEST UBICACION" muestra `[HOLDOOR] Mod cargado desde: WORKSHOP 42 (overlay B42)`.
+
+**Conclusión:** confirmado al 100% que PZ usa **solo** `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/42/`. Las otras 3 ubicaciones son irrelevantes a nivel runtime. Esto explica retroactivamente todo el caos del 12: cuando borré la `42/`, PZ cayó al fallback `Workshop/media/` que tenía el commit inicial — sin Trono, sin F10.
+
+**Implicancia operativa:** el script de sync de `infra.md` debe priorizar mantener la `42/` actualizada. Las otras dos copias del filesystem (mods/ y Workshop/media/) se sincronizan "por consistencia" pero PZ no las usa.
+
+**Otras mejoras de esta sesión:**
+- Lista ampliada de sprites candidatos para el Trono (`couches_01_X`, `chairs_01_X`, `chairs_02_X` con varios índices).
+- `HoldoorServer.testSprite(nombre)` — replanta el Trono en la base con un sprite específico desde la Lua Command Line.
+- `HoldoorServer.testSpriteAqui(nombre)` — variante que planta donde está parado el player.
+- Botón "TEST UBICACION" en el panel del F10 (queda como herramienta de diagnóstico permanente).
+
+**Pendiente activo:** encontrar el sprite vanilla que mejor queda visualmente para el Trono. Si ninguno convence, plan B = sprite custom PNG del Trono de las Cien Espadas.

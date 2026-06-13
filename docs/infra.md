@@ -2,27 +2,35 @@
 
 > Vivo. Si algo no calza con la realidad → actualizar este doc primero, después tocar código.
 
-## 1. Las 4 ubicaciones del mod — convención lockeada 2026-06-12
+## 1. Las 4 ubicaciones del mod — actualizado con evidencia empírica 2026-06-13
 
-El mod vive en **4 ubicaciones** simultáneamente. **Todas tienen que estar sincronizadas con el source en cada edición**, o PZ empieza a leer una mezcla parcialmente vieja y parcialmente nueva (ver `gotchas.md` #2).
+El mod vive en **4 ubicaciones** simultáneamente. **PZ carga de UNA sola** (verificado con el botón "TEST UBICACION"). Las otras 3 están "por consistencia" — para git, backups y eventual cambio del método de carga.
 
-| # | Ubicación | Rol |
-|---|---|---|
-| 1 | `Documents/Holdoor_PZ/` | **Source of truth** (git repo, lo que editás) |
-| 2 | `Zomboid/mods/Holdoor/` | Mod instalado localmente — PZ lee de acá |
-| 3 | `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/media/` | Base del Workshop (publicación Steam) |
-| 4 | `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/42/` | **Overlay B42** (PZ lo prioriza sobre 3) |
+| # | Ubicación | Rol | PZ lee de acá? |
+|---|---|---|---|
+| 1 | `Documents/Holdoor_PZ/` | **Source of truth EDITORIAL** (git repo, lo que editás) | NO |
+| 2 | `Zomboid/mods/Holdoor/` | Mod local | NO (con el mod publicado en Workshop) |
+| 3 | `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/media/` | Base del Workshop | NO (en B42, ver abajo) |
+| 4 | `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/42/` | **Source of truth RUNTIME** — PZ carga DE ACÁ | **SÍ** |
 
-### El overlay 42/ — entender este comportamiento es CRÍTICO
+### Verificación empírica
 
-PZ B42 hace **overlay con prioridad**, no "una u otra". Si existe el archivo en `42/media/lua/...` lo usa. Si no, cae al `media/lua/...` del root. Por archivo, no por mod completo.
+Agregamos un botón "TEST UBICACION" al panel del mod (`HoldoorUI.lua`) con un identificador `HoldoorUI._UBICACION` distinto en cada copia. Al apretarlo en juego, PZ muestra cuál es la copia que está usando.
 
-Esto significa que si sincronizás solo `HoldoorServer.lua` a `42/` y dejás `media/` raíz desactualizado, PZ va a usar:
-- `HoldoorServer.lua` nuevo (del 42/)
-- `HoldoorClient.lua` viejo (del media/ raíz)
-- `HoldoorUI.lua` viejo (del media/ raíz)
+**Resultado 2026-06-13:** `WORKSHOP 42 (overlay B42)`. Confirmado.
 
-= mod a medio funcionar y bugs aleatorios. **No es teoría**: fue exactamente lo que pasó toda la sesión del 12.
+### Por qué carga del 42/ y no de las otras
+
+- El mod está **publicado en Steam Workshop** y suscripto en esta máquina.
+- Steam descarga la versión publicada al folder `Zomboid/Workshop/<id>/Contents/mods/<modname>/`.
+- PZ B42 dentro de ese folder prioriza la subcarpeta `42/` sobre `media/` raíz (mecanismo dual B41/B42).
+- PZ **ignora** `Zomboid/mods/Holdoor/` cuando hay una versión del Workshop activa con el mismo mod ID.
+
+### Implicancia operativa
+
+- **Al editar y querer probar:** lo crítico es que `42/` esté sincronizado con el source. Las otras 2 destinos son nice-to-have.
+- **NUNCA borrar la `42/`** sin antes haber confirmado que PZ va a leer de otro lado (botón TEST UBICACION).
+- **Al publicar a Steam Workshop:** subís el folder del Workshop entero. Steam re-distribuye y los demás suscriptos también reciben la `42/`.
 
 ### Script de sync OBLIGATORIO
 

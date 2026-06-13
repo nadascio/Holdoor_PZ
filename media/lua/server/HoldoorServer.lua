@@ -1022,38 +1022,150 @@ end
 -- ─────────────────────────────────────────────
 
 -- Sprites candidatos para las piezas del Trono.
--- PRIORIDAD: sillas/sofas (look "asiento real"), luego muebles, luego fallbacks.
+-- PRIORIDAD: sillas/sillones (look "asiento real"), luego muebles, luego fallbacks.
+-- Cada sprite tiene 4 rotaciones (índices consecutivos). Probamos varios índices base
+-- y los multiplos de 4 para cubrir las 4 caras de cada mueble.
 HoldoorServer._tronoSprites = {
-    -- Sofas / asientos grandes (look "trono")
+    -- ────────────────────────────────────────
+    -- SILLONES grandes (mejor look para trono)
+    -- ────────────────────────────────────────
+    "furniture_seating_indoor_couches_01_0",
+    "furniture_seating_indoor_couches_01_4",
     "furniture_seating_indoor_couches_01_8",
+    "furniture_seating_indoor_couches_01_12",
     "furniture_seating_indoor_couches_01_16",
+    "furniture_seating_indoor_couches_01_20",
     "furniture_seating_indoor_couches_01_24",
+    "furniture_seating_indoor_couches_01_28",
     "furniture_seating_indoor_couches_01_32",
+    "furniture_seating_indoor_couches_01_36",
     "furniture_seating_indoor_couches_01_40",
-    -- Sillas indoor (chair-like)
+    "furniture_seating_indoor_couches_01_44",
+    "furniture_seating_indoor_couches_01_48",
+    "furniture_seating_indoor_couches_01_52",
+    -- ────────────────────────────────────────
+    -- SILLAS / asientos individuales indoor
+    -- ────────────────────────────────────────
+    "furniture_seating_indoor_chairs_01_0",
+    "furniture_seating_indoor_chairs_01_4",
+    "furniture_seating_indoor_chairs_01_8",
+    "furniture_seating_indoor_chairs_01_12",
+    "furniture_seating_indoor_chairs_01_16",
+    "furniture_seating_indoor_chairs_01_20",
+    "furniture_seating_indoor_chairs_01_24",
+    "furniture_seating_indoor_chairs_01_28",
+    "furniture_seating_indoor_chairs_01_32",
+    -- Sillones reclinables / armchairs
+    "furniture_seating_indoor_chairs_02_0",
+    "furniture_seating_indoor_chairs_02_4",
+    "furniture_seating_indoor_chairs_02_8",
+    "furniture_seating_indoor_chairs_02_12",
+    "furniture_seating_indoor_chairs_02_16",
+    -- ────────────────────────────────────────
+    -- Fallback de la lista vieja (compat)
+    -- ────────────────────────────────────────
     "furniture_seating_indoor_general_01_8",
     "furniture_seating_indoor_general_01_16",
     "furniture_seating_indoor_general_01_24",
-    "furniture_seating_indoor_general_01_32",
-    "furniture_seating_indoor_general_01_40",
-    -- Sillas outdoor
     "furniture_seating_outdoor_01_8",
     "furniture_seating_outdoor_01_16",
-    "furniture_seating_outdoor_01_24",
-    -- Postes de luz (PROBADO visible, fallback intermedio)
+    -- ────────────────────────────────────────
+    -- Garantizado visible (último recurso)
+    -- ────────────────────────────────────────
     "lighting_outdoor_01_8",
     "lighting_outdoor_01_16",
-    "lighting_outdoor_01_24",
-    -- Muros exteriores
-    "walls_exterior_brick_01_8",
-    "walls_exterior_brick_01_16",
-    -- Industrial / metal
-    "industry_railroad_01_8",
-    "industry_01_8",
-    -- Muros de carpinteria (fallback garantizado de renderizar)
     "carpentry_02_56",
     "carpentry_02_64",
 }
+
+-- ─────────────────────────────────────────────
+-- TESTER de sprite en vivo
+-- Uso desde Lua Command Line del debugger:
+--   HoldoorServer.testSprite("furniture_seating_indoor_couches_01_12")
+-- Quita el Trono actual y lo replanta con ESE sprite en la misma posicion.
+-- Si no hay Trono plantado, lo planta en la base actual.
+-- ─────────────────────────────────────────────
+function HoldoorServer.testSprite(nombreSprite)
+    if type(nombreSprite) ~= "string" or nombreSprite == "" then
+        print("[Holdoor] testSprite: pasame un nombre de sprite como string")
+        return false
+    end
+
+    -- Validar que el sprite existe
+    local s = nil
+    pcall(function() s = IsoSpriteManager.instance:getSprite(nombreSprite) end)
+    if not s then
+        pcall(function() s = getSprite(nombreSprite) end)
+    end
+    if not s then
+        print("[Holdoor] testSprite: '" .. nombreSprite .. "' NO EXISTE en este build.")
+        return false
+    end
+
+    -- Posicion: si hay trono actual, reusar. Si no, base actual.
+    local estado = HoldoorServer.estado
+    local x, y, z
+    if estado.trono and estado.trono.x then
+        x, y, z = estado.trono.x, estado.trono.y, estado.trono.z
+    elseif estado.baseX then
+        x, y, z = estado.baseX, estado.baseY, estado.baseZ or 0
+    else
+        print("[Holdoor] testSprite: marca la base primero (F10 -> Marcar mi base).")
+        return false
+    end
+
+    -- Forzar este sprite al frente de la lista y replantar
+    HoldoorServer._tronoSprites_backup = HoldoorServer._tronoSprites_backup or HoldoorServer._tronoSprites
+    HoldoorServer._tronoSprites = { nombreSprite }
+    local ok = HoldoorServer._plantarTrono(x, y, z)
+    -- Restaurar lista normal (para que un siguiente test use lista completa si falla este)
+    HoldoorServer._tronoSprites = HoldoorServer._tronoSprites_backup
+    if ok then
+        print("[Holdoor] testSprite: Trono replantado con '" .. nombreSprite .. "' en (" .. x .. "," .. y .. "," .. z .. ")")
+    else
+        print("[Holdoor] testSprite: fallo al plantar con '" .. nombreSprite .. "'")
+    end
+    return ok
+end
+
+-- Variante que planta el Trono en la posicion donde esta parado el jugador local.
+-- Util para probar sprites sin tener que volver a la base ni re-marcar.
+-- Uso: HoldoorServer.testSpriteAqui("furniture_seating_indoor_couches_01_12")
+-- ACLARACION: solo funciona en SP/host (necesita acceso a getSpecificPlayer).
+function HoldoorServer.testSpriteAqui(nombreSprite)
+    if type(nombreSprite) ~= "string" or nombreSprite == "" then
+        print("[Holdoor] testSpriteAqui: pasame un nombre de sprite como string")
+        return false
+    end
+
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then
+        print("[Holdoor] testSpriteAqui: no encontre al player (solo SP/host)")
+        return false
+    end
+
+    local x, y, z
+    pcall(function()
+        x = math.floor(p:getX())
+        y = math.floor(p:getY())
+        z = math.floor(p:getZ())
+    end)
+    if not x then
+        print("[Holdoor] testSpriteAqui: no pude leer posicion del player")
+        return false
+    end
+
+    print("[Holdoor] testSpriteAqui: plantando en posicion del player (" .. x .. "," .. y .. "," .. z .. ")")
+
+    -- Forzar este sprite + plantar en la posicion del player
+    HoldoorServer._tronoSprites_backup = HoldoorServer._tronoSprites_backup or HoldoorServer._tronoSprites
+    HoldoorServer._tronoSprites = { nombreSprite }
+    local ok = HoldoorServer._plantarTrono(x, y, z)
+    HoldoorServer._tronoSprites = HoldoorServer._tronoSprites_backup
+
+    return ok
+end
 
 -- Sprites legacy (compat - apunta a la nueva variable)
 HoldoorServer._braseroSprites = {
