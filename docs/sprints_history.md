@@ -25,11 +25,44 @@
 
 1. **`ñ` en identificador `_aplicarDañoBoost`** — kahlua no acepta caracteres no-ASCII en nombres de variables/funciones. Renombrado a `_aplicarDanoBoost`. Esto rompía **TODO el server Lua**, lo que explicaba por qué la oleada no arrancaba y por qué el Trono no spawneaba. Ver `gotchas.md` #1.
 
-2. **3 copias del mod desincronizadas** — `Documents/Holdoor_PZ/`, `Zomboid/mods/Holdoor/`, `Zomboid/Workshop/.../Holdoor/`, y una subcarpeta `Workshop/.../Holdoor/42/`. PZ B42 priorizaba la `42/` cuando existía. Yo sincronizaba archivos sueltos a destinos sueltos, así que distintas ubicaciones tenían distintas versiones del mismo archivo.
+2. **3 copias del mod desincronizadas + overlay invisible de B42** — `Documents/Holdoor_PZ/`, `Zomboid/mods/Holdoor/`, `Zomboid/Workshop/.../Holdoor/media/`, y una subcarpeta `Workshop/.../Holdoor/42/`. PZ B42 hace **overlay con prioridad**: lee primero del `42/` y cae al `media/` raíz solo para los archivos que falten. Toda la sesión anterior alguien sincronizaba archivos sueltos a `42/` dejando `media/` raíz viejo. PZ usaba HoldoorServer.lua nuevo del `42/` + HoldoorClient/UI viejo del `media/` raíz. El mod funcionaba "a medias" sin que nadie se diera cuenta.
 
-3. **Borrado prematuro de `42/` rompió el F10** — Borré la subcarpeta `42/` pensando que era redundante, pero PZ B42 estaba cargando los archivos buenos de ahí. Al borrarla, cayó al fallback `Workshop/media/` que tenía archivos del día anterior (sin la UI nueva del F10). El F10 dejó de abrir. **Fix:** restaurar sincronizando TODO `media/` del source a las 3 ubicaciones.
+3. **Borrado prematuro de `42/` rompió el F10** — Borré la subcarpeta `42/` pensando que era redundante. PZ perdió el overlay nuevo y cayó al `media/` raíz que era del commit inicial del 11 (sin Trono, sin F10, sin handlers). El F10 dejó de abrir. Intenté "restaurar desde git" (`git checkout HEAD -- ...`) sin notar que el único commit era de hace varios sprints — y el laburo de meses estaba uncommitted en el source. Casi pierdo todo.
 
-**Convención lockeada DEFINITIVA:** al editar cualquier archivo del mod, sincronizar `media/` ENTERO del source a las 3 ubicaciones. No archivos sueltos. Mantener la `42/` (es seguro y útil para Steam dual-version). Ver `gotchas.md` #2 y `infra.md` sección 1.
+4. **Restore desde backup salvó la sesión** — Hice un backup del source completo ANTES de actuar (`Holdoor_PZ_BACKUP_20260612_pre_restore`). Restaurar desde ahí recuperó el estado funcional. Sin ese backup hoy habríamos perdido meses.
+
+### Inventario de qué tenía la versión funcional (vs el commit inicial)
+
+Diff entre commit inicial `604059d` (2026-06-11) y checkpoint `9e119fb` (2026-06-12):
+
+**HoldoorClient.lua (+735 líneas)** — funciones nuevas:
+- `getSaldo`, `getMateriales`, `jugadoresConectados`, `esAdmin`
+- `guardarRecord`, `obtenerRecord` (records persistentes en ModData)
+- `onTick`, `iniciar`, `pedirEstado`
+- `comprar`, `transferir` (tienda + transferencia entre players)
+- `onKeyPressed` (binding F10 — la clave que se perdió al hacer git checkout)
+- `instalarComandoChat` (/holdoor)
+- `onZombieMuertoLocal` (kills locales)
+
+**HoldoorServer.lua (+1449 líneas)** — funciones nuevas:
+- Trono: `_plantarTrono`, `_quitarTrono`, `_aplicarDanoBoost`, `_checkWarningsHP`, `_tronoCayo`
+- Monedas: `_transferirMonedas`, `_comprar`, `_distribuirMonedas`
+- Oleadas: `_iniciarPreparacion`, `_spawnTanda`, `_lanzarOleada`, `_reAggroZombies`, `_limpiarZona`, `_oleadaCompletada`
+- Spawn: `spawnZombie`, `_spawnUno`, `calcularComposicion`
+- Markers: `_plantarBandera`, `_quitarBandera`
+
+**HoldoorUI.lua (+1480 líneas)** — clases nuevas:
+- `HoldoorOverlay` — render world-space (worldToScreen + render)
+- `HoldoorPanel` — panel F10 grande con tabs, modos, checkbox Modo Defensa
+- `HoldoorHUD` — HUD lateral compacto con stats, botones Enviar/Tienda, expandir
+
+**Archivos nuevos:**
+- `HoldoorShop.lua` (+279 líneas) — UI de tienda
+- `HoldoorShopCatalog.lua` (+161 líneas) — definición del catálogo
+
+**Convención lockeada DEFINITIVA:** al editar cualquier archivo del mod, ejecutar el script de sync de `infra.md` sección 1 que copia `media/` ENTERO a las 3 ubicaciones de destino (incluyendo la `42/`). No archivos sueltos. No "limpieza" de la `42/` sin entender que es un overlay con prioridad. Ver `gotchas.md` #2 + #2b y `infra.md` sección 1.
+
+**Acción inmediata post-sesión:** Commit `9e119fb` ya hecho como red de seguridad. El backup `Holdoor_PZ_BACKUP_20260612_pre_restore/` queda intacto hasta que el checkpoint se valide en uso real.
 
 3. **Cadáveres contados como zombis vivos** — `getMovingObjects()` retorna cadáveres y son `IsoZombie`. El damage boost los contaba, generando `-10 HP` pasivo al Trono sin que nadie lo atacara. Fix: filtro `obj:isDead()`. Ver `gotchas.md` #4.
 

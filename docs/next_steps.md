@@ -130,11 +130,12 @@ Guardar entre saves:
 ## ✅ CERRADO RECIENTEMENTE (2026-06-12)
 
 Movido a `sprints_history.md`:
-- Fix `ñ` en identificador `_aplicarDañoBoost` → renombrado a `_aplicarDanoBoost`
-- Limpieza de las 3 copias del mod → 1 fuente de la verdad
-- Borrada subcarpeta `Workshop/.../42/` fantasma
-- Filtro de `isDead()` para no contar cadáveres como zombis vivos en damage boost
-- Documentación técnica (infra/gotchas/next_steps/sprints_history)
+- Fix `ñ` en identificador `_aplicarDañoBoost` → renombrado a `_aplicarDanoBoost` (kahlua no acepta caracteres no-ASCII en identificadores).
+- Filtro `isDead()` en damage boost para no contar cadáveres como atacantes (eliminó el daño pasivo de 10 HP fantasma).
+- Convención de sync de las 4 ubicaciones del mod lockeada (overlay 42/ + media/ entendido correctamente).
+- Recuperación completa del estado funcional desde backup tras casi perderlo por un git checkout mal hecho.
+- Commit checkpoint `9e119fb` — primer commit del laburo del Trono que estaba uncommitted desde junio.
+- Documentación técnica (`docs/infra.md`, `docs/gotchas.md`, `docs/next_steps.md`, `docs/sprints_history.md`, `docs/README.md`) con la explicación correcta del overlay B42.
 
 ---
 

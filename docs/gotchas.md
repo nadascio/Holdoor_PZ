@@ -27,43 +27,79 @@ Después chequear si están dentro de strings/comments (`--`, `"..."`, `'...'`, 
 
 ---
 
-## 🔥 2. Múltiples copias del mod desincronizadas = fixes que no toman efecto
+## 🔥 2. PZ B42 hace OVERLAY de `42/` sobre `media/` — y el mod vive en 4 ubicaciones
 
-**Síntoma A:** Editás un archivo, recargás PZ, el bug sigue igual. Sprints donde nada parece funcionar.
+**El comportamiento real de PZ B42 (clave para entender todo lo demás):**
 
-**Síntoma B (peor):** Algo que **funcionaba** deja de funcionar de repente. Ej: el panel F10 no abre. Bugs aparentemente aleatorios.
+Cuando un mod tiene una subcarpeta `42/` Y una `media/` en el root, PZ B42 hace **overlay**: lee archivos de `42/media/lua/...` **PRIMERO**, y para todo archivo que NO esté en `42/`, cae al `media/` del root. **No es "una u otra"**, es **merge con prioridad**.
 
-**Causa:** El mod existe en **3 ubicaciones simultáneamente**:
-1. `Documents/Holdoor_PZ/` — workspace de dev (source of truth)
-2. `Zomboid/mods/Holdoor/` — donde PZ puede leer si está activo en el save
-3. `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/` — carpeta de upload a Steam
-4. Más una posible subcarpeta `Workshop/.../Holdoor/42/` (B42 dual-version)
+Esto significa que si tenés:
+- `42/media/lua/server/HoldoorServer.lua` (versión nueva con Trono)
+- `media/lua/client/HoldoorUI.lua` (versión vieja sin Trono)
 
-Si sincronizás solo **un archivo** a **una ubicación** (lo que yo hacía), las otras quedan con versiones viejas. Y según qué carpeta priorice PZ en cada momento, vas a ver versiones distintas:
-- PZ B42 prioriza `Workshop/.../Holdoor/42/media/` sobre `Workshop/.../Holdoor/media/` (subcarpeta versionada).
-- Si Steam te suscribe a tu propio mod publicado, puede cargar de Workshop en vez de `mods/`.
+PZ va a usar el server NUEVO + cliente VIEJO. Tu mod va a estar parcialmente actualizado y se va a comportar raro.
 
-**Cómo se manifestó el 2026-06-12:**
-- En sprints anteriores, alguien sincronizaba `42/` y dejaba `mods/` + `Workshop/media/` viejos.
-- PZ leía `42/`, la app funcionaba aparentemente bien.
-- Yo en esta sesión borré `42/` creyendo que era redundante.
-- PZ cayó al fallback `Workshop/media/` que era del día anterior **sin** el HoldoorUI nuevo → F10 dejó de abrir.
+**Las 4 ubicaciones del mod:**
+
+1. `Documents/Holdoor_PZ/` — **source of truth única** (git repo, lo que editás).
+2. `Zomboid/mods/Holdoor/` — lo que PZ carga si el mod está en `mods/` (instalación local).
+3. `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/media/` — base del Workshop.
+4. `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/42/` — **overlay B42-específico**. Hay que mantenerlo igual al `media/` o eliminarlo POR COMPLETO. Nunca dejarlo "a medias".
+
+**Cómo se manifestó este bug en sprints anteriores Y en 2026-06-12:**
+
+Durante sprints previos, distintos agentes (humanos y AI) sincronizaban **archivos puntuales** (sobre todo `HoldoorServer.lua`) a `42/`, dejando `media/` raíz desactualizado. PZ leía:
+- `HoldoorServer.lua` nuevo (del 42/) → con Trono, F10, etc.
+- `HoldoorClient.lua` viejo (del media/ raíz) → del commit inicial.
+- `HoldoorUI.lua` viejo (del media/ raíz) → del commit inicial.
+
+Funcionaba "a medias" — el server hacía todo el laburo pero el cliente y UI estaban parcialmente desconectados. Como vivía con cierta inestabilidad, parecía normal.
+
+**Mi cagada del 2026-06-12 (la que casi pierde todo):**
+1. Vi que había 4 ubicaciones y asumí "duplicación a limpiar".
+2. Borré la `42/` creyendo que era redundante.
+3. PZ perdió el overlay → cayó al `media/` raíz que tenía el commit inicial (mod casi vacío).
+4. Hice `git checkout` para "restaurar archivos buenos" → pero git solo tenía el commit inicial.
+5. **El laburo de meses estaba uncommitted en el source.** Solo se salvó porque hice backup ANTES de actuar.
 
 **Fix lockeado:**
-- **Source of truth única**: `Documents/Holdoor_PZ/`
-- **Al editar CUALQUIER archivo**: copiar **TODO `media/`** a las 3 ubicaciones, no solo el archivo tocado.
-- **NO borrar `42/` sin antes haber sincronizado el resto.**
 
-Script de sync seguro:
+**Convención de las 4 ubicaciones:**
+- Source: `Documents/Holdoor_PZ/`
+- Sync OBLIGATORIO a las 3 destinos al editar cualquier archivo:
+  - `Zomboid/mods/Holdoor/`
+  - `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/` (media/ raíz)
+  - `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/42/` (overlay B42)
+
+**Script de sync seguro (copia TODO, no archivos sueltos):**
 ```bash
 SRC="C:/Users/nahue/Documents/Holdoor_PZ"
-cp -r "$SRC/media" "C:/Users/nahue/Zomboid/mods/Holdoor/" && cp "$SRC/mod.info" "C:/Users/nahue/Zomboid/mods/Holdoor/"
-cp -r "$SRC/media" "C:/Users/nahue/Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/" && cp "$SRC/mod.info" "C:/Users/nahue/Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/"
+MODS="C:/Users/nahue/Zomboid/mods/Holdoor"
+WS="C:/Users/nahue/Zomboid/Workshop/Holdoor/Contents/mods/Holdoor"
+
+rm -rf "$MODS/media" && cp -r "$SRC/media" "$MODS/" && cp "$SRC/mod.info" "$MODS/"
+rm -rf "$WS/media"   && cp -r "$SRC/media" "$WS/"   && cp "$SRC/mod.info" "$WS/"
+rm -rf "$WS/42"      && mkdir -p "$WS/42" && cp -r "$SRC/media" "$WS/42/" && cp "$SRC/mod.info" "$WS/42/"
 ```
 
-**Verificar sync:** `md5sum` en cada ubicación, hashes iguales → ok.
+**Verificar sync:** `md5sum` en cada ubicación. Si los 4 hashes coinciden por archivo → ok.
 
-**Cuando rompió:** 2026-06-12, dos veces. Primero con el bug de ñ (sincronicé solo 1 archivo a 1 destino y la `42/` priorizada quedó vieja). Después al borrar la `42/` creyendo limpieza segura — la borré con el `Workshop/media/` aún viejo del día anterior y rompió el F10.
+---
+
+## 🔥 2b. Si tu único commit es muy viejo, NO restaures desde git como solución de "vuelta atrás"
+
+**Síntoma:** Te pasa el bug 2, intentás resolver con `git checkout HEAD -- archivo.lua`, y de repente perdés meses de trabajo.
+
+**Causa:** Si el repo tiene 1 solo commit muy viejo y todo el laburo está uncommitted, restaurar desde git te tira al estado del primer día — sin el sistema que estuviste construyendo.
+
+**Cómo se manifestó el 2026-06-12:** Vi que el HoldoorClient.lua del Workshop tenía 7KB y el del source 32KB. Asumí que el source de 32KB era "work-in-progress no testeado" y restauré desde git al de 7KB del commit inicial. Resultado: perdí F10, esAdmin, todos los handlers del Trono, etc.
+
+**Fix:**
+1. **Antes de cualquier restore desde git**, hacer backup completo del source (`cp -r` a un folder con timestamp).
+2. **Hacer commits frecuentes** mientras se trabaja, aunque sean WIP — para que git tenga estados intermedios funcionales a los que volver.
+3. **Si el único commit es muy viejo**, asumir que git NO es respaldo — solo el filesystem (backups) lo es. Actuar conforme.
+
+**Recuperación del bug:** El backup que hice ANTES de la cagada (`Holdoor_PZ_BACKUP_20260612_pre_restore`) salvó el laburo. Sin ese backup hoy estaríamos restaurando 6 meses de código desde cero.
 
 ---
 

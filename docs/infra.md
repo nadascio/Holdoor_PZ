@@ -2,44 +2,56 @@
 
 > Vivo. Si algo no calza con la realidad → actualizar este doc primero, después tocar código.
 
-## 1. Fuentes de la verdad — convención lockeada 2026-06-12
+## 1. Las 4 ubicaciones del mod — convención lockeada 2026-06-12
 
-Hay **una sola fuente de la verdad** para todo el código del mod:
+El mod vive en **4 ubicaciones** simultáneamente. **Todas tienen que estar sincronizadas con el source en cada edición**, o PZ empieza a leer una mezcla parcialmente vieja y parcialmente nueva (ver `gotchas.md` #2).
 
-```
-C:\Users\nahue\Documents\Holdoor_PZ\          ← EDITO ACÁ. Git repo.
-```
+| # | Ubicación | Rol |
+|---|---|---|
+| 1 | `Documents/Holdoor_PZ/` | **Source of truth** (git repo, lo que editás) |
+| 2 | `Zomboid/mods/Holdoor/` | Mod instalado localmente — PZ lee de acá |
+| 3 | `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/media/` | Base del Workshop (publicación Steam) |
+| 4 | `Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/42/` | **Overlay B42** (PZ lo prioriza sobre 3) |
 
-Para que PZ lo levante al jugar, se copia a:
+### El overlay 42/ — entender este comportamiento es CRÍTICO
 
-```
-C:\Users\nahue\Zomboid\mods\Holdoor\           ← PZ LEE DE ACÁ. Sincronizado tras cada edición.
-```
+PZ B42 hace **overlay con prioridad**, no "una u otra". Si existe el archivo en `42/media/lua/...` lo usa. Si no, cae al `media/lua/...` del root. Por archivo, no por mod completo.
 
-Para publicar a Steam Workshop, **solo entonces** se copia a:
+Esto significa que si sincronizás solo `HoldoorServer.lua` a `42/` y dejás `media/` raíz desactualizado, PZ va a usar:
+- `HoldoorServer.lua` nuevo (del 42/)
+- `HoldoorClient.lua` viejo (del media/ raíz)
+- `HoldoorUI.lua` viejo (del media/ raíz)
 
-```
-C:\Users\nahue\Zomboid\Workshop\Holdoor\Contents\mods\Holdoor\   ← Solo al subir a Steam.
-```
+= mod a medio funcionar y bugs aleatorios. **No es teoría**: fue exactamente lo que pasó toda la sesión del 12.
 
-### IMPORTANTE — al editar SIEMPRE sincronizar TODOS los archivos
+### Script de sync OBLIGATORIO
 
-No alcanza con copiar solo el archivo que editaste. **Cada `cp` al sync tiene que copiar TODO `media/lua/`**, porque distintas ubicaciones pueden tener distinto estado y se desincronizan invisiblemente.
+**No copies archivos sueltos. No.** Siempre `cp -r media/` enterito a TODAS las ubicaciones. Si no, te clavás con un overlay desincronizado.
 
-Script de sync completo:
 ```bash
 SRC="C:/Users/nahue/Documents/Holdoor_PZ"
 MODS="C:/Users/nahue/Zomboid/mods/Holdoor"
-cp -r "$SRC/media" "$MODS/" && cp "$SRC/mod.info" "$MODS/"
+WS="C:/Users/nahue/Zomboid/Workshop/Holdoor/Contents/mods/Holdoor"
+
+# 1. mods/Holdoor — donde PZ lee si esta como local
+rm -rf "$MODS/media" && cp -r "$SRC/media" "$MODS/" && cp "$SRC/mod.info" "$MODS/"
+
+# 2. Workshop media/ — base del Steam Workshop
+rm -rf "$WS/media" && cp -r "$SRC/media" "$WS/" && cp "$SRC/mod.info" "$WS/"
+
+# 3. Workshop 42/ — overlay B42 (mantener idéntico a media/)
+rm -rf "$WS/42" && mkdir -p "$WS/42" && cp -r "$SRC/media" "$WS/42/" && cp "$SRC/mod.info" "$WS/42/"
 ```
 
-### Sobre la subcarpeta `42/` (B42 dual-version)
+### Verificar sync
 
-PZ B42 prioriza `Workshop/.../Holdoor/42/media/` sobre `Workshop/.../Holdoor/media/` cuando ambas existen. Eso es por el mecanismo de soporte dual B41/B42 de Steam Workshop.
+```bash
+for f in "media/lua/client/HoldoorClient.lua" "media/lua/client/HoldoorUI.lua" "media/lua/server/HoldoorServer.lua"; do
+  md5sum "$SRC/$f" "$MODS/$f" "$WS/$f" "$WS/42/$f"
+done
+```
 
-**En este mod tenía sentido conservar la `42/`** porque cuando alguien se suscribe vía Steam, Steam descarga la versión `42/` y PZ la usa. Si solo subís `media/` raíz puede haber problemas de carga en B42.
-
-**Decisión pendiente con Nahuel:** mantener `42/` (publicación dual-version segura) o borrarla (B42-only, más simple). El bug del 2026-06-12 NO fue por tener `42/`, fue por no sincronizar TODOS los archivos a TODAS las ubicaciones.
+Los 4 hashes deben coincidir **por archivo**. Si alguno difiere → sync no completo, riesgo de comportamiento inestable.
 
 ### Flow de edición
 
