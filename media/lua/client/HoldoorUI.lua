@@ -48,15 +48,25 @@ end
 
 function HoldoorOverlay:initialise()
     ISPanel.initialise(self)
+    -- CLAVE: ISPanel por default tiene wantMouseEvents=true → el motor Java consume
+    -- eventos del mouse aunque los handlers Lua devuelvan false. Hay que apagarlo
+    -- explicitamente para que el inventario y otras UIs no se rompan.
+    pcall(function() self:setWantMouseEvents(false) end)
 end
 
--- No capturar ningun evento de mouse (overlay completamente transparente a input)
-function HoldoorOverlay:isMouseOver()            return false end
-function HoldoorOverlay:onMouseDown(x, y)        return false end
-function HoldoorOverlay:onMouseUp(x, y)          return false end
-function HoldoorOverlay:onMouseMove(dx, dy)      return false end
-function HoldoorOverlay:onRightMouseDown(x, y)   return false end
-function HoldoorOverlay:onRightMouseUp(x, y)     return false end
+-- No capturar NINGUN evento de mouse (overlay completamente transparente a input).
+-- Importante: ISUIElement por DEFAULT devuelve true en los handlers -> consume eventos.
+-- Hay que overridear los 10 handlers para no romper hover/click de otras UIs (inventario, etc).
+function HoldoorOverlay:isMouseOver()              return false end
+function HoldoorOverlay:onMouseDown(x, y)          return false end
+function HoldoorOverlay:onMouseUp(x, y)            return false end
+function HoldoorOverlay:onMouseMove(dx, dy)        return false end
+function HoldoorOverlay:onMouseMoveOutside(dx, dy) return false end
+function HoldoorOverlay:onMouseDownOutside(x, y)   return false end
+function HoldoorOverlay:onMouseUpOutside(x, y)     return false end
+function HoldoorOverlay:onRightMouseDown(x, y)     return false end
+function HoldoorOverlay:onRightMouseUp(x, y)       return false end
+function HoldoorOverlay:onMouseWheel(del)          return false end
 
 -- Conversion mundo -> pantalla (calculo manual, jugador como centro).
 -- Puede tener leve drift durante movimiento por el camera lead de PZ, pero garantiza
@@ -352,17 +362,19 @@ function HoldoorPanel:crearContenido()
     local bw = math.floor((PANEL_W - pad * 2 - 8) / 2)
     local bh = 32
 
+    -- FILA 1: Acciones de BASE (Marcar / Quitar)
     self.btnBase = ISButton:new(pad, y, bw, bh, "Marcar mi base", self, self.onMarcarBase)
     self.btnBase.backgroundColor = COLOR_BOTON_BASE
     self.btnBase.borderColor = { r=0.3, g=0.5, b=0.8, a=1 }
     self:addChild(self.btnBase)
 
-    self.btnOnda = ISButton:new(pad + bw + 8, y, bw, bh, "Forzar oleada", self, self.onOleadaManual)
-    self.btnOnda.backgroundColor = COLOR_BOTON_ONDA
-    self.btnOnda.borderColor = { r=0.7, g=0.4, b=0.1, a=1 }
-    self:addChild(self.btnOnda)
+    self.btnQuitarBase = ISButton:new(pad + bw + 8, y, bw, bh, "Quitar base / Trono", self, self.onQuitarBase)
+    self.btnQuitarBase.backgroundColor = { r=0.35, g=0.15, b=0.20, a=1 }
+    self.btnQuitarBase.borderColor     = { r=0.65, g=0.30, b=0.30, a=1 }
+    self:addChild(self.btnQuitarBase)
     y = y + bh + 8
 
+    -- FILA 2: Control de OLEADAS (Iniciar / Detener)
     self.btnIniciar = ISButton:new(pad, y, bw, bh, "INICIAR OLEADAS", self, self.onIniciar)
     self.btnIniciar.backgroundColor = COLOR_BOTON_OK
     self.btnIniciar.borderColor = { r=0.3, g=0.7, b=0.3, a=1 }
@@ -372,6 +384,13 @@ function HoldoorPanel:crearContenido()
     self.btnDetener.backgroundColor = COLOR_BOTON_STOP
     self.btnDetener.borderColor = { r=0.7, g=0.2, b=0.2, a=1 }
     self:addChild(self.btnDetener)
+    y = y + bh + 8
+
+    -- FILA 3: Forzar oleada (manual override, secundario → full ancho)
+    self.btnOnda = ISButton:new(pad, y, PANEL_W - pad * 2, bh, "Forzar oleada (manual)", self, self.onOleadaManual)
+    self.btnOnda.backgroundColor = COLOR_BOTON_ONDA
+    self.btnOnda.borderColor = { r=0.7, g=0.4, b=0.1, a=1 }
+    self:addChild(self.btnOnda)
     y = y + bh + 8
 
     -- BOTON TESTING: da monedas + materiales + items a uno mismo (para probar la tienda)
@@ -421,24 +440,9 @@ function HoldoorPanel:onTestDarme()
     md.Holdoor_Valyrio   = (md.Holdoor_Valyrio   or 0) + 50
     md.Holdoor_Obsidiana = (md.Holdoor_Obsidiana or 0) + 50
 
-    -- Items utiles para tener algo en inventario
-    local items = {
-        "Base.Bandage", "Base.Bandage", "Base.Bandage",
-        "Base.Pills", "Base.Pills",
-        "Base.Antibiotics",
-        "Base.Sandwich", "Base.WaterBottleFull",
-        "Base.Crowbar",
-    }
-    local inv
-    pcall(function() inv = p:getInventory() end)
-    if inv then
-        for _, name in ipairs(items) do
-            pcall(function() inv:AddItem(name) end)
-        end
-    end
-
-    pcall(function() p:setHaloNote("[TEST] +500B +100P +100O +50 c/u de materiales + items", 200, 220, 255, 360) end)
-    print("[Holdoor] TEST DARME: monedas+materiales+items entregados a " .. p:getUsername())
+    -- NO se agregan items al inventario por pedido del user (solo monedas y materiales)
+    pcall(function() p:setHaloNote("[TEST] +500B +100P +100O +50 c/u de materiales", 200, 220, 255, 360) end)
+    print("[Holdoor] TEST DARME: monedas + materiales entregados a " .. p:getUsername())
 
     -- Refrescar el HUD/tienda si está abierta
     if HoldoorShop and HoldoorShop.refrescar then HoldoorShop.refrescar() end
@@ -628,6 +632,27 @@ end
 --  HANDLERS DE BOTONES
 -- ─────────────────────────────────────────────
 
+function HoldoorPanel:onQuitarBase()
+    if not HoldoorClient.estado.baseDefinida then
+        HoldoorClient.chat("[HOLDOOR] No hay base marcada todavia.", 1, 0.6, 0.2)
+        return
+    end
+    -- Confirmacion — destruye el Trono fisico, no es reversible
+    local txt = "Vas a quitar la base y DESTRUIR el Trono actual.\n\nVas a perder el progreso visual de la base (HP del Trono se pierde tambien).\n\nNO se puede hacer durante una oleada activa.\n\nConfirmas?"
+    local modal = ISModalDialog:new(0, 0, 380, 220, txt, true, self, HoldoorPanel.onConfirmQuitarBase)
+    modal:initialise()
+    modal:addToUIManager()
+    local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
+    modal:setX((sw - modal.width) / 2)
+    modal:setY((sh - modal.height) / 2)
+end
+
+function HoldoorPanel:onConfirmQuitarBase(button)
+    if button.internal == "YES" then
+        HoldoorClient.quitarBase()
+    end
+end
+
 function HoldoorPanel:onMarcarBase()
     HoldoorClient.setBase()
 end
@@ -730,6 +755,20 @@ function HoldoorHUD:new(x, y)
     return o
 end
 
+-- HUD lateral: el panel padre captura mouse SOLO en el header (zona draggable)
+-- y cuando el cursor esta sobre algun hijo interactivo (botones).
+-- En el resto del area del HUD el mouse pasa al inventario y otras UIs detras.
+-- Resuelve el bug donde el inventario no se expande con el HUD presente.
+function HoldoorHUD:isMouseOver()
+    local mx, my = getMouseX() - self:getAbsoluteX(), getMouseY() - self:getAbsoluteY()
+    -- 1) Header (titulo + boton +/-): draggable
+    if my >= 0 and my <= HUD_H_HEAD and mx >= 0 and mx <= self.width then
+        return true
+    end
+    -- 2) Sobre algun hijo interactivo (botones TIENDA, Enviar monedas, etc.)
+    return self:isMouseOverChild()
+end
+
 function HoldoorHUD:initialise()
     ISPanel.initialise(self)
     self:_crearContenido()
@@ -821,6 +860,10 @@ function HoldoorHUD:_crearContenido()
 
     self.lblRadarCount = ISLabel:new(pad, y, 16, "", 0.8, 0.6, 0.6, 1, UIFont.Small, true)
     self:addChild(self.lblRadarCount)
+    y = y + 20
+
+    -- Y inicial del cuadrado del radar (calculado dinamicamente, no hardcoded)
+    self.yRadarBox = y
 
     -- Estado interno del radar
     self.radarVisible  = false
@@ -1222,7 +1265,9 @@ function HoldoorHUD:render()
         local RADAR_W = HUD_W - 20
         local RADAR_H = 90
         local rx      = 10
-        local ry      = HUD_H_HEAD + 228  -- debajo del separador de kills + TIENDA
+        -- Y calculado dinamicamente segun lo que creo _crearContenido (debajo de los
+        -- labels "RADAR" / "Buscando: X zombies"). Antes era hardcoded a +228 y se desfasaba.
+        local ry      = self.yRadarBox or (HUD_H_HEAD + 280)
 
         -- Fondo + borde del radar
         self:drawRect(rx, ry, RADAR_W, RADAR_H, 0.92, 0.02, 0.02, 0.02)
@@ -1271,6 +1316,19 @@ end
 
 function HoldoorHUD.crear()
     if HoldoorHUD.instance then return end
+    -- [TEST DIAGNOSTICO 2026-06-15] HUD comentado temporalmente para confirmar
+    -- si es el causante del bloqueo de hover sobre inventario y otras UIs.
+    -- Si con esto el inventario funciona OK → confirmado que es el HUD.
+    -- Si NO → el culpable es otro panel. Buscar.
+    --[[
+    local sw = getCore():getScreenWidth()
+    local hud = HoldoorHUD:new(sw - HUD_W - 16, 16)
+    hud:initialise()
+    hud:addToUIManager()
+    HoldoorHUD.instance = hud
+    --]]
+    -- Re-activado todo despues del diagnostico. Cada panel fullscreen ahora llama
+    -- setWantMouseEvents(false) en su :initialise() para no consumir eventos del mouse.
     local sw = getCore():getScreenWidth()
     local hud = HoldoorHUD:new(sw - HUD_W - 16, 16)
     hud:initialise()
@@ -1278,6 +1336,7 @@ function HoldoorHUD.crear()
     HoldoorHUD.instance = hud
     HoldoorOverlay.crear()
     HoldoorAnnounce.crear()
+    HoldoorToast.crear()
 end
 
 Events.OnGameStart.Add(HoldoorHUD.crear)
@@ -1313,13 +1372,19 @@ end
 
 function HoldoorAnnounce:initialise()
     ISPanel.initialise(self)
+    pcall(function() self:setWantMouseEvents(false) end)
 end
 
-function HoldoorAnnounce:isMouseOver()          return false end
-function HoldoorAnnounce:onMouseDown(x, y)      return false end
-function HoldoorAnnounce:onMouseUp(x, y)        return false end
-function HoldoorAnnounce:onRightMouseDown(x, y) return false end
-function HoldoorAnnounce:onRightMouseUp(x, y)   return false end
+function HoldoorAnnounce:isMouseOver()              return false end
+function HoldoorAnnounce:onMouseDown(x, y)          return false end
+function HoldoorAnnounce:onMouseUp(x, y)            return false end
+function HoldoorAnnounce:onMouseMove(dx, dy)        return false end
+function HoldoorAnnounce:onMouseMoveOutside(dx, dy) return false end
+function HoldoorAnnounce:onMouseDownOutside(x, y)   return false end
+function HoldoorAnnounce:onMouseUpOutside(x, y)     return false end
+function HoldoorAnnounce:onRightMouseDown(x, y)     return false end
+function HoldoorAnnounce:onRightMouseUp(x, y)       return false end
+function HoldoorAnnounce:onMouseWheel(del)          return false end
 
 -- titulo: texto grande | sub: texto chico | kills: ranking (puede ser "") | duracionTicks ~60fps
 function HoldoorAnnounce.mostrar(titulo, sub, r, g, b, duracionTicks, kills)
@@ -1402,6 +1467,116 @@ function HoldoorAnnounce:render()
         self:drawText(self.anuncioKills, sw/2 - kW/2, cy + 36,
                       0.65, 0.95, 0.55, alpha * 0.88, UIFont.Small)
     end
+end
+
+-- ════════════════════════════════════════════════════════════════════
+-- HoldoorToast: notificacion compacta arriba de la pantalla
+-- Se renderiza por encima de la tienda y demas paneles. Una sola linea.
+-- Uso: HoldoorToast.mostrar("Compraste: X", 0.3, 1, 0.5)
+-- ════════════════════════════════════════════════════════════════════
+
+HoldoorToast = ISPanel:derive("HoldoorToast")
+HoldoorToast.instance = nil
+
+function HoldoorToast:new()
+    local sw = getCore():getScreenWidth()
+    local sh = getCore():getScreenHeight()
+    local o  = ISPanel.new(self, 0, 0, sw, sh)
+    setmetatable(o, self)
+    self.__index      = self
+    o.backgroundColor = {r=0, g=0, b=0, a=0}
+    o.borderColor     = {r=0, g=0, b=0, a=0}
+    o.moveWithMouse   = false
+    o.toastTexto      = ""
+    o.toastR          = 1
+    o.toastG          = 0.9
+    o.toastB          = 0.4
+    o.toastTick       = 99999
+    o.toastMaxTicks   = 180   -- ~3 segundos a 60fps
+    return o
+end
+
+function HoldoorToast:initialise()
+    ISPanel.initialise(self)
+    pcall(function() self:setWantMouseEvents(false) end)
+end
+
+function HoldoorToast:isMouseOver()              return false end
+function HoldoorToast:onMouseDown(x, y)          return false end
+function HoldoorToast:onMouseUp(x, y)            return false end
+function HoldoorToast:onMouseMove(dx, dy)        return false end
+function HoldoorToast:onMouseMoveOutside(dx, dy) return false end
+function HoldoorToast:onMouseDownOutside(x, y)   return false end
+function HoldoorToast:onMouseUpOutside(x, y)     return false end
+function HoldoorToast:onRightMouseDown(x, y)     return false end
+function HoldoorToast:onRightMouseUp(x, y)       return false end
+function HoldoorToast:onMouseWheel(del)          return false end
+
+function HoldoorToast.mostrar(texto, r, g, b)
+    local inst = HoldoorToast.instance
+    if not inst then return end
+    inst.toastTexto    = tostring(texto or "")
+    inst.toastR        = r or 1
+    inst.toastG        = g or 0.9
+    inst.toastB        = b or 0.4
+    inst.toastTick     = 0
+    inst:setVisible(true)
+end
+
+function HoldoorToast.crear()
+    if HoldoorToast.instance then return end
+    local inst = HoldoorToast:new()
+    inst:initialise()
+    inst:addToUIManager()
+    inst:setVisible(false)
+    HoldoorToast.instance = inst
+end
+
+function HoldoorToast:render()
+    ISPanel.render(self)
+
+    local maxTicks = self.toastMaxTicks or 180
+    self.toastTick = (self.toastTick or maxTicks) + 1
+
+    if self.toastTick >= maxTicks or not self.toastTexto or self.toastTexto == "" then
+        self:setVisible(false)
+        return
+    end
+
+    -- Fade in (10 ticks) / fade out (25 ticks)
+    local alpha
+    local fadeIn  = 10
+    local fadeOut = 25
+    if self.toastTick < fadeIn then
+        alpha = self.toastTick / fadeIn
+    elseif self.toastTick > maxTicks - fadeOut then
+        alpha = (maxTicks - self.toastTick) / fadeOut
+    else
+        alpha = 1.0
+    end
+    alpha = math.max(0, math.min(1, alpha))
+
+    local sw  = self.width
+    local tm  = getTextManager()
+    local txt = self.toastTexto
+    local txtW = tm:MeasureStringX(UIFont.Medium, txt)
+    local txtH = tm:MeasureStringY(UIFont.Medium, txt)
+
+    local boxW = txtW + 60
+    local boxH = txtH + 24
+    local boxX = (sw - boxW) / 2
+    local boxY = 90   -- 90px desde el top de la pantalla
+
+    -- Fondo oscuro con borde de color
+    self:drawRect(boxX, boxY, boxW, boxH, 0.78 * alpha, 0, 0, 0)
+    self:drawRect(boxX, boxY, boxW, 2, alpha, self.toastR, self.toastG, self.toastB)
+    self:drawRect(boxX, boxY + boxH - 2, boxW, 2, alpha, self.toastR, self.toastG, self.toastB)
+    self:drawRect(boxX, boxY, 2, boxH, alpha, self.toastR, self.toastG, self.toastB)
+    self:drawRect(boxX + boxW - 2, boxY, 2, boxH, alpha, self.toastR, self.toastG, self.toastB)
+
+    -- Texto centrado
+    self:drawText(txt, boxX + (boxW - txtW) / 2, boxY + (boxH - txtH) / 2,
+                  self.toastR, self.toastG, self.toastB, alpha, UIFont.Medium)
 end
 
 -- ─────────────────────────────────────────────

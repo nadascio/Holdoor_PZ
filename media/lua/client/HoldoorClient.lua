@@ -126,10 +126,26 @@ HoldoorClient.estado = {
 -- ─────────────────────────────────────────────
 
 function HoldoorClient.esAdmin()
-    -- En SP o cuando hostea, isClient() es false → siempre admin
+    -- SP puro: siempre admin (isClient=false)
     local ok, client = pcall(isClient)
     if not ok or not client then return true end
 
+    -- MP host de partida HOSTED (cliente que inicio el server desde "Host"):
+    -- isCoopHost() devuelve true. PZ B42 reporta al host como AccessLevel="user"
+    -- por default → necesitamos este bypass. (isServer() solo es true en dedicated.)
+    -- Refs vanilla: media/lua/client/JoyPad/ISJoyPadListBox.lua:12,
+    -- media/lua/client/OptionScreens/InviteFriends.lua:338.
+    local ok_host, esHost = pcall(isCoopHost)
+    if ok_host and esHost then
+        print("[Holdoor] esAdmin: detectado como CoopHost → admin OK")
+        return true
+    end
+
+    -- MP server dedicated (poco comun en este mod, pero por las dudas)
+    local ok_srv, srv = pcall(isServer)
+    if ok_srv and srv then return true end
+
+    -- MP cliente remoto: depende del AccessLevel
     local player = getSpecificPlayer(0)
     if not player then return false end
 
@@ -182,6 +198,93 @@ HoldoorClient.ultimoSegsHUD = -1
 
 local function tieneServidorLocal()
     return type(HoldoorServer) == "table" and type(HoldoorServer.iniciar) == "function"
+end
+
+-- ─────────────────────────────────────────────
+--  APLICAR / QUITAR TRAITS LOCALMENTE
+--  En B42 las APIs de traits viven en contexto CLIENTE, no server.
+--  Por eso el server delega a estas funciones via OnServerCommand "aplicarTrait"/"curarTrait".
+-- ─────────────────────────────────────────────
+
+-- API REAL B42 (confirmada en media/lua/client/ISUI/PlayerStats/ISPlayerStatsUI.lua:594):
+--   local def = CharacterTraitDefinition.getCharacterTraitDefinition("strong")
+--   p:getCharacterTraits():add(def:getType())          -- requiere CharacterTrait, NO string
+--   p:modifyTraitXPBoost(def:getType(), false)
+--   SyncXp(p)
+-- IDs B42: minusculas, definidos en media/scripts/generated/characters/character_traits.txt
+-- (ej: "strong", "athletic", "out of shape" con espacios literales).
+
+local function _resolverTraitEnum(traitId)
+    -- traitId viene como nombre del enum, ej "STRONG" / "OUT_OF_SHAPE" / "EAGLE_EYED".
+    -- Acceso directo al campo estatico del enum Java CharacterTrait via indexacion Lua.
+    local enum = nil
+    pcall(function()
+        enum = CharacterTrait[traitId]
+    end)
+    -- Fallback: si el acceso por indexacion fallo, intentar CharacterTrait.valueOf(...)
+    if not enum then
+        pcall(function() enum = CharacterTrait.valueOf(traitId) end)
+    end
+    print("[Holdoor] _resolverTraitEnum('" .. tostring(traitId) .. "') = " .. tostring(enum))
+    return enum
+end
+
+function HoldoorClient.aplicarTraitLocal(traitId)
+    local p = getSpecificPlayer(0)
+    if not p then return false end
+
+    local traitEnum = _resolverTraitEnum(traitId)
+    if not traitEnum then
+        print("[Holdoor] aplicarTraitLocal: no se pudo resolver '" .. tostring(traitId) .. "' (ID invalido)")
+        HoldoorClient.chat("[HOLDOOR] Rasgo desconocido: '" .. tostring(traitId) .. "'. Reportar bug.", 1, 0.3, 0.2)
+        return false
+    end
+
+    local ok = false
+    pcall(function()
+        p:getCharacterTraits():add(traitEnum)
+        pcall(function() p:modifyTraitXPBoost(traitEnum, false) end)
+        pcall(function() SyncXp(p) end)
+        ok = true
+        print("[Holdoor] trait AGREGADO: " .. tostring(traitId))
+    end)
+
+    if not ok then
+        print("[Holdoor] aplicarTraitLocal FAIL: '" .. tostring(traitId) .. "'")
+        HoldoorClient.chat("[HOLDOOR] No se pudo aplicar el rasgo. Reportar bug.", 1, 0.3, 0.2)
+    else
+        HoldoorClient.chat("[HOLDOOR] Rasgo heroico aplicado!", 0.3, 1, 0.5)
+    end
+    return ok
+end
+
+function HoldoorClient.curarTraitLocal(traitId)
+    local p = getSpecificPlayer(0)
+    if not p then return false end
+
+    local traitEnum = _resolverTraitEnum(traitId)
+    if not traitEnum then
+        print("[Holdoor] curarTraitLocal: no se pudo resolver '" .. tostring(traitId) .. "'")
+        HoldoorClient.chat("[HOLDOOR] Rasgo desconocido. Reportar bug.", 1, 0.3, 0.2)
+        return false
+    end
+
+    local ok = false
+    pcall(function()
+        p:getCharacterTraits():remove(traitEnum)
+        pcall(function() p:modifyTraitXPBoost(traitEnum, true) end)
+        pcall(function() SyncXp(p) end)
+        ok = true
+        print("[Holdoor] trait QUITADO: " .. tostring(traitId))
+    end)
+
+    if not ok then
+        print("[Holdoor] curarTraitLocal FAIL: '" .. tostring(traitId) .. "'")
+        HoldoorClient.chat("[HOLDOOR] No se pudo curar el rasgo. Reportar bug.", 1, 0.3, 0.2)
+    else
+        HoldoorClient.chat("[HOLDOOR] Milagro del Maestre obrado!", 0.5, 1, 0.8)
+    end
+    return ok
 end
 
 -- ─────────────────────────────────────────────
@@ -332,6 +435,18 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.estado.baseDefinida = true
         if HoldoorUI then HoldoorUI.actualizarTodo() end
 
+    elseif comando == "baseQuitada" then
+        HoldoorClient.estado.baseX, HoldoorClient.estado.baseY, HoldoorClient.estado.baseZ = 0, 0, 0
+        HoldoorClient.estado.baseDefinida = false
+        HoldoorClient.estado.tronoHP, HoldoorClient.estado.tronoMaxHP = nil, nil
+        -- Tambien borrar de ModData del propio jugador (persistencia)
+        pcall(function()
+            local md = ModData.getOrCreate("Holdoor")
+            if md then md.baseX, md.baseY, md.baseZ, md.baseDefinida = nil, nil, nil, false end
+        end)
+        HoldoorClient.chat("[HOLDOOR] Base quitada. Trono destruido.", 0.6, 0.8, 1)
+        if HoldoorUI then HoldoorUI.actualizarTodo() end
+
     elseif comando == "tronoHP" or comando == "braseroHP" then
         HoldoorClient.estado.tronoHP = args.hp or 0
         HoldoorClient.estado.tronoMaxHP = args.maxHp or 0
@@ -384,6 +499,12 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.chat("[HOLDOOR] Recibiste " .. (args.cantidad or 0) .. " " .. tipoLbl .. " de " .. (args.from or "?") .. "!", 1, 0.85, 0.3)
         playUISound("LevelPerk")
 
+    elseif comando == "aplicarTrait" then
+        HoldoorClient.aplicarTraitLocal(args.trait)
+
+    elseif comando == "curarTrait" then
+        HoldoorClient.curarTraitLocal(args.trait)
+
     elseif comando == "zonaLimpiada" then
         local n = args.cantidad or 0
         if n > 0 then
@@ -429,8 +550,13 @@ function HoldoorClient.mostrarOleada(args)
     else
         HoldoorClient.chat("OLEADA " .. args.numero .. " -- " .. total .. " en camino", 1, 0.3, 0.1)
     end
-    if args.frase then HoldoorClient.chat(args.frase, 0.9, 0.8, 0.5) end
-    if args.autor then HoldoorClient.chat("    " .. args.autor, 0.5, 0.5, 0.4) end
+    -- Frase epica (Valar Morghulis, etc): SOLO al toast superior, no sobre la cabeza
+    -- (sino se tapa con el cartel grande centrado y otras UIs).
+    if args.frase and HoldoorToast then
+        local txt = args.frase
+        if args.autor then txt = txt .. "  --  " .. args.autor end
+        HoldoorToast.mostrar(txt, 0.95, 0.85, 0.45)
+    end
     HoldoorClient.chat("=================================", 0.6, 0.3, 0.1)
 
     -- Anuncio épico centrado
@@ -509,17 +635,15 @@ end
 
 function HoldoorClient.detener()
     if tieneServidorLocal() then
-        -- SP: reset de estado directamente en ambos lados
-        HoldoorServer.estado.activo           = false
-        HoldoorServer.estado.fase             = "inactivo"
-        HoldoorServer.estado.zombiesRestantes = 0
-        HoldoorServer.estado.zombiesTotal     = 0
-        HoldoorClient.estado.activo           = false
-        HoldoorClient.estado.fase             = "inactivo"
-        HoldoorClient.estado.zombiesRestantes = 0
-        HoldoorClient.estado.zombiesTotal     = 0
-        HoldoorClient.chat("[HOLDOOR] Sistema de oleadas detenido.", 0.7, 0.7, 0.7)
-        if HoldoorUI then HoldoorUI.actualizarTodo() end
+        -- SP: llamamos HoldoorServer.detener (que incluye limpieza de zombies cercanos).
+        -- Antes mutabamos el estado directo → la limpieza nunca corria. Bug 2026-06-15.
+        local player = getSpecificPlayer(0)
+        if player then
+            local ok, err = pcall(HoldoorServer.detener, player)
+            if not ok then
+                print("[Holdoor] SP detener ERROR: " .. tostring(err))
+            end
+        end
     else
         sendServerCommand(HoldoorConfig.MODULE, "detener", {})
     end
@@ -537,14 +661,9 @@ function HoldoorClient.setBase()
     HoldoorClient.estado.baseZ        = z
     HoldoorClient.estado.baseDefinida = true
 
-    -- Persist across sessions
-    local ok, md = pcall(ModData.getOrCreate, "Holdoor")
-    if ok and md then
-        md.baseX = x
-        md.baseY = y
-        md.baseZ = z
-        md.baseDefinida = true
-    end
+    -- NOTA: la base NO persiste entre sesiones por diseno (2026-06-15).
+    -- No guardamos en ModData global. Si esta sesion termina, el Trono fisico
+    -- se destruye en HoldoorServer.resetearBaseAlInicio al re-cargar.
 
     if HoldoorUI and HoldoorUI.instancia then
         HoldoorUI.instancia:actualizarEstado()
@@ -564,6 +683,21 @@ function HoldoorClient.setBase()
         end
     else
         sendServerCommand(HoldoorConfig.MODULE, "setBase", { x=x, y=y, z=z })
+    end
+end
+
+function HoldoorClient.quitarBase()
+    local player = getSpecificPlayer(0)
+    if not player then return end
+
+    if tieneServidorLocal() then
+        local ok, err = pcall(HoldoorServer.quitarBase, player)
+        if not ok then
+            print("[Holdoor] SP quitarBase ERROR: " .. tostring(err))
+            HoldoorClient.chat("[HOLDOOR] Error al quitar base: " .. tostring(err), 1, 0.3, 0.2)
+        end
+    else
+        sendServerCommand(HoldoorConfig.MODULE, "quitarBase", {})
     end
 end
 
@@ -591,7 +725,63 @@ function HoldoorClient.oleadaManual()
     end
 end
 
+-- Verifica si el player local tiene un trait (usa la API B42 que SI esta disponible en cliente).
+-- Devuelve nil si no se pudo verificar (mejor permitir que bloquear todo por error).
+function HoldoorClient.tieneTrait(traitId)
+    local p = getSpecificPlayer(0)
+    if not p then return nil end
+    local enum = _resolverTraitEnum(traitId)
+    if not enum then return nil end
+    local tiene = nil
+    pcall(function()
+        local ct = p:getCharacterTraits()
+        if ct and ct.getKnownTraits then
+            local known = ct:getKnownTraits()
+            if known and known.contains then
+                tiene = known:contains(enum)
+            end
+        end
+    end)
+    -- Fallback con HasTrait/hasTrait (ambos en B42, en duda usar el que ande)
+    if tiene == nil then pcall(function() tiene = p:HasTrait(traitId) end) end
+    if tiene == nil then pcall(function() tiene = p:hasTrait(traitId) end) end
+    return tiene
+end
+local _playerTieneTrait = HoldoorClient.tieneTrait  -- alias local para uso interno abajo
+
 function HoldoorClient.comprar(categoriaId, itemId)
+    -- Pre-validacion: encontrar el item en el catalogo y aplicar reglas especificas.
+    local itemDef = nil
+    if HoldoorShopCatalog and HoldoorShopCatalog.categorias then
+        for _, cat in ipairs(HoldoorShopCatalog.categorias) do
+            if cat.id == categoriaId then
+                for _, it in ipairs(cat.items) do
+                    if it.id == itemId then itemDef = it; break end
+                end
+                break
+            end
+        end
+    end
+
+    if itemDef and itemDef.accion then
+        -- Rasgo Heroico: NO comprar si ya tiene ese trait.
+        if itemDef.accion.tipo == "trait" then
+            local yaLoTiene = _playerTieneTrait(itemDef.accion.trait)
+            if yaLoTiene == true then
+                HoldoorClient.chat("[HOLDOOR] Ya tenes ese rasgo. No hace falta invocarlo.", 1, 0.6, 0.2)
+                return
+            end
+        end
+        -- Milagro: NO comprar si NO tiene el trait negativo (no hay nada que curar).
+        if itemDef.accion.tipo == "cura_trait" then
+            local loTiene = _playerTieneTrait(itemDef.accion.trait)
+            if loTiene == false then
+                HoldoorClient.chat("[HOLDOOR] No tenes ese rasgo, no hay nada que curar.", 1, 0.6, 0.2)
+                return
+            end
+        end
+    end
+
     local args = { categoria=categoriaId, item=itemId }
     if tieneServidorLocal() then
         local p = getSpecificPlayer(0)
@@ -645,6 +835,14 @@ function HoldoorClient.chat(texto, r, g, b)
     if player then
         player:Say(texto)
     end
+    -- Toast arriba de la pantalla (visible incluso con la tienda abierta).
+    -- NO mostrar separadores decorativos (lineas de "====" o "----") en el toast.
+    if HoldoorToast and HoldoorToast.mostrar and texto then
+        local soloDecorativo = texto:gsub("[=%-_%s]", "") == ""
+        if not soloDecorativo then
+            pcall(HoldoorToast.mostrar, texto, r, g, b)
+        end
+    end
 end
 
 -- ─────────────────────────────────────────────
@@ -657,15 +855,14 @@ end
 function HoldoorClient.onKeyPressed(key)
     if key ~= Keyboard.KEY_F10 then return end
 
-    -- Detectar contexto MP: isClient()=true (cliente conectado) O isServer()=true (host).
-    -- En SP puro (offline) ambas devuelven false.
-    local esCliente, esServer = false, false
-    pcall(function() esCliente = isClient() end)
-    pcall(function() esServer  = isServer() end)
-    if esCliente or esServer then return end   -- cualquier MP: F10 no hace nada
-
-    -- SP puro: abrir directo
-    HoldoorUI.abrir()
+    -- F10 funciona en SP siempre, y en MP solo si el player es admin (host o staff).
+    -- esAdmin() reconoce: SP / host hosted (isServer=true) / accessLevel staff.
+    -- Cliente MP random → toast naranja "Solo el host puede".
+    if HoldoorClient.esAdmin() then
+        HoldoorUI.abrir()
+    else
+        HoldoorClient.chat("[HOLDOOR] Solo el host del servidor puede abrir el panel.", 1, 0.4, 0.2)
+    end
 end
 
 -- ─────────────────────────────────────────────
@@ -677,31 +874,56 @@ end
 
 function HoldoorClient.instalarComandoChat()
     if HoldoorClient._comandoInstalado then return end
-    if not ISChat or not ISChat.sendCurrentInputText then return end
+    -- IMPORTANTE: ISChat copia la referencia del metodo al textEntry al crearse
+    -- (ISChat.lua:170: self.textEntry.onCommandEntered = ISChat.onCommandEntered).
+    -- Por eso hookear ISChat.onCommandEntered NO funciona (la instancia ya tiene
+    -- la referencia al original). Hay que hookear ISChat.instance.textEntry directamente.
+    if not ISChat or not ISChat.instance or not ISChat.instance.textEntry then
+        return  -- chat no creado todavia, reintentamos en proximo tick
+    end
 
-    local _origSend = ISChat.sendCurrentInputText
-    function ISChat:sendCurrentInputText()
+    local textEntry = ISChat.instance.textEntry
+    local _origOnCommand = textEntry.onCommandEntered
+    if not _origOnCommand then return end
+
+    textEntry.onCommandEntered = function(selfTE)
+        -- selfTE es el textEntry, no ISChat. El texto puede leerse de selfTE o de
+        -- ISChat.instance.textEntry (que es el mismo objeto).
         local text = nil
-        local ok = pcall(function()
-            text = self.textEntry and self.textEntry:getInternalText()
-        end)
-        if ok and text then
+        pcall(function() text = selfTE:getText() end)
+        if not text then pcall(function() text = selfTE:getInternalText() end) end
+        if text then
             local lower = string.lower(text):gsub("^%s+", ""):gsub("%s+$", "")
             if lower == "/holdoor" or lower:sub(1, 9) == "/holdoor " then
-                pcall(function() self.textEntry:setText("") end)
+                pcall(function() selfTE:setText("") end)
+                pcall(function() ISChat.instance:unfocus() end)
                 if HoldoorClient.esAdmin() then
                     HoldoorUI.abrir()
                 else
                     HoldoorClient.chat("[HOLDOOR] Solo el host del servidor puede usar /holdoor.", 1, 0.4, 0.2)
                 end
-                return
+                return  -- corto el flujo original
             end
         end
-        _origSend(self)
+        _origOnCommand(selfTE)
     end
 
     HoldoorClient._comandoInstalado = true
-    print("[Holdoor] Comando de chat /holdoor instalado")
+    print("[Holdoor] Comando /holdoor instalado (hook textEntry.onCommandEntered)")
+end
+
+-- Reintento periodico: en MP, ISChat puede cargar despues de OnGameStart.
+-- Tickear cada ~1s hasta que se instale, despues bajar el listener.
+local _instalarChatTickCount = 0
+function HoldoorClient._tickInstalarChat()
+    if HoldoorClient._comandoInstalado then
+        Events.OnTick.Remove(HoldoorClient._tickInstalarChat)
+        return
+    end
+    _instalarChatTickCount = _instalarChatTickCount + 1
+    if _instalarChatTickCount < 60 then return end  -- ~1s a 60fps
+    _instalarChatTickCount = 0
+    HoldoorClient.instalarComandoChat()
 end
 
 function HoldoorClient.init()
@@ -711,23 +933,12 @@ function HoldoorClient.init()
     end
     HoldoorClient.pedirEstado()
 
-    -- Restore base from ModData if server reset it (e.g. after reload)
-    if not HoldoorClient.estado.baseDefinida then
-        local ok, md = pcall(ModData.getOrCreate, "Holdoor")
-        if ok and md and md.baseX then
-            HoldoorClient.estado.baseX        = md.baseX
-            HoldoorClient.estado.baseY        = md.baseY
-            HoldoorClient.estado.baseZ        = md.baseZ or 0
-            HoldoorClient.estado.baseDefinida = true
-            if tieneServidorLocal() then
-                HoldoorServer.estado.baseX        = md.baseX
-                HoldoorServer.estado.baseY        = md.baseY
-                HoldoorServer.estado.baseZ        = md.baseZ or 0
-                HoldoorServer.estado.baseDefinida = true
-            end
-            print("[Holdoor] Base restaurada desde ModData: " .. md.baseX .. ", " .. md.baseY)
-        end
-    end
+    -- La base NO persiste entre sesiones — limpiar ModData global del mod por las dudas.
+    -- El server (HoldoorServer.resetearBaseAlInicio) ya destruye el Trono fisico al cargar.
+    pcall(function()
+        local md = ModData.getOrCreate("Holdoor")
+        if md then md.baseX, md.baseY, md.baseZ, md.baseDefinida = nil, nil, nil, false end
+    end)
 
     print("[Holdoor] Cliente inicializado v" .. HoldoorConfig.VERSION .. " -- usa /holdoor en el chat para abrir el panel")
     if tieneServidorLocal() then
@@ -736,8 +947,14 @@ function HoldoorClient.init()
         print("[Holdoor] Modo: MULTIPLAYER (comandos via red)")
     end
 
-    -- Instalar el comando /holdoor (override de ISChat)
+    -- Instalar el comando /holdoor (override de ISChat).
+    -- En MP, ISChat puede no estar disponible aun en OnGameStart, asi que
+    -- activamos un tick listener que reintenta cada ~1s hasta que se instale.
     HoldoorClient.instalarComandoChat()
+    if not HoldoorClient._comandoInstalado then
+        Events.OnTick.Add(HoldoorClient._tickInstalarChat)
+        print("[Holdoor] Chat command: ISChat aun no disponible, reintento agendado.")
+    end
 end
 
 -- ─────────────────────────────────────────────
@@ -950,6 +1167,9 @@ function HoldoorOverlayTrono.crearUI()
     if HoldoorOverlayTrono._uiInstance then return end
     local ui = HoldoorOverlayUI:new()
     ui:initialise()
+    -- CLAVE: setWantMouseEvents(false) hace que el motor Java NO consuma eventos
+    -- del mouse aunque el panel sea fullscreen. Sin esto se rompe el inventario.
+    pcall(function() ui:setWantMouseEvents(false) end)
     ui:addToUIManager()
     HoldoorOverlayTrono._uiInstance = ui
     print("[Holdoor] Overlay Trono: UI element creado")

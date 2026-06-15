@@ -221,3 +221,271 @@ Decisión: documentación del mod vive en su repo (`Documents/Holdoor_PZ/docs/`)
 **Pendiente activo (ver `next_steps.md`):**
 - Próximo sprint: **ajuste de drops + balance de tienda**.
 - Nice to have lejano: sprite custom isométrico real del Trono (camino C2). Requeriría TileZed + arte de pixel art skill medio-alto.
+
+---
+
+## Sprint v0.5 final — Tienda estabilizada + sistema de Traits B42 + Boosters (2026-06-15)
+
+**Contexto:** después de cerrar la base v0.5 (HP variable / drops generosos / HUD lateral / etc.), faltaba estabilizar el catálogo de la tienda: Rasgos Heroicos y Milagros del Maestre no aplicaban en B42, los precios estaban totalmente desproporcionados respecto a la economía real, faltaba feedback al usuario y faltaba una categoría completa (boosters/energizantes).
+
+### 1. Rasgos Heroicos + Milagros — API B42 descubierta a mano
+
+**Problema:** TODAS las APIs de traits viejas de B41 (`TraitFactory`, `addStringTrait`, `addTrait`, `getTraits():add`) son **nil en B42** tanto en server como en cliente. El intento de aplicar un trait crasheaba con "Object tried to call nil" que **kahlua NO atrapa con pcall**.
+
+**Diagnóstico:** leyendo el código vanilla de PZ B42 (`media/lua/client/ISUI/PlayerStats/ISPlayerStatsUI.lua:594` + `server/XpSystem/XpUpdate.lua:209+`) descubrimos la API real:
+
+```lua
+-- Agregar trait
+local enum = CharacterTrait[idMayusculasSnake]   -- ej "STRONG", "OUT_OF_SHAPE"
+player:getCharacterTraits():add(enum)
+player:modifyTraitXPBoost(enum, false)
+SyncXp(player)
+
+-- Quitar trait
+player:getCharacterTraits():remove(enum)
+player:modifyTraitXPBoost(enum, true)
+SyncXp(player)
+```
+
+**Detalles clave:**
+- `:add()` / `:remove()` requieren el **objeto `CharacterTrait` enum**, no string. Pasar string da `expected argument of type CharacterTrait, got String`.
+- El enum se accede con `CharacterTrait["STRONG"]` (UPPERCASE_SNAKE).
+- IDs alternativos como string ("strong" en minúscula) NO los acepta `getCharacterTraitDefinition()` con string puro.
+- **Server context NO tiene acceso al namespace `CharacterTrait`** — toda la lógica de traits vive del lado cliente.
+
+**Solución arquitectónica:** el server cobra y guarda flag en ModData del player; manda `sendServerCommand` al cliente con `aplicarTrait`/`curarTrait`; el cliente resuelve el enum y aplica. Para SP también hay fallback directo `HoldoorClient.aplicarTraitLocal()` (server y cliente comparten VM).
+
+**Catálogo definitivo (15 items):**
+- 6 Rasgos Heroicos: STRONG / ATHLETIC / BRAVE / EAGLE_EYED / NIGHT_VISION / IRON_GUT.
+- 9 Milagros: WEAK / THIN_SKINNED / OUT_OF_SHAPE / ASTHMATIC / HEMOPHOBIC / SMOKER / SLOW_HEALER / COWARDLY / OBESE.
+- Todos validados in-game (compré los 6 Heroicos secuenciales con restricción desactivada para testing).
+
+### 2. Validación pre-compra + modal de confirmación
+
+**Problema:** podías comprar STRONG aunque ya tuvieras STRONG (se cobraba sin efecto), o comprar Bendición del Cuervo (cura ASTHMATIC) sin ser asmático.
+
+**Fix:** función expuesta `HoldoorClient.tieneTrait(id)` que usa `getCharacterTraits():getKnownTraits():contains(enum)` con fallback a `HasTrait`/`hasTrait`. La validación se ejecuta en `HoldoorShopPanel:onComprar` ANTES de mostrar el modal:
+- Heroico + ya lo tenés → toast "Ya tenes ese rasgo" y se acaba (sin modal).
+- Milagro + no lo tenés → toast "No tenes ese rasgo, no hay nada que curar".
+- Pasa la validación → modal `ISModalDialog` "ATENCION: solo podes invocar UN X por vida. Confirmás?".
+
+**Indicador en UI** ("YA USADO"): cuando el player ya compró su trait/milagro de vida, los OTROS items de la misma categoría muestran `"Limite 1 por vida alcanzado"` y SOLO el item efectivamente comprado muestra `"Ya invocado por este personaje"`. Antes mostraba el nombre del trait comprado en TODOS los items y confundía.
+
+### 3. Toast UI arriba de pantalla — `HoldoorToast`
+
+**Problema:** `player:Say()` (sobre la cabeza del personaje) queda tapado por el panel de tienda. Los mensajes [HOLDOOR] no se leían.
+
+**Fix:** nuevo `HoldoorToast` similar a `HoldoorAnnounce` pero compacto, posicionado a y=90 desde el top, una sola línea, fade in/out, duración 3s. `HoldoorClient.chat()` ahora dispara ambos: el `Say()` clásico + el toast nuevo.
+
+Visible POR ENCIMA de la tienda.
+
+### 4. Rebalanceo total del catálogo
+
+**Conversión usada** (basada en precios de Materiales como referencia): `1 Valyrio = 1 Obsidiana = 1 Oro = 250 Bronce`; `1 Acero = 1 Plata = 50 Bronce`.
+
+**Economía estimada por partida NORMAL:** ~120 Bronce + ~1-2 Plata + ~1 Oro = ~500 br equivalente.
+
+Antes del rebalanceo: Strong costaba **2250 br equivalente** (15 partidas Normal). Después: **750 br** (3 partidas). Reducción general ~60%.
+
+**Heroicos (objetivo `~Cost vanilla × 75`):**
+- STRONG/ATHLETIC (cost 10): 3 Oro
+- BRAVE/EAGLE_EYED (cost 4): 1 Oro + 1 Hierro
+- NIGHT_VISION (cost 3): 4 Plata + 2 Hierro
+- IRON_GUT (cost 2): 3 Plata + 1 Hierro
+
+**Milagros (mismo principio sobre |cost|):**
+- WEAK (10): 3 Oro
+- THIN_SKINNED (8): 2 Oro + 1 Acero
+- OUT_OF_SHAPE (6): 2 Oro
+- ASTHMATIC / HEMOPHOBIC (5): 1 Oro + 2 Acero
+- SMOKER / SLOW_HEALER (3): 4 Plata + 2 Acero
+- COWARDLY / OBESE (2-0): 2 Plata + 1 Hierro
+
+**Libros de Guerra — XP multiplicado:**
+- Lite: 250 → **2000 XP** (×8), 50 Br + 1 Hi
+- Full: 500 → **5000 XP** (×10), 80 Br + 1 Hi
+- Legendario: 1000 → **15000 XP** (×15), 3 Plata + 1 Hi (antes 1 Oro + 1 Valyrio).
+
+### 5. Lujos ampliados (2 nuevos)
+
+- **Vino del Otoño** (1 Plata) — `Base.WineBottle` al inventario.
+- **Reliquia del Septón Supremo** (5 Plata + 1 Obsidiana) — pack mega-médico (5 vendas esterilizadas + 5 antibióticos + 5 pastillas + 3 algodones con alcohol).
+
+Festín de Invernalia rebajado de 3 → 2 Plata.
+
+### 6. NUEVA categoría: **Boosters** (7 items)
+
+**Motor extendido** — agregué `panic` / `unhappy` / `drunk` / `pain` al tipo `restore` en `HoldoorServer.lua:282+`. Pcall-cascade defensivo porque las APIs B42 pueden tener nombres distintos según versión (`setUnhappynessLevel` / `setUnhappyness`).
+
+**Items:**
+- Café del Norte (25 Br + 1 Hi) — fatigue + endurance + boredom.
+- Hidromiel del Valle (30 Br + 1 Hi) — stress + panic + unhappy.
+- Tónico del Maestre (1 Plata) — endurance + fatigue + pain.
+- Hojaroja de Asshai (40 Br) — panic + stress.
+- Antídoto del Bardo (15 Br) — drunk + unhappy.
+- Sangre del Dragón (2 Plata + 1 Valyrio) — fatigue + endurance + panic + pain + stress.
+- Polvo del Susurro (3 Plata + 1 Obsidiana) — stim completo (7 stats).
+
+Pensados para usarse pre-oleada o emergencia. Efecto instantáneo, no van al inventario.
+
+### Bugs / aprendizajes técnicos clave
+
+- **`type(obj.method)` en kahlua devuelve `"nil"` para métodos Java aunque el método EXISTA** — los métodos Java de PZ se exponen via metatable, no como fields del userdata. NUNCA chequear con `type()` antes de llamar.
+- **`pcall` en kahlua NO atrapa `"Object tried to call nil in pcall"` ni `"attempted index nil"`** consistentemente — esos errores escapan al log igual aunque el flujo continúe. Hay que verificar previamente si los namespaces/métodos no son nil con check explícito `if X == nil then`.
+- **`CharacterTrait` y `TraitFactory` viven en namespace CLIENT-side** en B42 — server no tiene acceso. Todo lo de traits hay que delegarlo al cliente vía `sendServerCommand`.
+- **`getCharacterTraits()` devuelve un objeto Java `CharacterTraits`** que tiene `:add(CharacterTrait)`, `:remove(CharacterTrait)`, `:getKnownTraits()` (lista con `:contains`/`:get`/`:size`). NO confundir con `getTraits()` (B41, no existe en B42).
+- **IDs de traits B42** definidos en `media/scripts/generated/characters/character_traits.txt` con prefijo `base:nombre`. El mapeo enum es `base:strong` → `CharacterTrait.STRONG`, `base:out of shape` → `CharacterTrait.OUT_OF_SHAPE`, `base:irongut` → `CharacterTrait.IRON_GUT`.
+
+**Pendiente activo (ver `next_steps.md`):**
+- Sistema de Jefes de Oleada (sprint diseñado, no implementado — Opción C/D de la discusión).
+- Tutorial wizard + about-me + footer (sprint #1).
+- i18n ES/EN (sprint #2-#4).
+- Raise up John Snow (sprint #5).
+
+---
+
+## Sesión 2026-06-15 — Bugfixes intensos + diseño Sprint v0.6 (modelo C híbrido)
+
+**Resumen ejecutivo:** sesión MUY larga (~10h) de bugfixes post-merge v0.5 + diseño del refactor mayor que se ejecuta mañana. Encontramos y arreglamos 7 bugs estructurales en cascada, descubrimos la causa raíz del bug histórico del hover del inventario, y diseñamos completamente el modelo C híbrido (timer + target de kills) que reemplazará el sistema de oleadas en v0.6.
+
+### Bugfixes aplicados (8 fixes, todos sincronizados a Workshop/42)
+
+**1. Catálogo tienda — APIs B42 + UTF-8 + nombres**
+- Acentos/ñ en `nombre`/`desc` aparecen como `?` en UI → cambiados a ASCII puro ("Café" → "Cafe", "Otoño" → "Otono").
+- Eliminado "Reliquia del Septón" de Lujos (redundante con Botiquín de Consumibles).
+
+**2. Boosters category (motor `restore` con API B42 real)**
+- `stats:setFatigue(0)` y similares **NO existen** en B42 → reemplazados por `stats:set(CharacterStat.<ENUM>, val)`.
+- Confirmado en `media/lua/shared/Foraging/forageSystem.lua` vanilla.
+- Mapping completo: hunger / thirst / fatigue / endurance / stress / boredom / panic / unhappy (UNHAPPINESS, no Unhappyness) / drunk (INTOXICATION) / pain.
+- Gotcha #19 reescrito con la API correcta.
+
+**3. Magia de Asshai (cure_bite) — API B42**
+- `bd:setInfected(false)` global NO existe en B42 → iterar body parts con `SetBitten(false)` / `SetInfected(false)` / `SetFakeInfected(false)` (capital S).
+- Confirmado en `server/ClientCommands.lua:495+` (cheat de body parts).
+
+**4. Comando `/holdoor` en MP no abría panel**
+- Método ISChat renombrado en B42: `sendCurrentInputText` (B41) → `onCommandEntered` (B42).
+- Además ISChat copia la referencia del método al `textEntry` al crearse (`textEntry.onCommandEntered = ISChat.onCommandEntered`) → hookear la clase NO funciona, hay que hookear `ISChat.instance.textEntry` directamente.
+- Reintento via `OnTick` cada ~1s hasta que ISChat esté disponible (en MP carga después de OnGameStart).
+- Gotcha #20 creado.
+- **Pendiente:** host del server no se detecta como admin nativamente → tarea para mañana.
+
+**5. Hover del inventario roto (bug HISTÓRICO resuelto)**
+- Paneles fullscreen del mod consumían eventos del mouse aunque los handlers Lua devolvieran false.
+- Causa raíz: `ISUIElement` tiene `wantMouseEvents=true` por DEFAULT (línea 1998 vanilla). Los handlers Lua son **cosméticos**; el motor Java decide capturar según el flag `consumeMouseEvents` del javaObject.
+- Fix: `self:setWantMouseEvents(false)` en `:initialise()` de cada panel fullscreen decorativo.
+- Aplica a: `HoldoorOverlay`, `HoldoorAnnounce`, `HoldoorToast`, `HoldoorOverlayUI`.
+- NO aplica a `HoldoorHUD` (tiene botones interactivos).
+- Gotcha #21 creado — **este resuelve también el bug histórico del click derecho del Trono** (gotcha #15) que veníamos arrastrando hace 2 sesiones.
+
+**6. Limpieza de zombies en MP — `removeFromWorld` → `setHealth(0)`**
+- `z:removeFromWorld()` deja zombies "fantasma" en clientes MP que reaparecen al re-sync del chunk.
+- Fix: `z:setHealth(0)` en `_limpiarZona()` — flujo normal de muerte, sincronizado en todos los clientes.
+- **Side effect descubierto:** dispara eventos `OnZombieDead` que decrementan `zombiesRestantes` de la oleada nueva (porque la limpieza pasa antes de setear el counter). Resuelto con contador `_zombiesIgnorarN` que descarta los próximos N eventos.
+- Gotcha #22 creado.
+
+**7. Botón "DETENER OLEADAS" no mataba zombies**
+- En SP, `HoldoorClient.detener()` mutaba estado del server directo, salteándose `HoldoorServer.detener()` que tiene la limpieza.
+- Fix: SP también llama `pcall(HoldoorServer.detener, player)` igual que iniciar/oleadaManual/setBase.
+
+**8. Colchón "refuerzo final" en bucle**
+- Mi fix anterior usaba `vivos` (cerca del radio) para gatillar refuerzo de cierre → si quedaban zombies lejos, vivos<3 disparaba cada 3s en bucle (total subía y bajaba).
+- Fix: usar `zombiesRestantes` (total real del mod) + flag `_colchonFinalDisparado` single-shot por oleada (se resetea en `_lanzarOleada`).
+
+**9. `next()` reemplazado por iteración con `pairs`**
+- En 3 ubicaciones de `_distribuirRecompensaOleada` y `_distribuirMateriales`, `next(t)` tiraba "Object tried to call nil" → probable override de otro mod global.
+- Fix defensivo: `for _k, _ in pairs(t) do _hay = true; break end`.
+
+**10. Base no persiste entre sesiones (feature)**
+- Antes la base + Trono físico sobrevivían al cargar partida → confuso.
+- `HoldoorServer.resetearBaseAlInicio` en `OnGameStart` busca el Trono físico en (baseX, baseY) y destruye sus piezas (filtradas por sprite name del layout — no afecta otros muebles).
+- Cliente también limpia ModData global del mod al iniciar.
+
+### Features agregadas
+
+**a) Botón "Quitar base / Trono"** en panel F10
+- Destruye IsoThumpable del Trono + resetea estado + limpia ModData.
+- Modal de confirmación porque no es reversible.
+- Bloqueado durante oleada activa.
+
+**b) Toast superior `HoldoorToast`** (creado al inicio de sesión)
+- Cartel compacto en franja superior (y=90) con fade in/out.
+- Una línea, configurable por color.
+- Renderiza POR ENCIMA de la tienda y otras UIs.
+- `HoldoorClient.chat()` ahora dispara `player:Say()` + toast (excepto separadores decorativos `===`/`---` que filtra para no spam).
+
+**c) Frases épicas movidas al toast superior**
+- "Valar Morghulis -- Hodor" antes salía sobre la cabeza del personaje y se tapaba con cartel grande centrado.
+- Ahora aparecen como toast dorado arriba — claras y legibles.
+- TODO el resto del flujo de anuncios queda IGUAL (cartel grande centrado, chat con `===`, etc).
+
+**d) Reorganización del panel F10**
+- Fila 1: Marcar mi base | Quitar base / Trono (acciones de base)
+- Fila 2: INICIAR OLEADAS | DETENER OLEADAS (control de oleadas)
+- Fila 3: Forzar oleada (full ancho, manual override)
+- Fila 4-5: TEST DARME + Cerrar
+- Eliminado el botón huérfano que quedaba solo en una fila.
+
+### Diseño cerrado para Sprint v0.6 (próxima sesión)
+
+**Modelo C híbrido — timer + target de kills:**
+- Cada oleada dura T segundos fijos.
+- Spawnea zombies continuamente con curva creciente (intervalo decrece con el tiempo).
+- Cierra por **lo que pase primero**: matás target → CIERRE LIMPIO (+25%), vence timer → SOBREVIVISTE (recompensa base), o Trono cae → game over.
+
+**Decisiones lockeadas:**
+- Duración Normal: ~25 min total partida (Opción A confirmada).
+- Pausa entre oleadas: **30s** (relajado, da tiempo a tienda).
+- Multiplicadores por modo: Fácil 0.8× / Normal 1.0× / Difícil 1.1× / Pesadilla 1.2× (duración).
+- HUD nuevo: "⏱ Tiempo: 2:34 | 🎯 Kills: 23/60" (reemplaza "Zombis X/Y").
+- Anuncios menores → toast / mayores (ÚLTIMA OLEADA, VICTORIA, TRONO CAÍDO) → centrados épicos.
+
+**Estimación:** ~5h de refactor concentrado. Plan completo en `next_steps.md` sección 0.
+
+### Aprendizajes técnicos consolidados (gotchas nuevos)
+
+- **#20** — ISChat `onCommandEntered` reemplaza `sendCurrentInputText` en B42 + hay que hookear `textEntry`, no la clase.
+- **#21** — `setWantMouseEvents(false)` es la API real para paneles fullscreen transparentes al mouse (los overrides Lua son cosméticos).
+- **#22** — En MP, NUNCA `removeFromWorld()` zombies — usar `setHealth(0)` (sincronización natural).
+
+Gotcha #19 (motor `restore` con stats B42) reescrito completo con la API real `CharacterStat` enum.
+
+### Cosas que NO se hicieron / quedan pendientes para mañana
+
+1. **Validar los 8 bugfixes con cierre completo de PZ** — varios cambios aplicados durante la sesión pero sin un test limpio post-reload.
+2. **MP: host no detectado como admin nativo** — investigar API alternativa (probablemente `isServer()`).
+3. **Sprint v0.6 — refactor modelo C** — sesión dedicada mañana.
+4. Sistema de Jefes de Oleada (post-v0.6).
+
+### Notas del equipo (proceso)
+
+- Sesión emocionalmente intensa — varios ciclos de "fix → bug nuevo → revert → fix correcto". Aprendizajes:
+  - **NO mover funcionalidades visuales sin que el user confirme exactamente lo que quiere** — el user me cazó moviendo el cartel grande centrado al toast sin haber acordado eso explícitamente.
+  - **Lua del mod NO se recarga al volver al menú principal** — solo al cerrar PZ entero. El user lo sabía y yo no le creí al principio (me equivoqué — el user tenía razón sobre crear nuevo personaje).
+  - **Cuando el user dice "tengo razón" sobre comportamiento del juego, tomar como dato** — no como hipótesis.
+
+**Cierre del día:** mod en estado funcional pero con bugs pendientes de validar. Mañana arrancamos Sprint v0.6 limpio con cabeza fresh.
+
+### Fix bonus de cierre — MP host detection con `isCoopHost()` (validado in-game)
+
+Antes de cerrar, Nahuel montó un MP server hosted para validar. El comando `/holdoor` y F10 fallaban con "Solo el host puede" porque el host se reporta como `AccessLevel="user"` en B42 hosted mode.
+
+**Primer intento (fallido):** agregué `if isServer() then return true end` en `esAdmin()`. NO funcionó — `isServer()` devuelve false en hosted (solo es true en dedicated server process).
+
+**Fix real:** **`isCoopHost()`** es la API correcta para detectar al host de MP hosted. Confirmado en código vanilla B42 (`InviteFriends.lua:338`, `ISJoyPadListBox.lua:12`).
+
+Nueva cascada en `esAdmin()`:
+1. `not isClient()` → SP puro → admin
+2. `isCoopHost()` → host hosted → admin ⭐ (caso típico)
+3. `isServer()` → dedicated server process → admin
+4. `getAccessLevel()` matches admin/moderator/gm/overseer → admin
+5. Cualquier otro → no admin
+
+**F10 habilitado en MP también:** antes había return temprano si `isClient()` o `isServer()` eran true. Ahora pasa por `esAdmin()` — el host hosted puede usar F10 directo, igual que SP.
+
+**Gotcha #23 creado** con la API correcta + refs vanilla.
+
+**Validado in-game por Nahuel:** F10 y `/holdoor` funcionan correctamente en MP hosted. El log muestra `[Holdoor] esAdmin: detectado como CoopHost → admin OK`.
+
+**Estado v0.5.1 al cierre real:** completamente listo para subir a Steam Workshop. Mañana arrancamos Sprint v0.6.

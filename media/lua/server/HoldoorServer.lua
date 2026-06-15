@@ -255,32 +255,42 @@ local function ejecutarAccion(jugador, accion)
         return ok
 
     elseif accion.tipo == "restore" then
-        -- Reseteo de stats vitales. En B42 algunas APIs cambiaron, usamos cascada con pcall
-        -- por cada stat para que falle silenciosamente si la firma no existe.
+        -- En B42 los stats se setean via getStats():set(CharacterStat.X, value).
+        -- Los setters individuales (setFatigue, setEndurance, etc) NO existen → tiran
+        -- "Object tried to call nil" que kahlua NO atrapa con pcall (gotcha #18).
+        -- Patron real confirmado en media/lua/shared/Foraging/forageSystem.lua.
         local stats = jugador:getStats()
         local bd    = jugador:getBodyDamage()
         local nutr
         pcall(function() nutr = jugador:getNutrition() end)
 
+        -- Mapeo nombre interno -> { enum, valor objetivo }
+        -- Endurance es el unico que se "carga" (valor 1.0 = full); el resto se "resetea" a 0.
+        local statMap = nil
+        if CharacterStat then
+            statMap = {
+                hunger    = { CharacterStat.HUNGER,       0.0 },
+                thirst    = { CharacterStat.THIRST,       0.0 },
+                fatigue   = { CharacterStat.FATIGUE,      0.0 },
+                sleep     = { CharacterStat.FATIGUE,      0.0 },  -- alias de fatigue
+                endurance = { CharacterStat.ENDURANCE,    1.0 },
+                stress    = { CharacterStat.STRESS,       0.0 },
+                boredom   = { CharacterStat.BOREDOM,      0.0 },
+                panic     = { CharacterStat.PANIC,        0.0 },
+                unhappy   = { CharacterStat.UNHAPPINESS,  0.0 },
+                drunk     = { CharacterStat.INTOXICATION, 0.0 },
+                pain      = { CharacterStat.PAIN,         0.0 },
+            }
+        end
+
         for _, s in ipairs(accion.stats or {}) do
-            if s == "hunger" then
-                local ok = pcall(function() stats:setHunger(0.0) end)
-                if not ok then pcall(function() stats:setHunger(0) end) end
-                if nutr then pcall(function() nutr:setCalories(2200) end) end
-            elseif s == "thirst" then
-                pcall(function() stats:setThirst(0.0) end)
-            elseif s == "fatigue" then
-                pcall(function() stats:setFatigue(0.0) end)
-                pcall(function() bd:setFatigue(0.0) end)
-            elseif s == "stress" then
-                pcall(function() stats:setStress(0.0) end)
-            elseif s == "endurance" then
-                pcall(function() stats:setEndurance(1.0) end)
-            elseif s == "sleep" then
-                pcall(function() bd:setFatigue(0.0) end)
-                pcall(function() stats:setFatigue(0.0) end)
-            elseif s == "boredom" then
-                pcall(function() stats:setBoredom(0.0) end)
+            if statMap and statMap[s] and statMap[s][1] then
+                local enum, val = statMap[s][1], statMap[s][2]
+                pcall(function() stats:set(enum, val) end)
+            end
+            -- Hunger especial: actualizar nutrition tambien
+            if s == "hunger" and nutr then
+                pcall(function() nutr:setCalories(2200) end)
             end
         end
         return true
@@ -292,11 +302,11 @@ local function ejecutarAccion(jugador, accion)
         return true
 
     elseif accion.tipo == "cure_bite" then
+        -- API real B42 confirmada en server/ClientCommands.lua:495+ (cheat de body part).
+        -- Solo usamos SetBitten/SetInfected/SetFakeInfected en cada body part.
+        -- NO usar bd:setInfected global (no existe en B42, crashea fuera de pcall).
         local bd = jugador:getBodyDamage()
         if not bd then return false end
-        pcall(function() bd:setInfected(false) end)
-        pcall(function() bd:setIsFakeInfected(false) end)
-        -- Quitar mordeduras de todas las partes del cuerpo
         pcall(function()
             local parts = bd:getBodyParts()
             if parts then
@@ -304,8 +314,10 @@ local function ejecutarAccion(jugador, accion)
                     local part = parts:get(i)
                     if part then
                         pcall(function() part:SetBitten(false) end)
-                        pcall(function() part:setBiteTime(0) end)
-                        pcall(function() part:setHaveBullet(false, 0) end)
+                        pcall(function() part:SetInfected(false) end)
+                        pcall(function() part:SetFakeInfected(false) end)
+                        pcall(function() part:SetScratched(false) end)
+                        pcall(function() part:SetDeepWounded(false) end)
                     end
                 end
             end
@@ -313,90 +325,45 @@ local function ejecutarAccion(jugador, accion)
         return true
 
     elseif accion.tipo == "trait" then
+        -- En B42, TraitFactory y los metodos de traits NO estan disponibles en el server.
+        -- Por eso mandamos comando al CLIENTE que aplica el trait localmente.
         if not accion.trait then return false end
         local md = jugador:getModData()
-        local ok = false
         local traitId = tostring(accion.trait)
 
-        print("[Holdoor] trait STEP A: intentando agregar '" .. traitId .. "'")
+        -- Marcar en ModData que el player compro este trait (para el limite "1 por vida")
+        if md then md.Holdoor_TraitComprado = accion.trait end
 
-        -- ── API 1: jugador:getDescriptor():getTraits():add()
-        -- En B42, IsoPlayer.descriptor.traits es ArrayList<String> con method add(String).
-        local desc = nil
-        local err1 = pcall(function() desc = jugador:getDescriptor() end)
-        if desc then
-            print("[Holdoor] trait STEP B: descriptor OK")
-            local traits = nil
-            pcall(function() traits = desc:getTraits() end)
-            if traits then
-                print("[Holdoor] trait STEP C: descriptor:getTraits OK")
-                local ok1 = pcall(function() traits:add(traitId) end)
-                if ok1 then
-                    ok = true
-                    print("[Holdoor] trait STEP D: AGREGADO via descriptor:getTraits:add")
-                end
-            else
-                print("[Holdoor] trait STEP C: descriptor:getTraits = nil")
-            end
-        else
-            print("[Holdoor] trait STEP B: descriptor = nil")
+        -- Mandar comando al cliente para que aplique el trait
+        pcall(function()
+            sendServerCommand(jugador, HoldoorConfig.MODULE, "aplicarTrait", { trait = traitId })
+        end)
+        -- En SP el server y cliente comparten VM, pero el namespace de TraitFactory
+        -- esta del lado cliente. Fallback: llamada directa a la funcion del cliente.
+        if type(HoldoorClient) == "table" and type(HoldoorClient.aplicarTraitLocal) == "function" then
+            pcall(function() HoldoorClient.aplicarTraitLocal(traitId) end)
         end
 
-        -- ── API 2: jugador:getTraits():add() (player directo)
-        if not ok then
-            local traits = nil
-            pcall(function() traits = jugador:getTraits() end)
-            if traits then
-                print("[Holdoor] trait STEP E: jugador:getTraits OK")
-                local ok2 = pcall(function() traits:add(traitId) end)
-                if ok2 then
-                    ok = true
-                    print("[Holdoor] trait STEP F: AGREGADO via jugador:getTraits:add")
-                end
-            else
-                print("[Holdoor] trait STEP E: jugador:getTraits = nil")
-            end
-        end
-
-        -- ── API 3: TraitFactory.getTrait():applyToPlayer()
-        if not ok then
-            pcall(function()
-                local tr = TraitFactory.getTrait(traitId)
-                if tr then
-                    tr:applyToPlayer(jugador)
-                    ok = true
-                    print("[Holdoor] trait STEP G: AGREGADO via TraitFactory:applyToPlayer")
-                end
-            end)
-        end
-
-        -- ── API 4: HasTrait + manipulacion directa del array (último recurso)
-        if not ok then
-            pcall(function()
-                if not jugador:HasTrait(traitId) then
-                    jugador:getTraits():add(traitId)
-                    ok = true
-                    print("[Holdoor] trait STEP H: AGREGADO via HasTrait+add")
-                end
-            end)
-        end
-
-        if ok and md then md.Holdoor_TraitComprado = accion.trait end
-        if not ok then print("[Holdoor] trait FAIL TOTAL: '" .. traitId .. "' — ninguna API funciono") end
-        return ok
+        print("[Holdoor] trait: comando aplicarTrait enviado al cliente para '" .. traitId .. "'")
+        return true
 
     elseif accion.tipo == "cura_trait" then
+        -- Igual que "trait": delegamos al cliente
         if not accion.trait then return false end
         local md = jugador:getModData()
-        local ok = false
-        if not ok then pcall(function() jugador:getTraits():remove(accion.trait); ok = true end) end
-        if not ok then pcall(function() jugador:getDescriptor():getTraits():remove(accion.trait); ok = true end) end
-        if not ok then pcall(function() jugador:getTraits():removeStringTrait(accion.trait); ok = true end) end
-        if not ok then pcall(function() jugador:getDescriptor():getTraits():removeStringTrait(accion.trait); ok = true end) end
-        if not ok then pcall(function() jugador:getTraits():removeTrait(TraitFactory.getTrait(accion.trait)); ok = true end) end
-        if ok and md then md.Holdoor_TraitCurado = accion.trait end
-        if not ok then print("[Holdoor] cura_trait FAIL: no encontre API para quitar '" .. accion.trait .. "'") end
-        return ok
+        local traitId = tostring(accion.trait)
+
+        if md then md.Holdoor_TraitCurado = accion.trait end
+
+        pcall(function()
+            sendServerCommand(jugador, HoldoorConfig.MODULE, "curarTrait", { trait = traitId })
+        end)
+        if type(HoldoorClient) == "table" and type(HoldoorClient.curarTraitLocal) == "function" then
+            pcall(function() HoldoorClient.curarTraitLocal(traitId) end)
+        end
+
+        print("[Holdoor] cura_trait: comando curarTrait enviado al cliente para '" .. traitId .. "'")
+        return true
     end
 
     return false
@@ -417,7 +384,7 @@ function HoldoorServer._comprar(jugador, args)
     local md = jugador:getModData()
     local mdKeyMap = HoldoorShopCatalog.mdKeyMap
 
-    -- Pre-validacion: traits son "1 por vida del personaje"
+    -- Restriccion "1 por vida del personaje" para Rasgos Heroicos y Milagros.
     if item.accion and item.accion.tipo == "trait" and md and md.Holdoor_TraitComprado then
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
               { motivo = "Ya invocaste tu Rasgo Heroico en esta vida. Solo uno por personaje." })
@@ -428,68 +395,30 @@ function HoldoorServer._comprar(jugador, args)
               { motivo = "Ya usaste tu Milagro del Maestre. Solo uno por personaje." })
         return
     end
-    -- Para cura_trait: validar que efectivamente tenga ese trait. Defensivo: si la
-    -- validacion misma falla por API B42 desconocida, dejamos pasar (mejor permitir que
-    -- bloquear todo). Probamos varias APIs en cascada.
-    if item.accion and item.accion.tipo == "cura_trait" then
-        local tieneTrait = false
-        local validoCheck = false
-        -- API 1: jugador:HasTrait() (la mas comun en B42)
-        pcall(function() tieneTrait = jugador:HasTrait(item.accion.trait); validoCheck = true end)
-        -- API 2: traits:contains() (B41 style)
-        if not validoCheck then
-            pcall(function()
-                local traits = jugador:getTraits()
-                tieneTrait = traits and traits:contains(item.accion.trait)
-                validoCheck = true
-            end)
-        end
-        -- API 3: descriptor:getTraits():contains()
-        if not validoCheck then
-            pcall(function()
-                local traits = jugador:getDescriptor():getTraits()
-                tieneTrait = traits and traits:contains(item.accion.trait)
-                validoCheck = true
-            end)
-        end
-        -- Si la validacion no pudo correr ninguna API → dejamos pasar (no bloqueamos)
-        if validoCheck and not tieneTrait then
-            pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
-                  { motivo = "No tienes ese rasgo, no hay nada que curar." })
-            return
-        end
-    end
-    -- Para cure_bite: validar que el player tenga mordedura/infeccion.
-    -- Defensivo: si la validacion misma falla por API B42 desconocida, PERMITIMOS la compra
-    -- (mejor cobrar al pedo que bloquear todo por error de validacion).
+    -- Para cura_trait: la validacion "tiene el trait?" se hace EN EL CLIENTE
+    -- (las APIs de traits son cliente-only en B42). Aca solo verificamos el limite
+    -- "1 por vida" via ModData Holdoor_TraitCurado (ya validado arriba).
+    -- Para cure_bite: validar que el player tenga mordedura.
+    -- API real B42: iterar body parts y chequear bodyPart:bitten() (minuscula, sin cascada).
+    -- Cascada con variantes (bd:isInfected, bd:IsInfected, part:IsBitten) tira errores
+    -- "Object tried to call nil" que kahlua NO atrapa con pcall → escapa al log.
     if item.accion and item.accion.tipo == "cure_bite" then
         local esta_mordido = false
         local valido_check = false
         pcall(function()
             local bd = jugador:getBodyDamage()
             if not bd then return end
-            -- Probar APIs en cascada — cualquiera que funcione marca valido_check
-            pcall(function() esta_mordido = bd:isInfected(); valido_check = true end)
-            if not valido_check then pcall(function() esta_mordido = bd:IsInfected(); valido_check = true end) end
-            -- Iterar body parts buscando mordeduras
-            if not esta_mordido then
-                pcall(function()
-                    local parts = bd:getBodyParts()
-                    if not parts then return end
-                    for i = 0, parts:size() - 1 do
-                        local part = parts:get(i)
-                        if part then
-                            local b = false
-                            pcall(function() b = part:bitten() end)
-                            if not b then pcall(function() b = part:IsBitten() end) end
-                            if b then esta_mordido = true; break end
-                        end
-                    end
-                end)
+            local parts = bd:getBodyParts()
+            if not parts then return end
+            valido_check = true
+            for i = 0, parts:size() - 1 do
+                local part = parts:get(i)
+                if part and part:bitten() then
+                    esta_mordido = true
+                    break
+                end
             end
         end)
-        -- Si pudimos chequear Y no esta mordido → bloquear
-        -- Si la validacion misma fallo (valido_check=false) → dejar pasar
         if valido_check and not esta_mordido then
             pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
                   { motivo = "No estas mordido. No hay nada que curar." })
@@ -590,6 +519,16 @@ function HoldoorServer.detener(jugador)
     estado.zombiesRestantes  = 0
     estado.zombiesTotal      = 0
     estado.ownerUsername     = nil
+
+    -- Limpiar zombies cercanos a la base — igual que al terminar oleada normal.
+    -- Evita que queden hordas residuales rodeando el Trono despues de un detener manual.
+    if estado.baseDefinida then
+        local eliminados = HoldoorServer._limpiarZona()
+        if eliminados and eliminados > 0 then
+            HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminados })
+        end
+    end
+
     HoldoorServer.notificarTodos("detenido", {})
     if jugador then
         print("[Holdoor] Sistema detenido por " .. jugador:getUsername())
@@ -763,6 +702,9 @@ function HoldoorServer._lanzarOleada()
     local oleada = estado.oleadaActual
     local cfg    = estado.config
 
+    -- Resetear flag del colchon FINAL para que pueda dispararse una vez por oleada
+    estado._colchonFinalDisparado = false
+
     -- Limpiar zona antes de cada oleada: elimina world-zombies que contaminaron la pausa
     local eliminados = HoldoorServer._limpiarZona()
     if eliminados > 0 then
@@ -889,10 +831,11 @@ function HoldoorServer._asegurarColchon()
     local estado = HoldoorServer.estado
     if estado.fase ~= "activa" then return end
 
-    -- Si no quedan zombis pendientes en cola, no spawnear refuerzo
     local pendientes = 0
     for _, t in ipairs(estado.encoladosTiers or {}) do pendientes = pendientes + t.count end
-    if pendientes == 0 then return end
+    -- Contamos zombis vivos cerca SIEMPRE (incluso si pendientes==0) para detectar
+    -- el caso "perdidos al final" → si quedan < 3 vivos y la cola esta vacia,
+    -- spawneamos refuerzo de cierre para evitar que el user tenga que cazar zombis lejanos.
 
     -- Contar zombis vivos en el radio cerca de la base
     local bx, by, bz = estado.baseX, estado.baseY, estado.baseZ
@@ -928,17 +871,38 @@ function HoldoorServer._asegurarColchon()
         end
     end
 
-    -- Si los vivos bajaron del colchon minimo, forzar la proxima tanda YA
-    -- (en vez de esperar al timing normal de tandaIntervalSec)
+    -- Caso A: oleada en curso con pendientes en cola → mantener densidad minima cerca de la base.
+    -- Caso B: cola vacia pero zombiesRestantes (TOTAL real) < 3 → spawnear "refuerzo de cierre"
+    --         para que la oleada termine pronto. SOLO se dispara UNA VEZ por oleada (flag).
     local minimo = HoldoorServer._colchonMinimo or 5
-    if vivos < minimo then
+    local FINAL_MIN = 3
+    local FINAL_REFUERZO = 3
+
+    if pendientes > 0 and vivos < minimo then
         local faltan = math.min(minimo - vivos, pendientes)
-        print(string.format("[Holdoor] Colchon: solo %d vivos (min %d), forzando refuerzo de %d", vivos, minimo, faltan))
-        -- Adelantar el timing de la proxima tanda
+        print(string.format("[Holdoor] Colchon: solo %d vivos cerca (min %d), refuerzo de %d", vivos, minimo, faltan))
         estado.proximaTandaSec = os.time() - 1
-        -- Reducir el tamano de tanda al refuerzo necesario (temporal)
         local origTamanoTanda = estado.tamanoTanda
         estado.tamanoTanda = faltan
+        HoldoorServer._spawnTanda()
+        estado.tamanoTanda = origTamanoTanda
+
+    elseif pendientes == 0
+           and (estado.zombiesRestantes or 0) > 0
+           and (estado.zombiesRestantes or 0) < FINAL_MIN
+           and not estado._colchonFinalDisparado then
+        -- BUG FIX (2026-06-15): antes usaba `vivos` (cerca del radio). Si quedaban 4 zombies
+        -- pero 2 estaban lejos, vivos=2 → disparaba refuerzo. Y al chequear cada 3s entraba
+        -- en bucle. Ahora uso zombiesRestantes (total real del mod) + flag de single-shot.
+        estado._colchonFinalDisparado = true
+        print(string.format("[Holdoor] Colchon FINAL: %d zombis totales restantes < %d → refuerzo unico +%d",
+            estado.zombiesRestantes, FINAL_MIN, FINAL_REFUERZO))
+        estado.zombiesTotal = (estado.zombiesTotal or 0) + FINAL_REFUERZO
+        estado.zombiesRestantes = (estado.zombiesRestantes or 0) + FINAL_REFUERZO
+        table.insert(estado.encoladosTiers or {}, { tier = "normal", count = FINAL_REFUERZO })
+        estado.proximaTandaSec = os.time() - 1
+        local origTamanoTanda = estado.tamanoTanda
+        estado.tamanoTanda = FINAL_REFUERZO
         HoldoorServer._spawnTanda()
         estado.tamanoTanda = origTamanoTanda
     end
@@ -973,9 +937,22 @@ function HoldoorServer._limpiarZona()
                             end
                         end
                     end
+                    -- MATAR (no removeFromWorld) — en MP, removeFromWorld deja zombies "fantasma"
+                    -- que vuelven a aparecer al re-sincronizarse el chunk. setHealth(0) los mata
+                    -- correctamente: trigger normal del motor → cadaver visible y sincronizado.
+                    -- IMPORTANTE: cada muerte va a disparar onZombieMuerto async. Si seteamos
+                    -- zombiesRestantes de la oleada nueva ANTES de que se disparen esos eventos,
+                    -- las muertes de la limpieza descuentan del counter de la oleada → arranca
+                    -- "3/10" cuando deberia ser "10/10". Por eso incrementamos _zombiesIgnorarN
+                    -- antes de matar: los proximos N eventos onZombieMuerto se descartan.
                     for _, z in ipairs(toRemove) do
-                        local ok_rm = pcall(function() z:removeFromWorld() end)
-                        if ok_rm then eliminados = eliminados + 1 end
+                        local ok_kill = false
+                        pcall(function() z:setHealth(0.0); ok_kill = true end)
+                        if not ok_kill then pcall(function() z:setHealth(0); ok_kill = true end) end
+                        if ok_kill then
+                            eliminados = eliminados + 1
+                            HoldoorServer.estado._zombiesIgnorarN = (HoldoorServer.estado._zombiesIgnorarN or 0) + 1
+                        end
                     end
                 end
             end
@@ -1068,7 +1045,10 @@ function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugad
             end
         end
     end
-    if next(matsEntregados) then
+    -- next() puede ser nil si otro mod sobreescribio el global → usar pairs defensivo.
+    local _hayMats = false
+    for _k, _ in pairs(matsEntregados) do _hayMats = true; break end
+    if _hayMats then
         HoldoorServer._distribuirMateriales(matsEntregados)
     end
 
@@ -1100,7 +1080,7 @@ function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugad
 
     print(string.format("[Holdoor] Recompensa oleada %d (%s): %dB %dP %dO | mats=%s | items=%d | perf=%.0f%% (%s) | perfectRun=%s",
         numOleada, modoId, bronze, silver, gold,
-        next(matsEntregados) and "si" or "no",
+        _hayMats and "si" or "no",
         #itemsEntregados,
         ratioKills * 100,
         hayPerformanceBonus and "BONUS" or "no",
@@ -1118,7 +1098,10 @@ end
 -- Distribuye materiales a todos los players online (en MP) o al player local (en SP).
 -- materiales: tabla {cuero=N, hierro=N, acero=N, valyrio=N, obsidiana=N}
 function HoldoorServer._distribuirMateriales(materiales)
-    if not materiales or not next(materiales) then return end
+    if not materiales then return end
+    local _hay = false
+    for _k, _ in pairs(materiales) do _hay = true; break end
+    if not _hay then return end
     local mdKeyMap = HoldoorShopCatalog.mdKeyMap or {}
 
     local function darMatsA(p)
@@ -1356,6 +1339,13 @@ function HoldoorServer.onZombieMuerto(zombie)
     local estado = HoldoorServer.estado
     if estado.fase ~= "activa" then return end
 
+    -- Ignorar las proximas N muertes que vienen de _limpiarZona (limpieza pre-oleada,
+    -- detener, etc.). Sino esas muertes descuentan del contador de la oleada nueva.
+    if (estado._zombiesIgnorarN or 0) > 0 then
+        estado._zombiesIgnorarN = estado._zombiesIgnorarN - 1
+        return
+    end
+
     -- Ignorar muertes de zombies que mueren lejos de la base (mundo normal)
     local ok, zx, zy = pcall(function() return zombie:getX(), zombie:getY() end)
     if ok and zx then
@@ -1449,6 +1439,37 @@ function HoldoorServer.setBase(jugador, x, y, z)
     HoldoorServer._plantarTrono(estado.baseX, estado.baseY, estado.baseZ)
     HoldoorServer.notificarTodos("baseActualizada", { x = estado.baseX, y = estado.baseY, z = estado.baseZ })
     print("[Holdoor] Base definida en " .. estado.baseX .. "," .. estado.baseY .. " por " .. jugador:getUsername())
+end
+
+-- Quita la base: destruye el Trono y resetea el estado. Bloquea si hay oleada activa.
+function HoldoorServer.quitarBase(jugador)
+    local estado = HoldoorServer.estado
+    if not estado.baseDefinida then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "aviso",
+              { mensaje = "No hay base marcada todavia." })
+        return
+    end
+    if estado.activo and estado.fase == "activa" then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "aviso",
+              { mensaje = "No podes quitar la base con una oleada en curso. Deten las oleadas primero." })
+        return
+    end
+
+    HoldoorServer._quitarTrono()
+    estado.baseDefinida = false
+    estado.baseX, estado.baseY, estado.baseZ = 0, 0, 0
+
+    -- Borrar de ModData del jugador para que no reaparezca al re-loguear
+    pcall(function()
+        local md = jugador:getModData()
+        if md then
+            md.baseDefinida = false
+            md.baseX, md.baseY, md.baseZ = nil, nil, nil
+        end
+    end)
+
+    HoldoorServer.notificarTodos("baseQuitada", {})
+    print("[Holdoor] Base quitada por " .. jugador:getUsername())
 end
 
 -- ─────────────────────────────────────────────
@@ -2611,6 +2632,89 @@ HoldoorServer._plantarBrasero = HoldoorServer._plantarTrono
 HoldoorServer._quitarBrasero = HoldoorServer._quitarTrono
 
 -- ─────────────────────────────────────────────
+-- RESET DE BASE AL CARGAR PARTIDA — la base NO persiste entre sesiones
+-- Si habia base persistida (ModData del player + IsoThumpable en el mundo),
+-- destruimos el Trono fisico y limpiamos el flag. El user marca base de nuevo.
+-- ─────────────────────────────────────────────
+
+local function _spritesDelTrono()
+    local set = {}
+    for _, pieza in ipairs(HoldoorServer._tronoLayoutForja or {}) do
+        if pieza and pieza[3] then set[pieza[3]] = true end
+    end
+    return set
+end
+
+function HoldoorServer._limpiarTronoEnPosicion(x, y, z)
+    if not x or not y then return 0 end
+    local ok_cell, cell = pcall(getCell)
+    if not ok_cell or not cell then return 0 end
+
+    local spritesValidos = _spritesDelTrono()
+    local eliminados = 0
+
+    -- Buscamos en una grid 5x5 alrededor de (x,y) para cubrir el layout en Cruz
+    for dx = -2, 2 do
+        for dy = -2, 2 do
+            local sq
+            pcall(function() sq = cell:getGridSquare(x + dx, y + dy, z or 0) end)
+            if sq then
+                local objs
+                pcall(function() objs = sq:getObjects() end)
+                if objs then
+                    local toRemove = {}
+                    local sz = 0
+                    pcall(function() sz = objs:size() end)
+                    for i = 0, sz - 1 do
+                        local obj
+                        pcall(function() obj = objs:get(i) end)
+                        if obj then
+                            local spriteName
+                            pcall(function()
+                                local sp = obj:getSprite()
+                                if sp then spriteName = sp:getName() end
+                            end)
+                            if spriteName and spritesValidos[spriteName] then
+                                table.insert(toRemove, obj)
+                            end
+                        end
+                    end
+                    for _, obj in ipairs(toRemove) do
+                        pcall(function() obj:removeFromSquare() end)
+                        pcall(function() obj:removeFromWorld() end)
+                        eliminados = eliminados + 1
+                    end
+                end
+            end
+        end
+    end
+    return eliminados
+end
+
+function HoldoorServer.resetearBaseAlInicio()
+    local p
+    pcall(function() p = getSpecificPlayer(0) end)
+    if not p then return end
+
+    local md
+    pcall(function() md = p:getModData() end)
+    if not md then return end
+
+    if md.baseDefinida and md.baseX and md.baseY then
+        local n = HoldoorServer._limpiarTronoEnPosicion(md.baseX, md.baseY, md.baseZ or 0)
+        print(string.format("[Holdoor] Base no persiste entre sesiones — Trono destruido en (%d,%d), %d piezas eliminadas",
+            md.baseX, md.baseY, n))
+        md.baseDefinida = false
+        md.baseX, md.baseY, md.baseZ = nil, nil, nil
+    end
+
+    HoldoorServer.estado.baseDefinida = false
+    HoldoorServer.estado.baseX, HoldoorServer.estado.baseY, HoldoorServer.estado.baseZ = 0, 0, 0
+end
+
+Events.OnGameStart.Add(HoldoorServer.resetearBaseAlInicio)
+
+-- ─────────────────────────────────────────────
 --  DAÑO BOOST — aplica daño extra a las piezas del Trono por cada zombi adyacente.
 --  Compensa el daño bajo que zombis vanilla hacen a IsoThumpables.
 --  Se llama cada 2s desde onTick durante fase activa.
@@ -2816,6 +2920,8 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
 
     elseif comando == "setBase" then
         HoldoorServer.setBase(jugador, args.x, args.y, args.z)
+    elseif comando == "quitarBase" then
+        HoldoorServer.quitarBase(jugador)
 
     elseif comando == "oleadaManual" then
         local est = HoldoorServer.estado

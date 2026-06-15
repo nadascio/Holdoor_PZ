@@ -6,7 +6,9 @@
 
 - **[infra.md](infra.md)** — Arquitectura técnica viva. **Estructura de carpetas (3 ubicaciones del mod), qué carga PZ de dónde, flow de sync edición→juego**, separación de Lua VMs cliente/servidor en B42, modelo de datos del Trono, economía virtual, modos de juego, comandos cliente↔server. **Si dudás de algo técnico → revisar acá primero.**
 
-- **[gotchas.md](gotchas.md)** — Trampas aprendidas a la fuerza. **Lua no acepta `ñ` en identificadores**, 3 copias del mod desincronizadas, sprites IsoThumpable necesitan validación, cadáveres son `IsoZombie`, Break On Error confunde con `pcall`, items.txt en B42 falla, B42 separa VMs incluso en SP. **Leer ANTES de debuggear algo que "no funciona".**
+- **[gotchas.md](gotchas.md)** — Trampas aprendidas a la fuerza. **Lua no acepta `ñ` en identificadores**, 3 copias del mod desincronizadas, sprites IsoThumpable necesitan validación, cadáveres son `IsoZombie`, Break On Error confunde con `pcall`, items.txt en B42 falla, B42 separa VMs incluso en SP, **API B42 de traits cambió todo respecto a B41 + kahlua tiene quirks con pcall/type()**. **Leer ANTES de debuggear algo que "no funciona".**
+
+- **[testing_workflow.md](testing_workflow.md)** — **🔬 Cómo debuggear leyendo `console.txt` de PZ directamente** sin pedir capturas al user. Workflow con `tail`/`grep`/`sed`, estrategia de prints como tracers, casos donde aplica vs cuándo pedir captura. **Lockeado 2026-06-15 tras ahorrar 4-6h en sesión de Rasgos Heroicos. OBLIGATORIO antes de pedirle al usuario que mande screenshots de bugs.**
 
 ## 📋 Estado del proyecto
 

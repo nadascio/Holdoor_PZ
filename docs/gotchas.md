@@ -15,7 +15,15 @@ se.krka.kahlua.vm.KahluaException: HoldoorServer.lua:794: '=' expected near 'ñ'
 
 **Fix:** Renombrar todos los identificadores a ASCII puro. `Daño` → `Dano`, `Año` → `Anio`, etc.
 
-**Importante:** En **comentarios y strings la `ñ` es segura** — Lua acepta UTF-8 ahí. Solo rompe en identificadores.
+**Importante:** En **comentarios y strings de código la `ñ` es segura PARA EL PARSER** — Lua acepta UTF-8 ahí. Solo rompe en identificadores.
+
+**PERO: el FONT de PZ B42 no renderiza UTF-8 multi-byte en labels/drawText** — los acentos y ñ se muestran como `?` en la pantalla del juego. **Cualquier string que vaya a UI (catálogo de tienda, nombres de items, labels) debe ser ASCII puro.** Detectado de nuevo 2026-06-15 con "Café del Norte" → "Caf?" y "Vino del Otoño" → "Vino del Oto?o" al agregar Boosters/Lujos.
+
+Regla práctica: al agregar items al catálogo o cualquier label nuevo, correr:
+```bash
+grep -nE 'nombre="[^"]*[áéíóúñÁÉÍÓÚÑ]|desc="[^"]*[áéíóúñÁÉÍÓÚÑ]' "media/lua/shared/HoldoorShopCatalog.lua"
+```
+Tiene que devolver vacío.
 
 **Cómo detectarlo:**
 ```bash
@@ -380,4 +388,272 @@ function MiOverlay:isMouseOver()            return false end
 
 ---
 
-**Última actualización:** 2026-06-13
+## 🔥 16. API de Traits B42 — completamente distinta a B41 + namespace cliente-only
+
+**Síntoma:** todas las APIs viejas (`TraitFactory.getTrait`, `player:addStringTrait`, `player:addTrait`, `player:getTraits():add`) son `nil` y crashean. Errores típicos:
+```
+attempted index: getTrait of non-table: null   ← TraitFactory es nil
+Object tried to call nil in pcall              ← addStringTrait/addTrait/etc
+expected argument of type CharacterTrait, got String  ← :add() con string
+```
+
+**Causa:** B42 deprecó toda la API B41. La nueva:
+- Vive en namespace **`CharacterTrait`** (no `TraitFactory`), accesible **solo cliente-side**.
+- Métodos del player: `getCharacterTraits()` → `:add(enum)` / `:remove(enum)` / `:getKnownTraits()`.
+- Argumentos esperan **objeto `CharacterTrait`**, no string.
+
+**Fix confirmado (`HoldoorClient.lua:aplicarTraitLocal`):**
+```lua
+local enum = CharacterTrait[traitIdUpperSnake]   -- "STRONG", "OUT_OF_SHAPE"
+if enum then
+    player:getCharacterTraits():add(enum)
+    player:modifyTraitXPBoost(enum, false)
+    SyncXp(player)
+end
+```
+
+**Quitar:** `:remove(enum)` + `modifyTraitXPBoost(enum, true)`. **Verificar:** `getKnownTraits():contains(enum)` (fallback a `HasTrait`/`hasTrait`).
+
+**Server → cliente:** namespace `CharacterTrait` NO existe server-side → toda la lógica de traits se delega al cliente vía `sendServerCommand(jugador, MODULE, "aplicarTrait", { trait = id })`.
+
+**IDs reales B42** (`media/scripts/generated/characters/character_traits.txt`): formato `base:nombre` minúscula. Mapeo enum:
+- `base:strong` → `CharacterTrait.STRONG`
+- `base:out of shape` → `CharacterTrait.OUT_OF_SHAPE`
+- `base:irongut` → `CharacterTrait.IRON_GUT`
+- `base:eagleeyed` → `CharacterTrait.EAGLE_EYED`
+- `base:thinskinned` → `CharacterTrait.THIN_SKINNED`
+- `base:nightvision` → `CharacterTrait.NIGHT_VISION`
+
+Estrategia: usar UPPERCASE_SNAKE en el catálogo (`accion={tipo="trait", trait="STRONG"}`) y resolver con `CharacterTrait[id]` en cliente.
+
+**Cuando rompió:** 2026-06-14/15 (sesión completa). Cinco intentos con APIs B41 antes de leer vanilla y descubrir el patrón nuevo.
+
+**Refs vanilla:** `client/ISUI/PlayerStats/ISPlayerStatsUI.lua:594` (add), `:669` (remove), `server/XpSystem/XpUpdate.lua:209+` (uso real).
+
+---
+
+## 🔥 17. kahlua: `type(obj.method)` devuelve `"nil"` aunque el método exista
+
+**Síntoma:** `if type(obj.method) == "function" then obj:method() end` SIEMPRE entra al else, aunque la llamada directa funcione.
+
+**Causa:** los métodos Java de PZ se exponen via **metatable** del userdata, NO como fields directos. `obj.method` devuelve nil en lookup directa; `obj:method()` resuelve via metatable y funciona.
+
+**Regla:** NUNCA usar `type(obj.method) == "function"` para gatear llamadas a métodos Java. Verificar el **namespace** (no el método):
+```lua
+-- ❌ MAL — type() da "nil" siempre para métodos Java
+if type(p.addStringTrait) == "function" then p:addStringTrait("Strong") end
+
+-- ✅ BIEN — verificar namespace
+if CharacterTrait then
+    local enum = CharacterTrait["STRONG"]
+    if enum then p:getCharacterTraits():add(enum) end
+end
+```
+
+**Cuando rompió:** 2026-06-15. Cinco APIs de traits chequeadas con `type()` daban todas nil, lo que escondió que el problema real era el namespace `CharacterTrait` faltante.
+
+---
+
+## 🔥 18. kahlua: `pcall` NO atrapa "Object tried to call nil" ni "attempted index nil"
+
+**Síntoma:** envolver llamada peligrosa en `pcall` y ver igual stack trace completo en consola.
+
+**Causa:** kahlua tiene implementación parcial de `pcall`. Escapan:
+- `Object tried to call nil in pcall` (invocar field nil como función)
+- `attempted index: X of non-table: null` (indexar nil)
+
+**Implicancia:** verificar previamente que namespace/método existe ANTES del pcall:
+```lua
+-- ❌ MAL — pcall NO atrapa
+pcall(function() TraitFactory.getTrait("Strong") end)   -- crashea igual si TraitFactory es nil
+
+-- ✅ BIEN — guard explícito
+if TraitFactory and TraitFactory.getTrait then
+    pcall(function() TraitFactory.getTrait("Strong") end)
+end
+```
+
+**Cuando rompió:** 2026-06-15. Motor de traits tenía 5 APIs en cascada cada una en `pcall`. Todas fallaban con errores no-atrapados, llenaban el log y el usuario veía errores en pantalla.
+
+---
+
+## 🔥 19. Stats del player en B42 — usar `getStats():set(CharacterStat.X, val)`, NO setters individuales
+
+**Síntoma:** llamar `stats:setFatigue(0.0)` (o `setHunger`, `setEndurance`, `setStress`, etc.) tira `Object tried to call nil in pcall` y kahlua NO lo atrapa (escapa al log).
+
+**Causa:** B42 deprecó TODOS los setters individuales de stats. La nueva API unificada usa un enum `CharacterStat`:
+
+```lua
+-- ❌ B41 / antiguo — NO EXISTE en B42
+stats:setFatigue(0.0)
+stats:setHunger(0.0)
+stats:setEndurance(1.0)
+
+-- ✅ B42 — confirmado en media/lua/shared/Foraging/forageSystem.lua
+stats:set(CharacterStat.FATIGUE, 0.0)
+stats:set(CharacterStat.HUNGER, 0.0)
+stats:set(CharacterStat.ENDURANCE, 1.0)
+```
+
+**Enums disponibles** (extraídos de vanilla con grep):
+- Vitales: `HUNGER`, `THIRST`, `FATIGUE`, `ENDURANCE`, `SICKNESS`, `WETNESS`, `TEMPERATURE`
+- Mentales: `STRESS`, `PANIC`, `BOREDOM`, `UNHAPPINESS`, `ANGER`, `SANITY`, `MORALE`, `IDLENESS`, `DISCOMFORT`
+- Físicos: `PAIN`, `POISON`, `INTOXICATION`, `FOOD_SICKNESS`, `NICOTINE_WITHDRAWAL`
+- Zombi: `ZOMBIE_FEVER`, `ZOMBIE_INFECTION`
+- Otro: `FITNESS`
+
+**Trampa de naming**: la API B42 usa `UNHAPPINESS` (con I), NO `UNHAPPYNESS` (con Y) — los métodos viejos de B41 tenían el typo histórico de PZ.
+
+**Aliases que pasamos al motor `restore` del mod** (mapeo nombre amigable → enum):
+- `hunger` → `HUNGER` (val 0.0)
+- `endurance` → `ENDURANCE` (val 1.0 = max)
+- `drunk` → `INTOXICATION` (val 0.0)
+- `unhappy` → `UNHAPPINESS` (val 0.0)
+- `pain` → `PAIN` (val 0.0, NO `setPainReduction` que era B41)
+- resto → enum del mismo nombre, val 0.0
+
+**Cuando rompió:** 2026-06-15. Boosters NO funcionaban (ninguno) porque todos pasaban por `setFatigue` que era nil. El Festín de Invernalia probablemente tampoco funcionó nunca del todo (no crasheaba pero solo afectaba algún stat aislado).
+
+**Refs vanilla:**
+- `media/lua/shared/Foraging/forageSystem.lua` — uso real con `CharacterStat.ENDURANCE` y `.FATIGUE`.
+- Lista completa de enums: `grep -rhE "CharacterStat\.[A-Z_]+" media/lua/ | sort -u`.
+
+---
+
+## 🔥 20. ISChat hook B42: `onCommandEntered`, NO `sendCurrentInputText`
+
+**Síntoma:** el comando `/holdoor` en chat MP llega al server crudo y PZ responde "Unknown command holdoor". El override del chat nunca se instala.
+
+**Causa:** B42 renombró el método principal de ISChat:
+- B41: `ISChat:sendCurrentInputText()`
+- B42: `ISChat:onCommandEntered()` (confirmado en `media/lua/client/Chat/ISChat.lua:465`)
+
+El hook viejo tenía `if not ISChat.sendCurrentInputText then return end` → salía temprano sin instalar nada.
+
+**Fix:**
+```lua
+local _orig = ISChat.onCommandEntered
+function ISChat:onCommandEntered()
+    local text = ISChat.instance and ISChat.instance.textEntry and
+                 ISChat.instance.textEntry:getText()
+    if text and string.lower(text):match("^/holdoor") then
+        ISChat.instance.textEntry:setText("")
+        ISChat.instance:unfocus()
+        if HoldoorClient.esAdmin() then HoldoorUI.abrir() end
+        return  -- corta el flujo original
+    end
+    _orig(self)
+end
+```
+
+**Trampa adicional — timing en MP:** en MP `ISChat` puede NO estar cargado al momento de `OnGameStart`. Si la primera ejecución de `instalarComandoChat()` falla, hay que **reintentarlo con `Events.OnTick`** hasta que esté disponible (cada ~1s). Una vez instalado, el listener se auto-remueve.
+
+**Cuando rompió:** 2026-06-15. En MP el comando `/holdoor` no abría el panel. El bug existía silenciosamente desde la migración a B42 — en SP no se notaba porque ahí se abre con F10, no con `/holdoor`.
+
+---
+
+## 🔥 21. Paneles fullscreen rompen hover del inventario — `setWantMouseEvents(false)` es la API real, no los overrides Lua
+
+**Síntoma:** crear un ISPanel fullscreen (`ISPanel.new(self, 0, 0, sw, sh)`) bloquea el hover del inventario vanilla — el inventario superior no se expande cuando pasás el cursor. Otras UIs vanilla también tienen comportamiento raro.
+
+**Trampa #1:** parece que los overrides de mouse handlers en Lua deberían resolverlo:
+```lua
+function MyPanel:isMouseOver()       return false end
+function MyPanel:onMouseDown(x, y)   return false end
+function MyPanel:onMouseUp(x, y)     return false end
+-- ... etc
+```
+**Esto NO funciona.** Los handlers Lua son cosméticos. El motor Java decide capturar eventos según el flag `consumeMouseEvents` del javaObject, NO según lo que devuelvan los handlers Lua.
+
+**Causa raíz:** en `ISUIElement.lua:1998` el constructor pone `o.wantMouseEvents = true` por DEFAULT. Después en `instantiate` se llama `javaObject:setConsumeMouseEvents(self.wantMouseEvents)`. Eso le dice al motor Java "este panel consume mouse events" — y empieza a interceptar todo en su bounding box, sin importar los overrides Lua.
+
+**Fix real:**
+```lua
+function MyPanel:initialise()
+    ISPanel.initialise(self)
+    pcall(function() self:setWantMouseEvents(false) end)
+end
+```
+
+Esto setea el flag Java correctamente. Después el motor permite que los eventos pasen al panel debajo (inventario, toolbar, etc.).
+
+**Aplica a:** TODO panel fullscreen que sea decorativo / informativo (overlays, anuncios, toasts, radar markers). NO aplica a paneles con botones interactivos (como el HoldoorHUD que tiene TIENDA/Enviar monedas) — esos SÍ necesitan capturar eventos.
+
+**Cuando rompió:** 2026-06-15. Tras horas de diagnóstico binary-search apagando paneles uno por uno. La causa parecía ser overrides faltantes (gotcha #15), pero esos solo mitigan parcialmente. La fix real es esta y resuelve también de raíz el bug del click derecho del Trono de gotcha #15.
+
+**Refs vanilla:**
+- `media/lua/client/ISUI/ISUIElement.lua:1837` — `setWantMouseEvents(want)` definición.
+- `media/lua/client/ISUI/ISUIElement.lua:1004` — donde se aplica al instantiate.
+- `media/lua/client/ISUI/ISUIElement.lua:1998` — el default `wantMouseEvents=true`.
+
+---
+
+## 🔥 22. En MP, NUNCA usar `zombie:removeFromWorld()` — usar `zombie:setHealth(0)`
+
+**Síntoma:** zombies que "deberían eliminarse" (limpiar zona, end of wave, detener oleadas) **desaparecen del server** pero los clientes los siguen viendo, o "reaparecen" instantáneamente al re-sincronizar el chunk. Comportamiento desastroso visualmente en MP.
+
+**Causa:** `removeFromWorld()` saca el `IsoZombie` del cell del server pero NO triggerea el flow de sincronización con clientes. En MP cada cliente tiene su propia copia del zombie y el motor no la limpia automáticamente solo porque el server lo borró.
+
+**Fix:** usar la API real de muerte:
+```lua
+pcall(function() z:setHealth(0.0) end)
+```
+
+Esto pasa por el flow normal del motor: HP llega a 0 → motor marca el zombie como muerto → cadaver cae al suelo → todos los clientes ven la muerte natural sincronizada. Cero fantasmas.
+
+**Aplica a:**
+- `_limpiarZona()` después de oleada / detener
+- Cualquier "kill all zombies near base"
+- Cualquier "clear arena"
+
+**NO aplica a:**
+- Piezas del Trono (IsoThumpable) — esas SÍ se eliminan con `removeFromWorld()` porque no son zombies y sí queremos que desaparezcan instantáneamente.
+
+**Cuando rompió:** 2026-06-15. Bug visible en MP test del amigo del user. En SP no se notaba porque server y cliente comparten estado, no hay desincronización posible.
+
+---
+
+## 🔥 23. Detectar host de MP hosted en B42: `isCoopHost()`, NO `isServer()`
+
+**Síntoma:** en MP **hosted** (partida iniciada con "Host" del menú principal), el HOST NO se detecta como admin. `getAccessLevel()` devuelve `"user"` para él. Tiene que correr `/setaccesslevel <user> admin` a mano.
+
+**Confusión común — `isServer()` NO es la respuesta:**
+- `isServer()` SOLO devuelve true en **dedicated server** (proceso aparte).
+- En **hosted** (cliente + server integrado), `isServer()` devuelve **false** incluso en el host.
+
+**API correcta — `isCoopHost()`:**
+
+```lua
+local ok, esHost = pcall(isCoopHost)
+if ok and esHost then
+    -- Es el host del MP hosted → admin de facto, sin importar AccessLevel
+end
+```
+
+Refs vanilla B42:
+- `media/lua/client/JoyPad/ISJoyPadListBox.lua:12`
+- `media/lua/client/OptionScreens/InviteFriends.lua:338` (`self.isCoopHost = CoopServer:isRunning()`)
+- `media/lua/client/OptionScreens/ConnectToServer.lua:271`
+
+**Cascada robusta para detectar admin en cualquier contexto PZ B42:**
+
+```lua
+function esAdmin()
+    if not isClient() then return true end       -- SP puro
+    if isCoopHost() then return true end         -- host hosted ⭐
+    if isServer() then return true end           -- dedicated server process
+    local lvl = string.lower(tostring(player:getAccessLevel() or ""))
+    if lvl == "admin" or lvl == "moderator" or lvl == "gm" or lvl == "overseer" then
+        return true
+    end
+    return false
+end
+```
+
+**Para que F10 funcione en MP:** el handler de tecla debe llamar a `esAdmin()` en vez de bloquear todo MP. Hosted host ahora puede usar F10 directamente, igual que en SP.
+
+**Cuando rompió:** 2026-06-15. Nahuel hosting server local para test → log mostraba `AccessLevel detectado: 'user'` para el host. El primer intento de fix con `isServer()` tampoco funcionó. `isCoopHost()` resolvió.
+
+---
+
+**Última actualización:** 2026-06-15

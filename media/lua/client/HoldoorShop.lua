@@ -306,9 +306,10 @@ function HoldoorShopPanel:_renderCategoria()
             precioColor = COLOR_PLATA
         end
 
-        local lblP = ISLabel:new(areaX, areaY + 44, 14, precioTxt,
-            precioColor.r, precioColor.g, precioColor.b, 1, UIFont.Small, true)
-        self:addChild(lblP); table.insert(hijos, lblP)
+        -- Precio: solo se muestra si NO esta consumido. Si esta consumido,
+        -- se reemplaza por la leyenda "Ya invocado / Limite alcanzado" para no
+        -- pisar la fila siguiente (ROW_H=64 deja un solo slot bajo el nombre+desc).
+        local lblP = nil  -- se crea recien despues del check de consumido
 
         -- Validar si puede pagar: monedas + materiales
         local puede = (saldoB >= (item.precio.bronze or 0))
@@ -320,7 +321,7 @@ function HoldoorShopPanel:_renderCategoria()
                   and (mats.valyrio   >= (item.precio.valyrio   or 0))
                   and (mats.obsidiana >= (item.precio.obsidiana or 0))
 
-        -- Validacion adicional para traits "1 por vida"
+        -- Restriccion "1 por vida": activa para Rasgos Heroicos y Milagros.
         local consumido = false
         local consumidoTxt = nil
         if item.accion then
@@ -332,19 +333,32 @@ function HoldoorShopPanel:_renderCategoria()
                 if md then
                     if item.accion.tipo == "trait" and md.Holdoor_TraitComprado then
                         consumido = true
-                        consumidoTxt = "Ya invocaste: " .. tostring(md.Holdoor_TraitComprado)
+                        if tostring(item.accion.trait) == tostring(md.Holdoor_TraitComprado) then
+                            consumidoTxt = "Ya invocado por este personaje"
+                        else
+                            consumidoTxt = "Limite 1 por vida alcanzado"
+                        end
                     elseif item.accion.tipo == "cura_trait" and md.Holdoor_TraitCurado then
                         consumido = true
-                        consumidoTxt = "Ya curaste: " .. tostring(md.Holdoor_TraitCurado)
+                        if tostring(item.accion.trait) == tostring(md.Holdoor_TraitCurado) then
+                            consumidoTxt = "Ya curado por este personaje"
+                        else
+                            consumidoTxt = "Limite 1 por vida alcanzado"
+                        end
                     end
                 end
             end
         end
 
-        -- Si esta consumido, mostrar nota debajo del precio
-        if consumidoTxt then
-            local lblConsum = ISLabel:new(areaX, areaY + 60, 14, consumidoTxt, 1.0, 0.5, 0.4, 1, UIFont.Small, true)
+        -- Render del slot inferior: si consumido → leyenda en rojo apagado;
+        -- si no → el precio normal.
+        if consumido and consumidoTxt then
+            local lblConsum = ISLabel:new(areaX, areaY + 44, 14, consumidoTxt, 1.0, 0.5, 0.4, 1, UIFont.Small, true)
             self:addChild(lblConsum); table.insert(hijos, lblConsum)
+        else
+            lblP = ISLabel:new(areaX, areaY + 44, 14, precioTxt,
+                precioColor.r, precioColor.g, precioColor.b, 1, UIFont.Small, true)
+            self:addChild(lblP); table.insert(hijos, lblP)
         end
 
         -- Boton: prioridad 1) consumido => YA USADO  2) sin saldo  3) COMPRAR
@@ -383,10 +397,65 @@ end
 
 function HoldoorShopPanel:doNothing() end
 
+-- Helper para encontrar la definicion del item por (categoriaId, itemId).
+local function _findItemDef(categoriaId, itemId)
+    if not HoldoorShopCatalog or not HoldoorShopCatalog.categorias then return nil end
+    for _, cat in ipairs(HoldoorShopCatalog.categorias) do
+        if cat.id == categoriaId then
+            for _, it in ipairs(cat.items) do
+                if it.id == itemId then return it end
+            end
+            return nil
+        end
+    end
+    return nil
+end
+
 function HoldoorShopPanel:onComprar(button)
     if not button.holdoorItem then return end
-    HoldoorClient.comprar(button.holdoorItem.categoriaId, button.holdoorItem.itemId)
-    -- La respuesta del server llamara a HoldoorShop.refrescar() que vuelve a pintar las filas con el nuevo saldo
+    local categoriaId, itemId = button.holdoorItem.categoriaId, button.holdoorItem.itemId
+
+    local itemDef = _findItemDef(categoriaId, itemId)
+    if itemDef and itemDef.accion and (itemDef.accion.tipo == "trait" or itemDef.accion.tipo == "cura_trait") then
+        -- 1) Verificar si el player puede REALMENTE comprar este item.
+        --    Si la validacion devuelve nil (API fallo) → dejamos pasar al modal.
+        local tieneTrait = nil
+        if HoldoorClient and HoldoorClient.tieneTrait then
+            tieneTrait = HoldoorClient.tieneTrait(itemDef.accion.trait)
+        end
+        if itemDef.accion.tipo == "trait" and tieneTrait == true then
+            HoldoorClient.chat("[HOLDOOR] Ya tenes ese rasgo. No hace falta invocarlo.", 1, 0.6, 0.2)
+            return
+        end
+        if itemDef.accion.tipo == "cura_trait" and tieneTrait == false then
+            HoldoorClient.chat("[HOLDOOR] No tenes ese rasgo, no hay nada que curar.", 1, 0.6, 0.2)
+            return
+        end
+
+        -- 2) Validacion pasada → pedir confirmacion antes de gastar las monedas.
+        local etiqueta = itemDef.accion.tipo == "trait" and "RASGO HEROICO" or "MILAGRO DEL MAESTRE"
+        local txt = "ATENCION: solo podes invocar UN " .. etiqueta .. " por vida del personaje.\n\n"
+                 .. "Vas a comprar: " .. (itemDef.nombre or "?") .. "\n\n"
+                 .. "Pensalo bien. Confirmas?"
+        local modal = ISModalDialog:new(0, 0, 380, 200, txt, true, self,
+            HoldoorShopPanel.onConfirmComprar, 0, categoriaId, itemId)
+        modal:initialise()
+        modal:addToUIManager()
+        local sw = getCore():getScreenWidth()
+        local sh = getCore():getScreenHeight()
+        modal:setX((sw - modal.width) / 2)
+        modal:setY((sh - modal.height) / 2)
+        return
+    end
+
+    HoldoorClient.comprar(categoriaId, itemId)
+end
+
+-- Callback del modal de confirmacion para traits/milagros.
+function HoldoorShopPanel:onConfirmComprar(button, categoriaId, itemId)
+    if button.internal == "YES" then
+        HoldoorClient.comprar(categoriaId, itemId)
+    end
 end
 
 function HoldoorShopPanel:onClose()

@@ -6,16 +6,154 @@
 
 ## 🔥 PRÓXIMO INMEDIATO
 
-### 1. Ajuste de drops + balance de tienda
-**Estado:** sin tocar desde la última pasada. Necesita revisión completa.
+### 0.A 🐞 Bugfixes pendientes para validar (post-cierre de PZ entero — 2026-06-16)
 
-**Qué revisar:**
-- **Drops de monedas por oleada**: ¿están proporcionales al esfuerzo? ¿el modo NORMAL da demasiado/poco?
-- **Drops de materiales** (Cuero/Hierro/Acero/Valyrio/Obsidiana): tabla actual en `HoldoorConfig.rewardTable`. ¿Probabilidades correctas?
-- **Precios de la tienda**: catálogo en `HoldoorShopCatalog.lua`. ¿Hay items demasiado caros/baratos? ¿Falta variedad?
-- **Multiplicadores por modo**: facil ×0.5 / normal ×1 / dificil ×2 / pesadilla ×4 / test ×0. ¿Son las brechas correctas?
+Aplicados en sesión 2026-06-15 pero NO validados con un cierre/reapertura limpio de PZ:
 
-**Criterio de éxito:** progresión sentida — al terminar 3-4 oleadas en NORMAL deberías poder comprar al menos 1 ítem decente.
+1. **Detener oleadas mata zombies cercanos** (`HoldoorClient.detener` ahora llama a `HoldoorServer.detener` en SP — antes mutaba estado directo y saltaba el `_limpiarZona`). Test: iniciar oleada, click "DETENER OLEADAS" con zombies cerca → deberían caer cadáveres (no desaparecer ni quedar vivos).
+
+2. **Base no persiste entre sesiones** (`HoldoorServer.resetearBaseAlInicio` en OnGameStart destruye el Trono físico cargado del save y limpia ModData). Test: marcar base, cerrar PZ entero, reabrir, cargar misma partida → la base debería estar "No definida" y el Trono haber desaparecido.
+
+3. **Colchón final single-shot** (`_colchonFinalDisparado` flag + uso de `zombiesRestantes` total en vez de `vivos` cerca). Test: oleada normal hasta el final, debería disparar refuerzo de cierre +3 UNA sola vez (no en bucle).
+
+4. **`next()` reemplazado por iteración con `pairs`** en `_distribuirRecompensaOleada` y `_distribuirMateriales` (`next` global puede ser nil si otro mod lo override). Test: terminar oleada en NORMAL/DIFICIL — recompensa entregada sin stack trace.
+
+### 0. 🆕 Sprint v0.6 — Refactor a Modelo C Híbrido (timer + target de kills)
+
+**Estado:** diseñado 2026-06-15, NO implementado. Sesión planificada para 2026-06-16.
+
+**Por qué se decidió cambiar de modelo:**
+
+El modelo actual ("N zombies fijos por oleada, oleada termina cuando los matás todos") tiene 2 bugs estructurales:
+1. **Zombie hunting**: al final de la oleada quedan 1-2 zombies perdidos lejos del radio → user tiene que ir a cazarlos para cerrar la oleada.
+2. **Colchón con bucles**: los workarounds (`_asegurarColchon`, `_zombiesIgnorarN`, `_colchonFinalDisparado`) son frágiles y generaron varios bugs (contador subiendo y bajando en bucle, oleada arrancando con "3/10" en vez de "10/10", etc).
+
+**Modelo nuevo elegido — Opción C híbrida (timer + target kills):**
+- Cada oleada dura T segundos fijos (timer).
+- Durante ese tiempo spawnea zombies continuamente a un ritmo creciente.
+- Cierre por **lo que pase primero**:
+  - Matás `targetKills` antes del timer → **CIERRE LIMPIO** (+25% recompensa).
+  - Vence el timer → **SOBREVIVISTE** (recompensa base).
+  - Trono cae → game over (igual que ahora).
+
+**Configuración por oleada (NORMAL, mult 1.0×):**
+
+| Oleada | Duración | Target kills | Spawn inicio | Spawn fin | % corredores |
+|---|---|---|---|---|---|
+| 1 | 2:30 | 30 | 5s | 3s | 0% |
+| 2 | 2:30 | 35 | 4.5s | 2.8s | 5% |
+| 3 | 2:45 | 45 | 4s | 2.5s | 10% |
+| 4 | 2:45 | 55 | 3.5s | 2.2s | 15% |
+| 5 | 3:00 | 65 | 3s | 2s | 20% |
+| 6 | 3:00 | 80 | 2.8s | 1.8s | 22% |
+| 7 | 3:15 | 95 | 2.5s | 1.6s | 25% |
+| 8 (final) | 3:30 | 120 | 2.2s | 1.2s | 30% |
+
+**Multiplicadores por modo:**
+| Modo | mult Duración | mult Spawn | mult Kills | mult Recompensa |
+|---|---|---|---|---|
+| Fácil | 0.8× | 1.3× | 0.7× | 0.6× |
+| Normal | 1.0× | 1.0× | 1.0× | 1.0× |
+| Difícil | 1.1× | 0.7× | 1.3× | 1.5× |
+| Pesadilla | 1.2× | 0.5× | 1.6× | 2.5× |
+
+**Duración total estimada por partida (con pausas 30s entre oleadas):**
+- Test: ~2:30 (3 oleadas chicas)
+- Fácil: **~13 min**
+- Normal: **~27 min** ⭐ sweet spot
+- Difícil: **~37 min**
+- Pesadilla: **~55 min**
+
+**Pausa entre oleadas:** 30s (confirmado por Nahuel — relajado, da tiempo a tienda/curación sin apurar).
+
+**Recompensas (multiplicadas en orden):**
+```
+Base = oleada × 5 bronces
+× mult dificultad (tabla arriba)
+× 1.25 si cierre limpio (matastes ≥ target)
+× 1.25 si perfect run (Trono al 100% HP al cierre)
+× 1.10 si performance (mataste > 80% del spawn total emitido)
++ chance de plata/oro escalada igual que ahora
+```
+
+**HUD nuevo (reemplaza "Zombis X/Y"):**
+```
+HOLDOOR -- OL.3 NORMAL
+[EN COMBATE]
+⏱ Tiempo restante: 2:34
+🎯 Kills: 23/60
+Trono: 1245/1250 HP
+...
+```
+
+**Anuncios:**
+- Menores (inicio oleada, completada, próxima en 10s, cierre limpio bonus) → mover a toast superior (`HoldoorToast`-style).
+- Mayores (ULTIMA OLEADA, VICTORIA, TRONO CAYÓ) → quedan centrados con `HoldoorAnnounce`.
+
+**Lo que se ELIMINA del código actual:**
+- `_asegurarColchon` (y todo el sistema de colchón)
+- `_zombiesIgnorarN` (contador defensivo)
+- `_colchonFinalDisparado` (flag single-shot)
+- `_zombiesTotal` / `_zombiesRestantes` como counters de oleada (se mantienen pero solo para tracking interno)
+- `encoladosTiers` y `_spawnTanda` → reemplazados por `_spawnTick` continuo
+- Counter "Zombis X/Y" en HUD lateral
+
+**Lo que NO se toca:**
+- Trono físico, HP, defensa, Daño Boost → IGUAL
+- Tienda, monedas, materiales, traits, milagros, boosters, lujos → IGUAL
+- Modos de juego (5 nombres) → mismos, solo cambian valores
+- Comandos del cliente (iniciar/detener/setBase) → IGUAL en interfaz
+- F10 panel + /holdoor chat command → IGUAL
+
+**Plan de implementación (en orden):**
+
+| # | Tarea | Estimado |
+|---|---|---|
+| 1 | Refactor `_lanzarOleada` para usar timer + target en vez de total fijo | 45 min |
+| 2 | `_spawnTick` (spawn continuo con curva inicio→fin) reemplaza `_spawnTanda` | 45 min |
+| 3 | Cierre por timer + cierre limpio (track kills vs target) | 30 min |
+| 4 | HUD nuevo (Timer + Kills, sacar Zombis X/Y) | 45 min |
+| 5 | Mover anuncios menores a toast superior | 30 min |
+| 6 | Config nueva: curvas + mults por modo en `HoldoorConfig.lua` | 30 min |
+| 7 | Recompensas con nuevos bonus (cierre limpio +25%) | 30 min |
+| 8 | Testing + balance inicial (jugar 3-4 partidas Normal) | 1h |
+| **Total** | | **~5h concentradas** |
+
+**Criterio de éxito:**
+- Una partida NORMAL completa en ~25 min con flow sin huecos.
+- Cero "zombies perdidos al final" — el timer cierra siempre.
+- HUD claro mostrando Timer + Kills target.
+- Cierre limpio se siente premium (chord épico + +25% recompensa visible).
+- Pesadilla sigue siendo brutal pero no fatigante.
+
+**Cuando arrancar:** sesión limpia 2026-06-16. NO mezclar con bugfixes residuales — refactor mayor merece su propio sprint dedicado.
+
+---
+
+### 1. Sistema de Jefes de Oleada (diseñado 2026-06-15, no implementado)
+
+**Estado:** brainstorming cerrado, falta implementar. Discusión en sesión 2026-06-15.
+
+**Opción elegida — Opción C MVP** (1 jefe simple primero, después escalar a pool):
+- 1 jefe que aparece en la **última oleada de cada modo** (5/8/10/12).
+- HP × 10 zombi normal + daño × 3 + velocidad alta.
+- Outfit custom (`addZombiesInOutfit`).
+- Anuncio épico al spawn (`HoldoorAnnounce.mostrar` con título "⚠️ EL X SE APROXIMA").
+- Drop **garantizado** al matarlo: 1 Oro + 1 Obsidiana + chance bonus.
+
+**Jefe MVP recomendado: 🦴 Lord de los Huesos o ⚰️ Wight con Armadura** — los más logrables técnicamente porque solo requieren spawn-loop + listener `OnZombieDead` + 1 habilidad pasiva (resucita / invoca). Sin mecánicas complejas tipo stun o tracking de HP en tick.
+
+**Sprint futuro — Opción D (Pool de Jefes Nombrados):**
+Una vez validado el scaffold con 1 jefe, agregar 4 más. Pool diseñado:
+- 🧊 **Caminante Blanco** — rápido + outfit azul + **aullido stunea** (`setEndurance(0)` + `setFatigue(0.95)` + `setPanic(80)`, NO freeze de movimiento que es bug-prone).
+- ⚰️ **Wight con Armadura** — HP MUY alto, lento, resucita al morir.
+- 👹 **Gigante de Mag** — outfit cuernos, golpe demoledor, frenesí al 30% HP.
+- 🦴 **Lord de los Huesos** — outfit esquelético, invoca 5 zombis enragiados al spawn.
+- 🔥 **Maestre Corrupto** — outfit rojo, explota al morir (daño en zona).
+
+Cada uno con drop firmado (Lord = obsidiana, Gigante = valyrio, etc).
+
+**Tiempo estimado:** MVP (1 jefe) ~2 días. Pool completo (5 jefes) ~5 días adicionales.
 
 ### 2. Sync visual MP del Trono
 **Estado:** Probablemente roto en MP — el IsoThumpable existe server-side pero no se transmite visualmente a clientes. El overlay UI sí se ve en MP (es cliente-side) pero la forja real abajo capaz no.
