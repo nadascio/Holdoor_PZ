@@ -1,0 +1,81 @@
+v0.6.2 — Tienda Final + Reliquias del Reino
+
+Sprint largo de cierre completo de la tienda. Reorganizacion, nuevas categorias,
+sistema "vender niveles" de XP y curaciones MP-safe.
+
+━━━━━━━━━━ TIENDA REFACTORIZADA ━━━━━━━━━━
+
+7 categorias limpias y funcionales en MP:
+
+1. Consumibles (3 sub-tabs: Medico / Comida / Bebidas)
+   - 18 items con linea "contenido" que indica claramente que recibis
+   - 6 bebidas nuevas: Cerveza, Whisky, Refresco, Jugo, Leche, Vino
+
+2. Armas (2 sub-tabs: Melee / Firearms)
+   - 6 melee rebalanceadas (Cuchillo, Bate, Palanca, Machete, Hacha, Katana)
+   - 6 firearms nuevas (Pistola, Escopeta, Rifle + 3 cajas de municion)
+   - Katana ahora 10 Oro + 3 Valyrio (item leyenda)
+
+3. Vestiduras (4 sub-tabs: Casual / Policia / Bombero / Militar)
+   - 22 items por oficio con sets coherentes
+   - Casco bombero: mejor anti-mordida del juego
+   - Chaleco antibalas militar: mejor anti-bala del juego
+
+4. Bolsos del Reino (NUEVA)
+   - 5 mochilas en escala progresiva: Morral (15 cap) → ALICEpack (28 cap)
+
+5. Maestrias (antes "Libros de Guerra")
+   - Sistema NUEVO: vender NIVELES enteros en vez de XP fijo
+   - Precio calculado dinamicamente segun XP faltante
+   - 16 skills en 3 sub-tabs: Fisico / Armas / Soporte
+   - Display names en castellano (igual al panel Habilidades del juego)
+   - Boton MAX cuando llegas a nivel 10
+
+6. Reliquias del Reino (NUEVA)
+   - 6 curaciones MP-authoritative usando API vanilla onHealthCheatCurrentPlayer
+   - Balsamo del Vidente (3 Plata): cura rasgunyos
+   - Vendaje del Septon (5 Plata): cura sangrado
+   - Astillas Sagradas (5 Plata): cura cortes profundos
+   - Tablilla del Maestre (1 Oro): cura fracturas
+   - Vidriagon Bendito (2 Oro): cura mordeduras
+   - Beso del Dios de Muchos Rostros (9 Oro, 1 por vida): cura TODO el cuerpo
+   - Validacion previa: si no tenes la condicion, no compra (no perdes monedas)
+
+7. Materiales (2 sub-tabs: Holdoor / Comunes)
+   - 5 materiales del mod (Cuero, Hierro, Acero, Valyrio, Obsidiana)
+   - 6 materiales B42 vanilla nuevos: Tabla, Clavos, Tronco, Chapa, Cable, Barra Metal
+
+━━━━━━━━━━ FIXES MP ━━━━━━━━━━
+
+- Items de tienda (todos) entregados via comando admin /additem en cliente-context.
+- XP (Maestrias) entregada via /addxp admin con XP exacto por nivel completo.
+- Curaciones via sendClientCommand "onHealthCheatCurrentPlayer" server-side authoritative.
+- Refresh UI tras compra: simula click en sub-categoria activa con delay 250-500ms
+  para esperar al server. Sin esto el render mostraba nivel viejo.
+- *** FIX CRITICO: Persistencia de monedas y materiales entre sesiones MP ***
+  Antes: al cerrar el server, monedas/materiales volvian a 0. Ahora se llama
+  player:transmitModData() despues de cada cambio server-side, lo que persiste
+  los datos en el save del mundo. Tu progreso ya no se pierde.
+
+━━━━━━━━━━ REBALANCE VESTIDURAS ━━━━━━━━━━
+
+- Casco y chaleco de policia: ahora requieren Acero y Valyrio (chaleco)
+- Set de bombero: requieren Cuero, Obsidiana y Acero (anti-mordida premium)
+- Set militar: requieren Hierro, Acero y el chaleco antibalas TOP usa Valyrio + Obsidiana
+- Valyrio y Obsidiana ahora tienen uso real en el equipamiento.
+
+━━━━━━━━━━ ITEMS SACADOS DE LA TIENDA ━━━━━━━━━━
+
+- Boosters (motor restore no sincroniza MP - investigar Energizantes vanilla)
+- Rasgos Heroicos (API setCharacterTraits se revierte al sync)
+- Milagros del Maestre (idem)
+- Lujos (cure_bite y restore no andan MP)
+- Vino del Otono (duplicado del Vino del Dominio en Bebidas)
+
+━━━━━━━━━━ LIMPIEZA ━━━━━━━━━━
+
+- Sidebar reducido de 10 a 7 categorias limpias
+- Todo lo que vende, funciona en MP (probado empiricamente)
+- Documentadas 9 gotchas tecnicas nuevas (#42-#50) en docs/gotchas.md
+
+Hold the door... Hodor.

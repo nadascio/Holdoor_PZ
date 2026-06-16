@@ -1387,4 +1387,328 @@ end
 
 ---
 
-**Última actualización:** 2026-06-16 — Sprint v0.6.1 cerrado (gotchas #37-#41 sumados: items/XP via admin, delegación non-admin, host fallback, derrota colectiva, off-by-one)
+**Última actualización:** 2026-06-16 — Sprint v0.6.2 parcial cerrado (gotchas #42-#47 sumados: refactor tienda + sistema vender niveles)
+
+---
+
+## 🔥 42. `Perks[slug]` indexing en B42 es INCONSISTENTE — usar cascada de 4 caminos
+
+**Síntoma:** acceso `Perks["LongBlade"]` resuelve OK pero `Perks["Sprinting"]`, `Perks["Sneak"]`, `Perks["Lightfoot"]`, `Perks["Doctor"]`, etc. devuelven nil — aunque los slugs son los correctos (confirmado via `/addxp "user" Sprinting=500` que SÍ entrega 500 XP).
+
+**Causa:** `Perks` en B42 es un namespace Java cuyo lookup por indexación string no funciona uniformemente. Algunos enums son accesibles directamente, otros requieren resolver via `Perks.FromString()` o iterar.
+
+**Fix lockeado** — cascada de 4 caminos:
+
+```lua
+local function _resolverPerk(perkId)
+    if not Perks or not perkId then return nil end
+    local p
+
+    -- 1) Acceso directo por indexación string
+    pcall(function() p = Perks[perkId] end)
+    if p then return p end
+
+    -- 2) Perks.FromString
+    pcall(function() p = Perks.FromString(perkId) end)
+    if p then return p end
+
+    -- 3) Iterar pairs(Perks)
+    pcall(function()
+        for k, v in pairs(Perks) do
+            if tostring(k) == perkId then p = v; return end
+        end
+    end)
+    if p then return p end
+
+    -- 4) Iterar PerkFactory.PerkList (lista Java) buscando por id
+    pcall(function()
+        if PerkFactory and PerkFactory.PerkList then
+            local list = PerkFactory.PerkList
+            for i = 0, list:size() - 1 do
+                local pf = list:get(i)
+                if pf then
+                    local id
+                    pcall(function() id = tostring(pf:getId()) end)
+                    if id == perkId then pcall(function() p = pf:getType() end); return end
+                end
+            end
+        end
+    end)
+    return p
+end
+```
+
+**Cuando rompió:** 2026-06-16. Sprint v0.6.2 — sistema "vender niveles" devolvía "(info no disponible)" para 10 de 16 skills. Resolver original solo tenía 2 caminos (indexing + FromString).
+
+---
+
+## 🔥 43. `player:getXp():getXP(perk)` devuelve FLOAT — `math.ceil` obligatorio antes de pasar a `/addxp`
+
+**Síntoma:** después de calcular `xpFaltante = xpObjetivo - xpActual`, el valor venía con decimales (ej. `74.75` o `71.05869913101196`). Al pasarlo a `string.format('/addxp "%s" %s=%d', ...)` el `%d` lo trunca o el comando vanilla lo ignora silenciosamente, entregando **1 XP en lugar del valor real**.
+
+**Causa:** B42 mantiene XP como `float` internamente. PZ asigna XP en cantidades fraccionarias (ej. cuando ganás XP por matar zombie). El número faltante hereda esa fracción.
+
+**Fix:**
+```lua
+local xpFaltante = math.max(1, math.ceil(xpObjetivoAcum - xpAct))
+```
+
+`math.ceil` redondea para arriba (cubre el nivel completo). NO usar `math.floor` o `math.round` — pueden dejar XP justo abajo del threshold del nivel.
+
+**Cuando rompió:** 2026-06-16. Sprint v0.6.2 — compras de subir_nivel en skills con XP fraccional entregaban 1 XP en lugar de los ~70-100 necesarios. Detectado en consola: "Added 1.0 Nimble xp's to HouS".
+
+---
+
+## 🔥 44. `/addxp` y `/additem` pueden silenciosamente entregar 1 XP / 0 items con slug INCORRECTO
+
+**Síntoma:** ejecutás `/addxp "HouS" SmallBlunt=500` esperando 500 XP. Log dice "Added **1.0** SmallBlunt xp's to HouS". Solo 1 XP, no 500.
+
+**Causa:** comandos admin vanilla B42 son tolerantes a slugs inválidos. Si el perk no existe con ese nombre exacto, el comando NO falla — entrega 1 XP como default o nada.
+
+**Implicación crítica**: la **wiki PZ NO es fuente de verdad** sobre slugs B42. Hay que validar empíricamente.
+
+**Protocolo de validación de slug:**
+1. Abrir consola admin del juego (`/`)
+2. Ejecutar `/addxp "TuUser" SlugCandidato=500`
+3. Mirar el chat: si dice "Added 500.0 Slug xp's" → slug OK. Si dice "Added 1.0" o no aparece → slug NO existe.
+4. Para items: `/additem "TuUser" "Base.SlugCandidato" 1` y verificar si llega al inventario.
+
+**Cuando rompió:** 2026-06-16. Sprint v0.6.2 — `Base.WineBottle` no existía en B42 reciente (renamed a `Base.Wine2`), `Base.Jeans` renamed a `Base.Trousers_Denim`, `Base.Jacket_ArmyCamoForeign` no existe (usar `Jacket_ArmyCamoGreen`). Detectados solo via testing empírico.
+
+---
+
+## 🔥 45. B42 reciente migró varios items a Fluid Containers con slugs RENOMBRADOS
+
+**Síntoma:** items que existían en B41 y en B42 inicial ahora dicen "doesn't exist" en B42 reciente.
+
+**Causa:** PZ B42 introdujo el sistema de Fluid Containers (líquidos en botellas) y renombró varios items que eran botellas. Esto sigue en proceso de migración — algunos slugs cambian entre patches.
+
+**Slugs confirmados que cambiaron (2026-06-16):**
+- `Base.WineBottle` → **`Base.Wine2`** (Red Wine)
+- `Base.Jeans` → **`Base.Trousers_Denim`**
+- `Base.Jacket_ArmyCamoForeign` → **`Base.Jacket_ArmyCamoGreen`** (Foreign no existe en B42)
+
+**Slugs que probablemente cambien en próximos patches B42** (vigilar):
+- Items de bebida que aún tengan formato viejo
+- Items de comida (algunos tienen variantes Fluid Container)
+
+**Protocolo defensivo al codear catálogo con muchos slugs:**
+1. Validar cada uno via gotcha #44 (consola admin).
+2. Documentar en commit las versiones B42 donde funcionó.
+3. Si una actualización rompe slugs, mostrar al user el error visible (no fallar silenciosamente).
+
+**Cuando rompió:** 2026-06-16. Sprint v0.6.2 — tras agregar Bebidas con `Base.WineBottle` (que era válido en v0.6.1), el item no se entregaba en B42 versión actual.
+
+---
+
+## 🔥 46. Catálogo con estructura OPCIONAL (`subcategorias`) — actualizar TODAS las funciones que iteran
+
+**Síntoma:** al introducir `cat.subcategorias` como alternativa a `cat.items`, algunas categorías rompen con `Expected a table` en `ipairs(cat.items)` cuando entran al `comprar` o lookup.
+
+**Causa:** cuando se agrega una estructura nueva opcional al catálogo, hay que actualizar **TODAS** las funciones que iteran. Es fácil olvidarse de una (sobre todo cuando hay funciones gemelas en `Catalog.buscar`, `_findItemDef` en UI, y `comprar` en cliente).
+
+**Fix patrón:** usar fallback `or {}` y agregar iter en sub-categorías SIEMPRE que se itera el catálogo:
+
+```lua
+-- Patron backward-compatible
+for _, cat in ipairs(HoldoorShopCatalog.categorias) do
+    if cat.id == categoriaId then
+        -- buscar en items directos (categoria clasica)
+        for _, it in ipairs(cat.items or {}) do
+            if it.id == itemId then return it end
+        end
+        -- buscar en sub-categorias (categoria nueva)
+        for _, sub in ipairs(cat.subcategorias or {}) do
+            for _, it in ipairs(sub.items or {}) do
+                if it.id == itemId then return it end
+            end
+        end
+    end
+end
+```
+
+**Funciones a actualizar al agregar `subcategorias`:**
+1. `HoldoorShopCatalog.buscar(catId, itemId)` — shared
+2. `_findItemDef(catId, itemId)` — HoldoorShop.lua (UI)
+3. `HoldoorClient.comprar(catId, itemId)` — lookup del item
+4. Cualquier loop futuro que itere categorías para validaciones
+
+**Cuando rompió:** 2026-06-16. Sprint v0.6.2 — agregar sub-cats a Consumibles rompió las compras: la UI funcionaba (porque `_findItemDef` se actualizó) pero `HoldoorClient.comprar` reventó silenciosamente con "Expected a table" porque me olvidé esa función.
+
+---
+
+## 🔥 47. Refresh UI post-compra — NO esperar callback del server, llamar `refrescar()` DIRECTO
+
+**Síntoma:** después de comprar un item de `subir_nivel`, el botón sigue mostrando el precio viejo (debería decir "MAX" si llegamos a nivel 10). Solo se actualiza al cambiar de pestaña.
+
+**Causa:** el callback `monedasActualizadas` del server vuelve después de que `HoldoorClient.comprar` ya retornó. El handler dispara `HoldoorShop.refrescar()` pero el render queda "atrasado" porque el cálculo dinámico de nivel se hace en el render — y si el render no se llama, ves los valores de antes de la compra.
+
+**Fix:** llamar `refrescar()` SINCRÓNICO al final de `comprar`, además del callback:
+
+```lua
+function HoldoorClient.comprar(categoriaId, itemId)
+    -- ... pre-validación, cobro, entrega de items/XP ...
+
+    -- Refresh inmediato sin esperar callback del server
+    if HoldoorShop and HoldoorShop.refrescar then
+        pcall(HoldoorShop.refrescar)
+    end
+end
+```
+
+El callback del server hace otro refresh redundante después (no rompe, solo doble-trabajo trivial).
+
+**Aplica a:** cualquier acción de tienda que cambie el estado lookable del player (nivel de skill, monedas, materiales).
+
+**Cuando rompió:** 2026-06-16. Sprint v0.6.2 — Nahuel compró nivel 9→10 de Maintenance, el comando se ejecutó OK, pero el botón seguía mostrando "6 Plata" en lugar de "MAX" hasta que cambió de pestaña.
+
+---
+
+**Última actualización:** 2026-06-16 — Sprint v0.6.2 parcial (gotchas #42-#47 lockeados tras refactor masivo de la tienda)
+
+---
+
+## 🔥 48. **Curaciones del Player en MP — usar `onHealthCheatCurrentPlayer` con `action="healthFull"` POR cada body part (NO `healthFullBody`)**
+
+**Síntoma:** llamás `bP:RestoreToFullHealth()` cliente-side sobre los body parts del player → visualmente se cura en el momento. Pero **4-6 segundos después, el daño vuelve** (mordedura, sangrado, etc.). El sync MP revierte el cambio porque el server tenía estado viejo.
+
+**Causa:** en MP el `BodyDamage` es authoritative del server. Cambios client-side se sincronizan al server, pero si el server NO recibe el cambio explícitamente, en el siguiente sync periódico el server propaga su versión vieja al cliente → se "revierte" la cura.
+
+**Fix definitivo** — usar el mismo endpoint que el panel admin vanilla:
+
+```lua
+-- Para curar UN body part:
+sendClientCommand(player, "player", "onHealthCheatCurrentPlayer", {
+    bodyPartIndex = i,
+    action = "healthFull",          -- ← action correcta
+    id = player:getOnlineID(),
+})
+
+-- Para curar TODO el cuerpo: iterar los 17 body parts y enviar un comando por cada uno
+local bd = player:getBodyDamage()
+local parts = bd:getBodyParts()
+for i = 0, parts:size() - 1 do
+    sendClientCommand(player, "player", "onHealthCheatCurrentPlayer", {
+        bodyPartIndex = i, action = "healthFull", id = player:getOnlineID(),
+    })
+end
+```
+
+**Trampa cazada — NO usar `action="healthFullBody"`:** en `ClientCommands.lua:557` el handler server-side de `healthFullBody` usa `player` en vez de `otherPlayer` (bug vanilla B42). Sólo `healthFull` individual aplica sobre el `otherPlayer` correcto.
+
+**Aplica a curas de cualquier condición**: mordedura (action=`bite`), sangrado (`bleeding`), fractura (`fracture`), corte (`cut`), etc. Pero **ojo**: estas acciones son TOGGLE — si el body part NO tiene la condición, la AGREGAN. Iterar pre-filtrando con `bP:bitten()`, `bP:bleeding()`, etc.
+
+**Cuando rompió:** 2026-06-16 noche. Sprint v0.6.2 — Reliquia "Beso del Dios" curaba visualmente pero a los 5 seg volvía la mordedura. Resolver tomó varias iteraciones hasta encontrar el endpoint server-side correcto y la trampa del `healthFullBody`.
+
+**Ref vanilla:** `media/lua/client/XpSystem/ISUI/ISHealthPanel.lua:191` (onCheatCurrentPlayer cliente) → `media/lua/server/ClientCommands.lua:457` (handler server-side).
+
+---
+
+## 🔥 49. **APIs `setX` del Player (godmode/invisible/zombiesDontAttack/etc.) NO se aplican en MP desde código mod aunque uses `sendPlayerExtraInfo`**
+
+**Síntoma:** llamás desde tu mod cliente:
+```lua
+player:setZombiesDontAttack(true)
+sendPlayerExtraInfo(player)
+```
+Logs confirman ejecución sin errores. **PERO el efecto no aplica en gameplay** — los zombies te siguen atacando. Lo mismo con `setUnlimitedEndurance`, `setUnlimitedCarry`, `setFastMoveCheat`, `setInvisible`, `setNoClip`, etc.
+
+**Test crítico:** desde el panel admin vanilla (Editar privilegios de administrador → toggle "Zombies Don't Attack" + Guardar) los mismos cambios SÍ funcionan. Y el panel admin hace EXACTAMENTE lo mismo: `setX(true)` + `sendPlayerExtraInfo(player)` al apretar Guardar.
+
+**Diferencia invisible:** el panel admin tiene algún flujo interno Java-side adicional (capaz a través de `Capability` checks, o algún broadcast no documentado en Lua) que no se puede replicar desde código mod.
+
+**Estado actual:** **limitación arquitectónica de B42**. Sin acceso al código Java fuente, no podemos resolver esto. Las APIs `setX` funcionan SP pero NO en MP desde mod.
+
+**Workaround:**
+- Para curaciones → usar gotcha #48 (`onHealthCheatCurrentPlayer`)
+- Para teleport → usar `/teleport` o API directa `player:setX/Y/Z()` + `transmitPlayer()` (no testeado al 100%)
+- Para godmode/invisible/zombies-don't-attack/etc → **no hay solución conocida desde mod**. Marcar como pendiente.
+
+**Cuando rompió:** 2026-06-16 noche. Sprint v0.6.2 — implementamos 4 "Hechizos" con setX APIs replicando el panel admin. Logs OK. Efectos NO aplicaban. Después de horas de debug + comparación con vanilla, conclusión: hay algo Java-side que no podemos tocar. Items removidos del mod.
+
+---
+
+## 🔥 50. **Items de cura deben VALIDAR previo a comprar que el player tiene la condición**
+
+**Síntoma:** player compra item de cura (ej. "Vendaje del Septón" para sangrado). Le cobran las monedas. Pero NO tenía sangrado → la cura no hace nada. Pierde monedas.
+
+**Causa:** sin validación previa, el flow es cobrar primero, ejecutar después. Si la condición a curar no existe → no hay nada que curar pero el cobro ya se hizo.
+
+**Fix:** validación pre-compra en `HoldoorClient.comprar` ANTES de pedir al server cobrar.
+
+```lua
+-- Ejemplo para "cura_sangrado"
+if itemDef.accion.tipo == "reliquia_cura_sangrado" then
+    local player = getSpecificPlayer(0)
+    local tiene = false
+    pcall(function()
+        local parts = player:getBodyDamage():getBodyParts()
+        for i = 0, parts:size() - 1 do
+            local bP = parts:get(i)
+            if bP and bP:bleeding() then tiene = true; return end
+        end
+    end)
+    if not tiene then
+        HoldoorClient.chat("[HOLDOOR] No tenés sangrado. Nada que curar.", 1, 0.6, 0.2)
+        return  -- aborta antes del cobro
+    end
+end
+```
+
+**Pattern aplica a TODAS las curas específicas:** rasguños (`scratched`), sangrado (`bleeding`), fracturas (`getFractureTime > 0`), cortes (`isDeepWounded` or `isCut`), mordeduras (`bitten`), y al Beso del Dios genérico (check ANY de las anteriores).
+
+**Regla operativa:** cuando un item TIENE precondiciones de uso, validar PRE-cobro. NO confiar en validación post-cobro o "el server decide" — eso deja al user sin monedas.
+
+**Cuando rompió:** 2026-06-16 — Nahuel testeó el Beso del Dios sano (sin lastimaduras), pagó las monedas, no pasó nada. UX rota. Fix con validación previa.
+
+---
+
+**Última actualización:** 2026-06-16 — Sprint v0.6.2 cerrado (gotchas #48-#50 sumados: curaciones MP authoritative, limitación setX APIs, validación pre-compra)
+
+---
+
+## 🔥 51. **`player:getModData()` modificado server-side requiere `player:transmitModData()` después — sino NO persiste al save MP**
+
+**Síntoma:** durante la sesión MP las monedas/materiales/contadores del player se modifican OK y se ven en el HUD. **PERO al cerrar y reabrir el server, todo vuelve a 0** — el player parece "nuevo".
+
+**Causa:** en B42 MP, `player:getModData()` server-side modifica la copia EN MEMORIA del server. Pero sin llamar `player:transmitModData()` explícito:
+1. El server NO marca el ModData del player como "dirty" → al guardar el mundo, persiste el ModData ORIGINAL (sin los cambios).
+2. El cliente no recibe el sync del cambio → su `getSpecificPlayer(0):getModData()` muestra valores viejos (parcialmente compensado por sync automático cada N ticks pero no garantizado al close).
+
+**Fix:** después de CUALQUIER modificación de `getModData()` server-side, llamar inmediatamente:
+
+```lua
+md.Holdoor_Bronze = (md.Holdoor_Bronze or 0) + 100
+md.Holdoor_Cuero  = (md.Holdoor_Cuero  or 0) + 1
+pcall(function() jugador:transmitModData() end)   -- ← OBLIGATORIO
+```
+
+Patrón helper recomendado:
+
+```lua
+local function _persistirModData(p)
+    pcall(function() p:transmitModData() end)
+end
+
+-- En cada función que modifica ModData server-side:
+md.X = nuevoValor
+_persistirModData(p)
+```
+
+**Aplica a TODAS las operaciones server-side que tocan `getModData()`:**
+- Dar monedas/materiales (`darMonedasA`, `darMatsA`)
+- Cobrar tienda (`_comprar`)
+- Transferir monedas (`_transferirMonedas` — para ambos players)
+- Marcar flags (Holdoor_BesoDios, Holdoor_TraitComprado, Holdoor_TraitCurado)
+
+**Si el cliente modifica `getModData()` (caso poco común — preferir delegación al server):** también llamar `transmitModData()` después para sincronizar al server.
+
+**Refs vanilla B42:**
+- `media/lua/client/Entity/ISUI/Controls/ISWidgetTitleHeader.lua:519` — `self.player:transmitModData()`
+- Numerosos `isoObject:transmitModData()` en `ClientCommands.lua`, `SCampfireGlobalObject.lua`, `SPlantGlobalObject.lua`, etc. — confirma el patrón vanilla "modificar + transmit".
+
+**Cuando rompió:** 2026-06-16 madrugada. Sprint v0.6.2 — Nahuel reportó que las monedas se reseteaban a 0 al cerrar y abrir el server. Detectado tras invertir varias horas en hipótesis falsas. Resolución: agregar `transmitModData()` en 8+ lugares de `HoldoorServer.lua` y 1 en `HoldoorUI.lua` (botón TEST DARME).
+
+---
+
+**Última actualización:** 2026-06-16 — Sprint v0.6.2 cerrado (gotchas #48-#51 lockeados — el #51 es el fix CRÍTICO de persistencia MP)

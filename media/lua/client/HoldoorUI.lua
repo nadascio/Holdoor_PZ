@@ -13,7 +13,7 @@ HoldoorUI.overlay   = nil
 
 
 local PANEL_W = 500
-local PANEL_H = 600  -- +18 por lbl HP Trono + +42 por boton TEST
+local PANEL_H = 624  -- +18 por lbl HP Trono + +42 por boton TEST + +24 padding inferior (2026-06-16)
 
 local COLOR_FONDO      = { r=0.05, g=0.04, b=0.03, a=0.97 }
 local COLOR_BORDE      = { r=0.6,  g=0.4,  b=0.1,  a=1    }
@@ -453,6 +453,9 @@ function HoldoorPanel:onTestDarme()
     md.Holdoor_Acero     = (md.Holdoor_Acero     or 0) + 50
     md.Holdoor_Valyrio   = (md.Holdoor_Valyrio   or 0) + 50
     md.Holdoor_Obsidiana = (md.Holdoor_Obsidiana or 0) + 50
+
+    -- Persistir ModData server-side (gotcha #51)
+    pcall(function() p:transmitModData() end)
 
     -- NO se agregan items al inventario por pedido del user (solo monedas y materiales)
     pcall(function() p:setHaloNote("[TEST] +500B +100P +100O +50 c/u de materiales", 200, 220, 255, 360) end)

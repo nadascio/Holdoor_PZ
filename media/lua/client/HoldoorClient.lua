@@ -660,6 +660,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
     elseif comando == "compraFail" then
         HoldoorClient.chat("[HOLDOOR] " .. (args.motivo or "No se pudo completar la compra."), 1, 0.5, 0.2)
 
+
     elseif comando == "transferRecibido" then
         local tipoLbl = ({bronze="Bronce", silver="Plata", gold="Oro"})[args.tipo] or args.tipo
         HoldoorClient.chat("[HOLDOOR] Recibiste " .. (args.cantidad or 0) .. " " .. tipoLbl .. " de " .. (args.from or "?") .. "!", 1, 0.85, 0.3)
@@ -943,14 +944,141 @@ function HoldoorClient.tieneTrait(traitId)
 end
 local _playerTieneTrait = HoldoorClient.tieneTrait  -- alias local para uso interno abajo
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- "Vender niveles" — Libros de Guerra dinamico
+-- ════════════════════════════════════════════════════════════════════════════
+-- Lee el nivel actual del player en la skill, calcula el XP faltante para el
+-- proximo nivel y el precio segun la tabla precioPorNivel.
+-- Devuelve:
+--   { max=true, nivelActual=N }                                      si esta en nivel 10
+--   { max=false, nivelActual, nivelObjetivo, xpFaltante, precio }    si se puede subir
+--   nil                                                              si error (perk no resuelve, etc)
+-- Resolver robusto del enum Perks. B42 expone los perks de varias formas y la indexacion
+-- directa NO funciona uniformemente (gotcha encontrado 2026-06-16: Perks["Maintenance"] OK
+-- pero Perks["Sprinting"] devuelve nil aunque /addxp "user" Sprinting=N funciona perfecto).
+-- Probamos 4 caminos en cascada.
+local function _resolverPerk(perkId)
+    if not Perks or not perkId then return nil end
+    local p
+
+    -- 1) Acceso directo por indexacion string
+    pcall(function() p = Perks[perkId] end)
+    if p then return p end
+
+    -- 2) Perks.FromString (algunos perks lo soportan)
+    pcall(function() p = Perks.FromString(perkId) end)
+    if p then return p end
+
+    -- 3) Iterar pairs(Perks) buscando key igual
+    pcall(function()
+        for k, v in pairs(Perks) do
+            if tostring(k) == perkId then
+                p = v
+                return
+            end
+        end
+    end)
+    if p then return p end
+
+    -- 4) Iterar PerkFactory.PerkList (lista oficial Java) buscando por nombre
+    pcall(function()
+        if PerkFactory and PerkFactory.PerkList then
+            local list = PerkFactory.PerkList
+            local size
+            pcall(function() size = list:size() end)
+            if size then
+                for i = 0, size - 1 do
+                    local pf = list:get(i)
+                    if pf then
+                        local id
+                        pcall(function() id = tostring(pf:getId()) end)
+                        if id == perkId then
+                            pcall(function() p = pf:getType() end)
+                            if p then return end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return p
+end
+
+function HoldoorClient.calcSubirNivel(perkId, tier)
+    local player = getSpecificPlayer(0)
+    if not player or not perkId then return nil end
+
+    local perkEnum = _resolverPerk(perkId)
+    if not perkEnum then
+        print("[Holdoor] calcSubirNivel: NO se pudo resolver perk '" .. tostring(perkId) .. "'")
+        return nil
+    end
+
+    local nivelActual = 0
+    pcall(function() nivelActual = player:getPerkLevel(perkEnum) end)
+
+    if nivelActual >= 10 then
+        return { max = true, nivelActual = nivelActual, perkEnum = perkEnum }
+    end
+
+    local nivelObjetivo = nivelActual + 1
+
+    -- Calcular XP acumulado para llegar al nivel objetivo.
+    -- B42 puede devolver getXpForLevel() como acumulado o por tramo (depende de la version).
+    -- Defensivo: sumar todos los tramos 1..nivelObjetivo. Si B42 devuelve acumulado, el resultado
+    -- sera mayor que lo real y veremos precios inflados; en ese caso cambiamos a llamada simple.
+    local xpObjetivoAcum = 0
+    pcall(function()
+        local perkDef = PerkFactory.getPerk(perkEnum)
+        for lvl = 1, nivelObjetivo do
+            local xp = perkDef:getXpForLevel(lvl)
+            if xp then xpObjetivoAcum = xpObjetivoAcum + xp end
+        end
+    end)
+
+    local xpAct = 0
+    pcall(function() xpAct = player:getXp():getXP(perkEnum) end)
+    -- math.ceil() OBLIGATORIO: B42 devuelve XP como float. Sin redondeo el comando
+    -- /addxp recibe decimales y entrega menos XP del esperado (gotcha 2026-06-16:
+    -- "Added 1.0 SmallBlunt xp's" cuando faltaban 74.75 → comando ignora decimales).
+    local xpFaltante = math.max(1, math.ceil(xpObjetivoAcum - xpAct))
+
+    -- Precio LINEAL con xpFaltante segun tasa por tier
+    local precio
+    if HoldoorShopCatalog and HoldoorShopCatalog.precioPorXP then
+        precio = HoldoorShopCatalog.precioPorXP(tier or "regular", xpFaltante)
+    end
+    if not precio then precio = { silver = 1 } end
+
+    return {
+        max = false,
+        nivelActual = nivelActual,
+        nivelObjetivo = nivelObjetivo,
+        xpFaltante = xpFaltante,
+        precio = precio,
+        perkEnum = perkEnum,
+    }
+end
+
 function HoldoorClient.comprar(categoriaId, itemId)
     -- Pre-validacion: encontrar el item en el catalogo y aplicar reglas especificas.
+    -- Soporta categorias con items directos (cat.items) y con sub-categorias (cat.subcategorias).
     local itemDef = nil
     if HoldoorShopCatalog and HoldoorShopCatalog.categorias then
         for _, cat in ipairs(HoldoorShopCatalog.categorias) do
             if cat.id == categoriaId then
-                for _, it in ipairs(cat.items) do
+                -- buscar en items directos
+                for _, it in ipairs(cat.items or {}) do
                     if it.id == itemId then itemDef = it; break end
+                end
+                -- buscar en sub-categorias si no se encontro arriba
+                if not itemDef then
+                    for _, sub in ipairs(cat.subcategorias or {}) do
+                        for _, it in ipairs(sub.items or {}) do
+                            if it.id == itemId then itemDef = it; break end
+                        end
+                        if itemDef then break end
+                    end
                 end
                 break
             end
@@ -974,9 +1102,99 @@ function HoldoorClient.comprar(categoriaId, itemId)
                 return
             end
         end
+        -- Beso del Dios: NO comprar si el player no esta lastimado (no hay nada que curar).
+        if itemDef.accion.tipo == "reliquia_godmode_flash" then
+            local player = getSpecificPlayer(0)
+            local necesitaCura = false
+            if player then
+                pcall(function()
+                    local bd = player:getBodyDamage()
+                    if not bd then return end
+                    local parts = bd:getBodyParts()
+                    if not parts then return end
+                    for i = 0, parts:size() - 1 do
+                        local bP = parts:get(i)
+                        if bP then
+                            -- Check HP del body part
+                            local hp = 100
+                            pcall(function() hp = bP:getHealth() end)
+                            if hp < 100 then necesitaCura = true; return end
+                            -- Check mordedura
+                            local b = false; pcall(function() b = bP:bitten() end)
+                            if b then necesitaCura = true; return end
+                            -- Check infeccion
+                            local inf = false; pcall(function() inf = bP:isInfectedWound() end)
+                            if inf then necesitaCura = true; return end
+                            -- Check sangrado
+                            local bld = false; pcall(function() bld = bP:bleeding() end)
+                            if bld then necesitaCura = true; return end
+                            -- Check corte
+                            local cut = false; pcall(function() cut = bP:isCut() end)
+                            if cut then necesitaCura = true; return end
+                            -- Check scratch
+                            local sc = false; pcall(function() sc = bP:scratched() end)
+                            if sc then necesitaCura = true; return end
+                        end
+                    end
+                end)
+            end
+            if not necesitaCura then
+                HoldoorClient.chat("[HOLDOOR] Estas sano. El Beso del Dios no tiene a quien curar.", 1, 0.6, 0.2)
+                return
+            end
+        end
+        -- Bendiciones especificas: NO comprar si el player no tiene la condicion concreta.
+        local validCura = {
+            reliquia_cura_sangrado   = { fn = function(bP) return bP:bleeding() end,                msg = "sangrado" },
+            reliquia_cura_fractura   = { fn = function(bP) return bP:getFractureTime() > 0 end,     msg = "fracturas" },
+            reliquia_cura_corte      = { fn = function(bP) return bP:isDeepWounded() or bP:isCut() end, msg = "cortes" },
+            reliquia_cura_mordedura  = { fn = function(bP) return bP:bitten() end,                  msg = "mordeduras" },
+            reliquia_cura_rasgunyo   = { fn = function(bP) return bP:scratched() end,               msg = "rasgunyos" },
+        }
+        if validCura[itemDef.accion.tipo] then
+            local cfg = validCura[itemDef.accion.tipo]
+            local player = getSpecificPlayer(0)
+            local tiene = false
+            if player then
+                pcall(function()
+                    local bd = player:getBodyDamage()
+                    if not bd then return end
+                    local parts = bd:getBodyParts()
+                    if not parts then return end
+                    for i = 0, parts:size() - 1 do
+                        local bP = parts:get(i)
+                        if bP then
+                            local v = false
+                            pcall(function() v = cfg.fn(bP) end)
+                            if v then tiene = true; return end
+                        end
+                    end
+                end)
+            end
+            if not tiene then
+                HoldoorClient.chat("[HOLDOOR] No tenes " .. cfg.msg .. ". Nada que curar.", 1, 0.6, 0.2)
+                return
+            end
+        end
+    end
+
+    -- subir_nivel: calcular precio y XP dinamicamente ANTES de pedir al server cobrar.
+    -- Pasamos el precio calculado como override y guardamos xpFaltante para entregar despues.
+    local infoNivel = nil
+    if itemDef and itemDef.accion and itemDef.accion.tipo == "subir_nivel" then
+        infoNivel = HoldoorClient.calcSubirNivel(itemDef.accion.perk, itemDef.accion.tier)
+        if not infoNivel then
+            HoldoorClient.chat("[HOLDOOR] No se pudo calcular el nivel. Reportar bug.", 1, 0.3, 0.2)
+            return
+        end
+        if infoNivel.max then
+            HoldoorClient.chat("[HOLDOOR] Ya tenes esa habilidad al maximo (nivel 10).", 1, 0.6, 0.2)
+            return
+        end
     end
 
     local args = { categoria=categoriaId, item=itemId }
+    if infoNivel then args.precioOverride = infoNivel.precio end
     if tieneServidorLocal() then
         local p = getSpecificPlayer(0)
         if p then pcall(HoldoorServer._comprar, p, args) end
@@ -1008,6 +1226,93 @@ function HoldoorClient.comprar(categoriaId, itemId)
             end
         end
 
+        -- Reliquias: API Lua directa vanilla (descubierto 2026-06-16 noche tras debug profundo).
+        -- NO usamos /godmode admin comando porque su parser B42 esta roto y comportamiento toggle.
+        -- En su lugar usamos la misma API que el panel admin "Health Full (Body)" del juego.
+        if accion.tipo == "reliquia_godmode_flash" and targetUser then
+            -- Beso del Dios: enviar 17 comandos "healthFull" individuales (uno por body part)
+            -- al server-side via sendClientCommand("player", "onHealthCheatCurrentPlayer").
+            -- Server maneja el comando authoritative y aplica RestoreToFullHealth() sobre
+            -- el otherPlayer body part correcto. Cambio persiste, no se revierte.
+            --
+            -- BUG vanilla: "healthFullBody" en server-side (ClientCommands.lua:557) usa "player"
+            -- en vez de "otherPlayer" — capaz tiene inconsistencia. "healthFull" individual SI
+            -- usa el bodyPart correcto de otherPlayer (linea 549).
+            print("[Holdoor] Reliquia Beso del Dios: INICIO curacion total via server cheat (17 commands)")
+            local me = getSpecificPlayer(0)
+            if not me then
+                print("[Holdoor] Reliquia Beso del Dios: ERROR - getSpecificPlayer(0) devolvio nil")
+            else
+                local onlineID
+                pcall(function() onlineID = me:getOnlineID() end)
+                local bd = me:getBodyDamage()
+                if not bd then
+                    print("[Holdoor] Reliquia Beso del Dios: ERROR - getBodyDamage() nil")
+                else
+                    local parts = bd:getBodyParts()
+                    if not parts then
+                        print("[Holdoor] Reliquia Beso del Dios: ERROR - getBodyParts() nil")
+                    else
+                        local size = parts:size()
+                        for i = 0, size - 1 do
+                            local args = {
+                                bodyPartIndex = i,
+                                action = "healthFull",   -- individual, server-side authoritative
+                                id = onlineID,
+                            }
+                            if isClient() then
+                                pcall(function() sendClientCommand(me, "player", "onHealthCheatCurrentPlayer", args) end)
+                            else
+                                -- SP: aplicar directamente
+                                local bP = parts:get(i)
+                                if bP then pcall(function() bP:RestoreToFullHealth() end) end
+                            end
+                        end
+                        print("[Holdoor] Reliquia Beso del Dios: " .. size .. " comandos enviados (action=healthFull)")
+                    end
+                end
+            end
+        end
+
+        -- Bendiciones (curas parciales repetibles - solo cura body parts con la condicion)
+        if accion.tipo == "reliquia_cura_sangrado" then
+            HoldoorClient._curaParcial(targetUser, function(bP) return bP:bleeding() end, "sangrado")
+        elseif accion.tipo == "reliquia_cura_fractura" then
+            HoldoorClient._curaParcial(targetUser, function(bP) return bP:getFractureTime() > 0 end, "fractura")
+        elseif accion.tipo == "reliquia_cura_corte" then
+            HoldoorClient._curaParcial(targetUser, function(bP)
+                return bP:isDeepWounded() or bP:isCut()
+            end, "corte profundo")
+        elseif accion.tipo == "reliquia_cura_mordedura" then
+            HoldoorClient._curaParcial(targetUser, function(bP) return bP:bitten() end, "mordedura")
+        elseif accion.tipo == "reliquia_cura_rasgunyo" then
+            HoldoorClient._curaParcial(targetUser, function(bP) return bP:scratched() end, "rasgunyo")
+        end
+
+        -- Hechizos (buffs temporales con setX) eliminados 2026-06-16 noche:
+        -- las APIs setZombiesDontAttack/setUnlimitedX/setFastMoveCheat no se aplican
+        -- desde codigo mod aunque uses sendPlayerExtraInfo. Solo el panel admin vanilla
+        -- los hace efectivos. Investigar Java-side en sprint futuro.
+        -- reliquia_teleport_trono se maneja en onComandoServidor "reliquiaTeleport"
+        -- porque las coords del Trono las pasa el server (no las tiene el cliente).
+
+        -- subir_nivel: usamos infoNivel.xpFaltante calculado al inicio.
+        -- Misma logica que "xp" pero con xp dinamico para completar 1 nivel exacto.
+        if accion.tipo == "subir_nivel" and infoNivel and not infoNivel.max and targetUser then
+            local perk   = tostring(accion.perk)
+            local amount = infoNivel.xpFaltante
+            if HoldoorClient.esAdmin() then
+                local cmd = string.format('/addxp "%s" %s=%d', targetUser, perk, amount)
+                pcall(function() SendCommandToServer(cmd) end)
+                print("[Holdoor] /addxp local (nivel " .. infoNivel.nivelActual .. "->" .. infoNivel.nivelObjetivo .. "): " .. cmd)
+            else
+                sendClientCommand(HoldoorConfig.MODULE, "delegarAddXp", {
+                    target = targetUser, perk = perk, amount = amount,
+                })
+                print("[Holdoor] /addxp delegado al host admin (subir_nivel)")
+            end
+        end
+
         if (accion.tipo == "item" or accion.tipo == "package") and targetUser then
             local items = {}
             if accion.tipo == "item" and accion.item then
@@ -1028,6 +1333,13 @@ function HoldoorClient.comprar(categoriaId, itemId)
                 print("[Holdoor] /additem delegado al host admin (" .. #items .. " items)")
             end
         end
+    end
+
+    -- v0.6.2: refresh post-compra.
+    -- Pasamos infoNivel para que la funcion decida si usar polling con verificacion
+    -- (subir_nivel) o clicks delayed simples (items/packages).
+    if HoldoorClient.refreshShopDeferido then
+        HoldoorClient.refreshShopDeferido(infoNivel)
     end
 end
 
@@ -1230,6 +1542,134 @@ Events.OnGameStart.Add(HoldoorClient.init)
 Events.OnKeyStartPressed.Add(HoldoorClient.onKeyPressed)
 Events.OnTick.Add(HoldoorClient.onTick)
 Events.OnZombieDead.Add(HoldoorClient.onZombieMuertoLocal)
+
+-- ════════════════════════════════════════════════════════════════════
+-- v0.6.2: REFRESH DIFERIDO DE LA TIENDA POST-COMPRA DE NIVELES
+--
+-- Bug encontrado 2026-06-16: tras comprar "subir_nivel" via /addxp (async),
+-- el HoldoorShop.refrescar() llamado inmediatamente todavia veia el nivel
+-- VIEJO porque el comando server no proceso el levelup todavia.
+--
+-- Fix doble:
+-- 1) Hook Events.LevelPerk (idiomatico — dispara cuando level real cambia)
+-- 2) Contador OnTick que refresca la tienda durante ~0.5s post-compra
+--    (fallback por si LevelPerk no existe en B42 o el timing falla)
+-- ════════════════════════════════════════════════════════════════════
+
+-- ════════════════════════════════════════════════════════════════════
+-- v0.6.2: TIMERS DE RELIQUIAS (godmode y invisible se apagan tras N ticks)
+-- ════════════════════════════════════════════════════════════════════
+-- Helper: cura solo body parts que cumplen la condicion (Bendiciones).
+-- Itera body parts, envia sendClientCommand al server (action="healthFull") solo para los que tienen
+-- la condicion. Server aplica RestoreToFullHealth() authoritative.
+function HoldoorClient._curaParcial(targetUser, condicionFn, nombreLog)
+    local me = getSpecificPlayer(0)
+    if not me then
+        print("[Holdoor] Cura parcial (" .. (nombreLog or "?") .. "): ERROR - no player")
+        return 0
+    end
+    local onlineID
+    pcall(function() onlineID = me:getOnlineID() end)
+    local bd = me:getBodyDamage()
+    if not bd then return 0 end
+    local parts = bd:getBodyParts()
+    if not parts then return 0 end
+    local size = parts:size()
+    local count = 0
+    for i = 0, size - 1 do
+        local bP = parts:get(i)
+        if bP then
+            local tiene = false
+            pcall(function() tiene = condicionFn(bP) end)
+            if tiene then
+                count = count + 1
+                if isClient() then
+                    pcall(function()
+                        sendClientCommand(me, "player", "onHealthCheatCurrentPlayer", {
+                            bodyPartIndex = i, action = "healthFull", id = onlineID,
+                        })
+                    end)
+                else
+                    pcall(function() bP:RestoreToFullHealth() end)
+                end
+            end
+        end
+    end
+    print("[Holdoor] Cura parcial (" .. (nombreLog or "?") .. "): " .. count .. " body parts afectados")
+    return count
+end
+
+-- Timers de Reliquias temporales removidos 2026-06-16:
+-- los Hechizos con setX no funcionaban, y el Beso del Dios cura instantaneamente
+-- (no requiere timer). Las Bendiciones son one-shot tambien.
+
+-- Refresh post-compra: 2 sistemas distintos segun tipo de accion.
+--
+-- 1) SUBIR_NIVEL → polling con verificacion empirica.
+--    Antes de comprar guardamos nivelPre. Cada tick durante hasta 1s verificamos
+--    player:getPerkLevel(). Cuando dispara > nivelPre, server confirmo el cambio →
+--    simulamos click + paramos polling. 100% deterministico, dispara EXACTO en el
+--    frame que el server procesa el levelup. Sin adivinar timings.
+--
+-- 2) ITEMS / PACKAGES / OTROS → 2 clicks delayed simples (suficientes porque no
+--    necesitamos verificar nivel, solo que la UI muestre stocks/saldos actualizados).
+HoldoorClient._levelupPolling = nil   -- { perkEnum, nivelPre, ticksRestantes }
+HoldoorClient._refreshSubcatAt = { -1, -1 }
+
+function HoldoorClient.refreshShopDeferido(infoNivel)
+    -- Si es compra de subir_nivel y tenemos infoNivel valido → polling con verificacion
+    if infoNivel and not infoNivel.max and infoNivel.perkEnum then
+        local player = getSpecificPlayer(0)
+        if player then
+            local nivelPre = 0
+            pcall(function() nivelPre = player:getPerkLevel(infoNivel.perkEnum) end)
+            HoldoorClient._levelupPolling = {
+                perkEnum = infoNivel.perkEnum,
+                nivelPre = nivelPre,
+                ticksRestantes = 60,   -- max 1s a 60 FPS
+            }
+            return
+        end
+    end
+    -- Para items/packages: 2 clicks delayed simples (no necesitamos verificar nivel)
+    HoldoorClient._refreshSubcatAt = { 15, 30 }
+end
+
+local function _tickRefreshSubcat()
+    -- Polling activo para subir_nivel (verifica si el nivel realmente cambio)
+    local pol = HoldoorClient._levelupPolling
+    if pol then
+        pol.ticksRestantes = pol.ticksRestantes - 1
+        local player = getSpecificPlayer(0)
+        local nivelActual = pol.nivelPre   -- default si no podemos leer
+        if player then
+            pcall(function() nivelActual = player:getPerkLevel(pol.perkEnum) end)
+        end
+        if nivelActual > pol.nivelPre or pol.ticksRestantes <= 0 then
+            -- Server confirmo el cambio O timeout 1s → dispara refresh + cierra polling
+            if HoldoorShop and HoldoorShop.simularClickSubcategoriaActual then
+                pcall(HoldoorShop.simularClickSubcategoriaActual)
+            end
+            HoldoorClient._levelupPolling = nil
+        end
+    end
+
+    -- Slots delayed para items/packages
+    local arr = HoldoorClient._refreshSubcatAt
+    if arr then
+        for i = 1, #arr do
+            if arr[i] > 0 then
+                arr[i] = arr[i] - 1
+                if arr[i] == 0 then
+                    if HoldoorShop and HoldoorShop.simularClickSubcategoriaActual then
+                        pcall(HoldoorShop.simularClickSubcategoriaActual)
+                    end
+                end
+            end
+        end
+    end
+end
+Events.OnTick.Add(_tickRefreshSubcat)
 
 -- ════════════════════════════════════════════════════════════════════
 -- OVERLAY VISUAL DEL TRONO DE HIERRO (C0)

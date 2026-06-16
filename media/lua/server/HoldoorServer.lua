@@ -175,14 +175,21 @@ end
 -- ─────────────────────────────────────────────
 
 -- Monedas como contadores en ModData del jugador.
--- Persiste entre sesiones (PZ guarda ModData del jugador con el save).
--- Mas robusto que items.txt en B42 y se integra directo con la tienda futura.
+-- Persistencia MP B42: cualquier modificacion server-side de getModData() requiere
+-- player:transmitModData() despues para que el server marque el cambio como dirty,
+-- lo sincronice al cliente y lo persista en el save al shutdown. Sin esta llamada
+-- las monedas vuelven a 0 al cerrar/abrir el server (gotcha #51 lockeado 2026-06-16).
+local function _persistirModData(p)
+    pcall(function() p:transmitModData() end)
+end
+
 local function darMonedasA(p, bronze, silver, gold)
     local ok, md = pcall(function() return p:getModData() end)
     if not ok or not md then return false end
     md.Holdoor_Bronze = (md.Holdoor_Bronze or 0) + (bronze or 0)
     md.Holdoor_Silver = (md.Holdoor_Silver or 0) + (silver or 0)
     md.Holdoor_Gold   = (md.Holdoor_Gold   or 0) + (gold   or 0)
+    _persistirModData(p)
     return true
 end
 
@@ -246,6 +253,8 @@ function HoldoorServer._transferirMonedas(emisor, args)
     local mdTo = target:getModData()
     mdFrom[mdKey] = saldoFrom - cantidad
     mdTo[mdKey]   = (mdTo[mdKey] or 0) + cantidad
+    _persistirModData(emisor)
+    _persistirModData(target)
     print("[Holdoor] Transfer: " .. fromUser .. " -> " .. toUser .. " | " .. cantidad .. " " .. tipo)
 
     -- Notificar a ambos
@@ -299,6 +308,28 @@ local function ejecutarAccion(jugador, accion)
         -- server automaticamente sin ser sobreescrito.
         return true
 
+    elseif accion.tipo == "subir_nivel" then
+        -- v0.6.2: "vender niveles" para Libros de Guerra. Mismo patron que "xp":
+        -- el server cobra (con precioOverride calculado en cliente), el cliente
+        -- entrega el XP exacto para completar 1 nivel via /addxp admin.
+        return true
+
+    elseif accion.tipo == "reliquia_godmode_flash" then
+        -- Beso del Dios: cliente ejecuta el flow de curacion. Marca ModData unico-por-vida.
+        local md = jugador:getModData()
+        if md then md.Holdoor_BesoDios = true end
+        _persistirModData(jugador)
+        return true
+
+    elseif accion.tipo == "reliquia_cura_sangrado"
+        or accion.tipo == "reliquia_cura_fractura"
+        or accion.tipo == "reliquia_cura_corte"
+        or accion.tipo == "reliquia_cura_mordedura"
+        or accion.tipo == "reliquia_cura_rasgunyo" then
+        -- Bendiciones: cliente ejecuta sendClientCommand("onHealthCheatCurrentPlayer")
+        -- con action="healthFull" para los body parts que tienen la condicion.
+        return true
+
     elseif accion.tipo == "restore" then
         -- En B42 los stats se setean via getStats():set(CharacterStat.X, value).
         -- Los setters individuales (setFatigue, setEndurance, etc) NO existen → tiran
@@ -344,6 +375,7 @@ local function ejecutarAccion(jugador, accion)
         local md = jugador:getModData()
         if not md or not accion.key then return false end
         md[accion.key] = (md[accion.key] or 0) + (accion.amount or 1)
+        _persistirModData(jugador)
         return true
 
     elseif accion.tipo == "cure_bite" then
@@ -378,6 +410,7 @@ local function ejecutarAccion(jugador, accion)
 
         -- Marcar en ModData que el player compro este trait (para el limite "1 por vida")
         if md then md.Holdoor_TraitComprado = accion.trait end
+        _persistirModData(jugador)
 
         -- Mandar comando al cliente para que aplique el trait
         pcall(function()
@@ -399,6 +432,7 @@ local function ejecutarAccion(jugador, accion)
         local traitId = tostring(accion.trait)
 
         if md then md.Holdoor_TraitCurado = accion.trait end
+        _persistirModData(jugador)
 
         pcall(function()
             sendServerCommand(jugador, HoldoorConfig.MODULE, "curarTrait", { trait = traitId })
@@ -429,6 +463,11 @@ function HoldoorServer._comprar(jugador, args)
     local md = jugador:getModData()
     local mdKeyMap = HoldoorShopCatalog.mdKeyMap
 
+    -- v0.6.2: precioOverride para acciones dinamicas (tipo "subir_nivel" en Libros de Guerra).
+    -- El cliente calcula el precio segun nivel actual del player y lo manda aca.
+    -- Server confia en el cliente (acceptable para wave defense mod, no es economia competitiva).
+    local precioEfectivo = (args and args.precioOverride) or item.precio
+
     -- Restriccion "1 por vida del personaje" para Rasgos Heroicos y Milagros.
     if item.accion and item.accion.tipo == "trait" and md and md.Holdoor_TraitComprado then
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
@@ -438,6 +477,12 @@ function HoldoorServer._comprar(jugador, args)
     if item.accion and item.accion.tipo == "cura_trait" and md and md.Holdoor_TraitCurado then
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
               { motivo = "Ya usaste tu Milagro del Maestre. Solo uno por personaje." })
+        return
+    end
+    -- Reliquia Beso del Dios: 1 por vida del personaje
+    if item.accion and item.accion.tipo == "reliquia_godmode_flash" and md and md.Holdoor_BesoDios then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
+              { motivo = "Ya invocaste el Beso del Dios de Muchos Rostros en esta vida." })
         return
     end
     -- Para cura_trait: la validacion "tiene el trait?" se hace EN EL CLIENTE
@@ -472,7 +517,7 @@ function HoldoorServer._comprar(jugador, args)
     end
 
     -- Validar que tenga saldo suficiente para CADA componente del precio
-    for k, costo in pairs(item.precio or {}) do
+    for k, costo in pairs(precioEfectivo or {}) do
         if costo and costo > 0 then
             local mdKey = mdKeyMap[k]
             if not mdKey then
@@ -496,26 +541,27 @@ function HoldoorServer._comprar(jugador, args)
         return
     end
 
-    -- Cobrar: descontar TODAS las componentes del precio
-    for k, costo in pairs(item.precio or {}) do
+    -- Cobrar: descontar TODAS las componentes del precio EFECTIVO
+    for k, costo in pairs(precioEfectivo or {}) do
         if costo and costo > 0 then
             local mdKey = mdKeyMap[k]
             md[mdKey] = (md[mdKey] or 0) - costo
         end
     end
+    _persistirModData(jugador)
 
     print("[Holdoor] Compra: " .. jugador:getUsername() .. " -> " .. catId .. "/" .. itemId ..
-          " | " .. HoldoorShopCatalog.precioStr(item.precio))
+          " | " .. HoldoorShopCatalog.precioStr(precioEfectivo))
 
     pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "monedasActualizadas", {})
     pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraOK", {
         nombre = item.nombre,
-        precio = item.precio,
+        precio = precioEfectivo,
     })
 
     if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
         pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "monedasActualizadas", {})
-        pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "compraOK", { nombre=item.nombre, precio=item.precio })
+        pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "compraOK", { nombre=item.nombre, precio=precioEfectivo })
     end
 end
 
@@ -1396,6 +1442,7 @@ function HoldoorServer._distribuirMateriales(materiales)
                 md[mdKey] = (md[mdKey] or 0) + qty
             end
         end
+        _persistirModData(p)
     end
 
     local entregado = false

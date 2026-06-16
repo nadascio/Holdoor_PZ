@@ -49,219 +49,379 @@ HoldoorShopCatalog.categorias = {
         id     = "consumibles",
         nombre = "Consumibles",
         cr=0.35, cg=0.85, cb=0.45,
-        items = {
-            -- ════════════ MEDICO ════════════
-            -- Tier 1: items individuales baratos (de bolsillo)
-            { id="bandage",       nombre="Vendaje del Maestre",     desc="Detiene el sangrado.",
-              precio={bronze=3},                    accion={tipo="item", item="Base.Bandage"} },
-            { id="venda_steril",  nombre="Venda Esterilizada",       desc="Vendaje desinfectado. Cura mas rapido.",
-              precio={bronze=6},                    accion={tipo="item", item="Base.AlcoholBandage"} },
-            { id="painkillers",   nombre="Polvo del Sueno",          desc="Analgesico. Reduce el dolor.",
-              precio={bronze=4},                    accion={tipo="item", item="Base.Pills"} },
-            { id="antibiotics",   nombre="Hierba del Maestre",       desc="Antibiotico. Combate infecciones (no zombi).",
-              precio={bronze=8},                    accion={tipo="item", item="Base.Antibiotics"} },
-            { id="algodon",       nombre="Algodon con Alcohol",      desc="Desinfecta heridas.",
-              precio={bronze=5},                    accion={tipo="item", item="Base.AlcoholedCottonBalls"} },
-            -- Tier 2: packs medianos (mejor relacion precio/cantidad)
-            { id="polvo3",        nombre="Polvo del Sueno Profundo", desc="3 dosis de Pastillas.",
-              precio={bronze=10},                   accion={tipo="package", items={"Base.Pills","Base.Pills","Base.Pills"}} },
-            { id="vendas5",       nombre="Rollo de Vendas",          desc="5 Vendajes basicos.",
-              precio={bronze=12},                   accion={tipo="package", items={"Base.Bandage","Base.Bandage","Base.Bandage","Base.Bandage","Base.Bandage"}} },
-            { id="hoja_cuervo",   nombre="Hoja del Cuervo",          desc="2x Antibiotico + 2x Venda esterilizada. Cura emergencia.",
-              precio={bronze=25},                   accion={tipo="package", items={"Base.Antibiotics","Base.Antibiotics","Base.AlcoholBandage","Base.AlcoholBandage"}} },
-            -- Tier 3: kit grande (inversion para preparacion)
-            { id="botiquin",      nombre="Botiquin del Septon",      desc="3x Vendas esterilizadas + 3x Antibioticos + 3x Pastillas + 2x Algodon con alcohol.",
-              precio={silver=1, hierro=1},          accion={tipo="package", items={"Base.AlcoholBandage","Base.AlcoholBandage","Base.AlcoholBandage","Base.Antibiotics","Base.Antibiotics","Base.Antibiotics","Base.Pills","Base.Pills","Base.Pills","Base.AlcoholedCottonBalls","Base.AlcoholedCottonBalls"}} },
-            -- ════════════ COMIDA / BEBIDA ════════════
-            -- Tier 1: items individuales
-            { id="sandwich",      nombre="Sandwich del Norte",       desc="Llena el hambre.",
-              precio={bronze=6},                    accion={tipo="item", item="Base.Sandwich"} },
-            { id="estofado",      nombre="Estofado del Norte",       desc="Sopa nutritiva.",
-              precio={bronze=8},                    accion={tipo="item", item="Base.TinnedSoup"} },
-            { id="vino_dominio",  nombre="Vino del Dominio",         desc="Reduce sed, sube animo.",
-              precio={bronze=10},                   accion={tipo="item", item="Base.WineBottle"} },
-            -- Tier 2: packs medianos
-            { id="rancion",       nombre="Racion de la Guardia",     desc="Sandwich + Estofado + Vino.",
-              precio={bronze=20},                   accion={tipo="package", items={"Base.Sandwich","Base.TinnedSoup","Base.WineBottle"}} },
-            { id="racion_cuervo", nombre="Racion del Cuervo",        desc="3x Sandwich + 2x Vino. Para la tropa.",
-              precio={bronze=30},                   accion={tipo="package", items={"Base.Sandwich","Base.Sandwich","Base.Sandwich","Base.WineBottle","Base.WineBottle"}} },
-            -- Tier 3: kit grande
-            { id="kit_comida_3d", nombre="Provisiones de 3 Dias",    desc="2x Sandwich + Sopa + Steak + 2x Vino. Te dura.",
-              precio={bronze=55},                   accion={tipo="package", items={"Base.Sandwich","Base.Sandwich","Base.TinnedSoup","Base.Steak","Base.WineBottle","Base.WineBottle"}} },
-        },
-    },
-    {
-        id     = "boosters",
-        nombre = "Boosters",
-        cr=0.30, cg=0.85, cb=0.95,
-        items = {
-            -- Boosters: usan el motor "restore" con stats expandidos (panic, unhappy, drunk, pain).
-            -- Efectos instantaneos, sin items al inventario. Ideales pre-oleada o en emergencia.
-            { id="boost_cafe",      nombre="Cafe del Norte",             desc="Energiza al instante: borra fatiga, recarga aliento y aburrimiento.",
-              precio={bronze=25, hierro=1},     accion={tipo="restore", stats={"fatigue","endurance","boredom"}} },
-            { id="boost_hidromiel", nombre="Hidromiel del Valle",        desc="Calma los nervios: borra estres, panico y tristeza.",
-              precio={bronze=30, hierro=1},     accion={tipo="restore", stats={"stress","panic","unhappy"}} },
-            { id="boost_tonico",    nombre="Tonico del Maestre",         desc="Recuperacion de combate: aliento + fatiga + dolor.",
-              precio={silver=1},                accion={tipo="restore", stats={"endurance","fatigue","pain"}} },
-            { id="boost_hojaroja",  nombre="Hojaroja de Asshai",         desc="Anti-panico de los Sacerdotes Rojos. Borra panico y miedo.",
-              precio={bronze=40},               accion={tipo="restore", stats={"panic","stress"}} },
-            { id="boost_sobrio",    nombre="Antidoto del Bardo",         desc="Sobria al instante. Borra borrachera y tristeza.",
-              precio={bronze=15},               accion={tipo="restore", stats={"drunk","unhappy"}} },
-            { id="boost_sangre",    nombre="Sangre del Dragon",          desc="Adrenalina pura: borra TODO el cansancio + panico + dolor. El boost definitivo de combate.",
-              precio={silver=2, valyrio=1},     accion={tipo="restore", stats={"fatigue","endurance","panic","pain","stress"}} },
-            { id="boost_polvo",     nombre="Polvo del Susurro",          desc="Stim completo: hambre + sed + fatiga + aliento + estres + dolor. Recargas total.",
-              precio={silver=3, obsidiana=1},   accion={tipo="restore", stats={"hunger","thirst","fatigue","endurance","stress","pain","boredom"}} },
+        subcategorias = {
+            {
+                id = "medico", nombre = "Medico",
+                items = {
+                    -- Tier 1: items individuales (5 items basicos)
+                    { id="bandage",       nombre="Vendaje del Maestre",     desc="Detiene el sangrado.",
+                      contenido="Vendaje x1",
+                      precio={bronze=3},                    accion={tipo="item", item="Base.Bandage"} },
+                    { id="venda_steril",  nombre="Venda Esterilizada",       desc="Cura mas rapido.",
+                      contenido="Venda Esteril x1",
+                      precio={bronze=6},                    accion={tipo="item", item="Base.AlcoholBandage"} },
+                    { id="painkillers",   nombre="Polvo del Sueno",          desc="Reduce el dolor.",
+                      contenido="Pastillas x1",
+                      precio={bronze=4},                    accion={tipo="item", item="Base.Pills"} },
+                    { id="antibiotics",   nombre="Hierba del Maestre",       desc="Combate infecciones (no zombi).",
+                      contenido="Antibiotico x1",
+                      precio={bronze=8},                    accion={tipo="item", item="Base.Antibiotics"} },
+                    { id="algodon",       nombre="Algodon con Alcohol",      desc="Desinfecta heridas.",
+                      contenido="Algodon con Alcohol x1",
+                      precio={bronze=5},                    accion={tipo="item", item="Base.AlcoholedCottonBalls"} },
+                    -- Tier 3: kit grande (unico pack premium)
+                    { id="botiquin",      nombre="Botiquin del Septon",      desc="Kit completo.",
+                      contenido="Venda Esteril x3 + Antibiotico x3 + Pastillas x3 + Algodon x2",
+                      precio={silver=1, hierro=1},          accion={tipo="package", items={"Base.AlcoholBandage","Base.AlcoholBandage","Base.AlcoholBandage","Base.Antibiotics","Base.Antibiotics","Base.Antibiotics","Base.Pills","Base.Pills","Base.Pills","Base.AlcoholedCottonBalls","Base.AlcoholedCottonBalls"}} },
+                },
+            },
+            {
+                id = "comida", nombre = "Comida",
+                items = {
+                    -- Tier 1: items individuales
+                    { id="sandwich",      nombre="Sandwich del Norte",       desc="Llena el hambre.",
+                      contenido="Sandwich x1",
+                      precio={bronze=6},                    accion={tipo="item", item="Base.Sandwich"} },
+                    { id="estofado",      nombre="Estofado del Norte",       desc="Nutritivo.",
+                      contenido="Sopa Enlatada x1",
+                      precio={bronze=8},                    accion={tipo="item", item="Base.TinnedSoup"} },
+                    -- Tier 2: packs medianos
+                    { id="rancion",       nombre="Racion de la Guardia",     desc="Combo balanceado.",
+                      contenido="Sandwich + Sopa + Vino",
+                      precio={bronze=20},                   accion={tipo="package", items={"Base.Sandwich","Base.TinnedSoup","Base.Wine2"}} },
+                    { id="racion_cuervo", nombre="Racion del Cuervo",        desc="Para la tropa.",
+                      contenido="Sandwich x3 + Vino x2",
+                      precio={bronze=30},                   accion={tipo="package", items={"Base.Sandwich","Base.Sandwich","Base.Sandwich","Base.Wine2","Base.Wine2"}} },
+                    -- Tier 3: kit grande
+                    { id="kit_comida_3d", nombre="Provisiones de 3 Dias",    desc="Te dura varios dias.",
+                      contenido="Sandwich x2 + Sopa + Steak + Vino x2",
+                      precio={bronze=55},                   accion={tipo="package", items={"Base.Sandwich","Base.Sandwich","Base.TinnedSoup","Base.Steak","Base.Wine2","Base.Wine2"}} },
+                },
+            },
+            {
+                id = "bebidas", nombre = "Bebidas",
+                items = {
+                    { id="vino_dominio",  nombre="Vino del Dominio",         desc="Reduce sed, sube animo.",
+                      contenido="Vino x1",
+                      precio={bronze=10},                   accion={tipo="item", item="Base.Wine2"} },
+                    { id="cerveza_norte", nombre="Cerveza del Norte",        desc="Hidrata y relaja.",
+                      contenido="Cerveza x1",
+                      precio={bronze=8},                    accion={tipo="item", item="Base.BeerBottle"} },
+                    { id="whisky_river",  nombre="Whisky del Riverlands",    desc="Premium. Sube animo y te emborracha.",
+                      contenido="Whisky x1",
+                      precio={bronze=25},                   accion={tipo="item", item="Base.Whiskey"} },
+                    { id="brebaje_reino", nombre="Brebaje del Reino",        desc="Refresco azucarado. Sube energia.",
+                      contenido="Refresco x1",
+                      precio={bronze=15},                   accion={tipo="item", item="Base.PopBottleRare"} },
+                    { id="jugo_dominio",  nombre="Jugo del Dominio",         desc="Hidrata bien.",
+                      contenido="Jugo de Naranja x1",
+                      precio={bronze=10},                   accion={tipo="item", item="Base.JuiceOrange"} },
+                    { id="leche_norte",   nombre="Leche del Norte",          desc="Nutritiva.",
+                      contenido="Leche x1",
+                      precio={bronze=6},                    accion={tipo="item", item="Base.MilkBottle"} },
+                },
+            },
         },
     },
     {
         id     = "armas",
         nombre = "Armas",
         cr=0.95, cg=0.45, cb=0.20,
-        items = {
-            { id="machete", nombre="Machete del Vagabundo",   desc="Cuerpo a cuerpo, alto dano.",
-              precio={bronze=20, hierro=1},        accion={tipo="item", item="Base.Machete"} },
-            { id="axe",     nombre="Hacha del Pueblo Libre",  desc="Hacha pesada de doble filo.",
-              precio={silver=1, hierro=1},         accion={tipo="item", item="Base.Axe"} },
-            { id="katana",  nombre="Espada Larga del Norte",  desc="Hoja legendaria forjada en Valyrio.",
-              precio={silver=3, valyrio=1},        accion={tipo="item", item="Base.Katana"} },
+        subcategorias = {
+            {
+                id = "melee", nombre = "Melee",
+                items = {
+                    { id="cuchillo",   nombre="Cuchillo de Caza",        desc="Hoja corta, util de cinturon.",
+                      contenido="Cuchillo de Caza x1",
+                      precio={silver=5},                       accion={tipo="item", item="Base.HuntingKnife"} },
+                    { id="bate",       nombre="Bate de Guerra",          desc="Contundente, alcance medio.",
+                      contenido="Bate x1",
+                      precio={gold=1},                         accion={tipo="item", item="Base.BaseballBat"} },
+                    { id="palanca",    nombre="Palanca del Cuervo",      desc="Resistente y durable.",
+                      contenido="Palanca x1",
+                      precio={gold=1, hierro=1},               accion={tipo="item", item="Base.Crowbar"} },
+                    { id="machete",    nombre="Machete del Vagabundo",   desc="Cuerpo a cuerpo, alto dano.",
+                      contenido="Machete x1",
+                      precio={gold=2, hierro=1},               accion={tipo="item", item="Base.Machete"} },
+                    { id="axe",        nombre="Hacha del Pueblo Libre",  desc="Hacha pesada de doble filo.",
+                      contenido="Hacha x1",
+                      precio={gold=2, hierro=2},               accion={tipo="item", item="Base.Axe"} },
+                    { id="katana",     nombre="Espada Larga del Norte",  desc="Hoja legendaria forjada en Valyrio.",
+                      contenido="Katana x1",
+                      precio={gold=10, valyrio=3},             accion={tipo="item", item="Base.Katana"} },
+                },
+            },
+            {
+                id = "firearms", nombre = "Firearms",
+                items = {
+                    { id="pistola",      nombre="Pistola del Maestre",       desc="Beretta M92F. Cuerpo a cuerpo NO recomendado.",
+                      contenido="Pistola x1",
+                      precio={gold=5},                         accion={tipo="item", item="Base.Pistol"} },
+                    { id="muni_9mm",     nombre="Municion del Maestre",      desc="Carton de balas 9mm. Para la pistola.",
+                      contenido="Caja 9mm x1",
+                      precio={gold=1},                         accion={tipo="item", item="Base.Bullets9mmCarton"} },
+                    { id="escopeta",     nombre="Escopeta del Norte",        desc="Remington M870. Cluster killer.",
+                      contenido="Escopeta x1",
+                      precio={gold=8, acero=1},                accion={tipo="item", item="Base.Shotgun"} },
+                    { id="cartuchos",    nombre="Cartuchos del Norte",       desc="Caja de cartuchos 12g. Para la escopeta.",
+                      contenido="Caja 12g x1",
+                      precio={gold=1, hierro=1},               accion={tipo="item", item="Base.ShotgunShellsBox"} },
+                    { id="rifle",        nombre="Rifle de Caza",             desc="Remington M788. Largo alcance.",
+                      contenido="Rifle x1",
+                      precio={gold=8, acero=1},                accion={tipo="item", item="Base.HuntingRifle"} },
+                    { id="muni_308",     nombre="Municion de Rifle",         desc="Caja de balas .308. Para el rifle.",
+                      contenido="Caja .308 x1",
+                      precio={gold=1, hierro=1},               accion={tipo="item", item="Base.308Box"} },
+                },
+            },
         },
     },
     {
-        id     = "armadura",
-        nombre = "Armadura",
+        id     = "vestiduras",
+        nombre = "Vestiduras",
         cr=0.55, cg=0.75, cb=0.95,
+        subcategorias = {
+            {
+                id = "casual", nombre = "Casual",
+                items = {
+                    { id="gorra_vaga",   nombre="Gorra del Vagabundo",     desc="Cubre la cabeza, nada del otro mundo.",
+                      contenido="Gorra x1",
+                      precio={bronze=5},                       accion={tipo="item", item="Base.Hat_BaseballCap"} },
+                    { id="guantes_cuero", nombre="Guantes del Cuervo",      desc="Cuero curtido, mano dura.",
+                      contenido="Guantes de Cuero x1",
+                      precio={bronze=15, cuero=1},             accion={tipo="item", item="Base.Gloves_LeatherGloves"} },
+                    { id="chaqueta_cuero", nombre="Chaqueta de Cuero",       desc="Anti-mordida basica. Resistente.",
+                      contenido="Chaqueta de Cuero x1",
+                      precio={silver=1},                       accion={tipo="item", item="Base.Jacket_Leather"} },
+                    { id="jeans_pueblo",  nombre="Jeans del Pueblo",         desc="Pantalon basico.",
+                      contenido="Jeans x1",
+                      precio={bronze=10},                      accion={tipo="item", item="Base.Trousers_Denim"} },
+                    { id="zapatos_camino", nombre="Zapatos del Camino",      desc="Zapatos negros simples.",
+                      contenido="Zapatos x1",
+                      precio={bronze=15},                      accion={tipo="item", item="Base.Shoes_Black"} },
+                    { id="vest_civil",    nombre="Chaleco Antibalas Civil",  desc="Proteccion anti-bala basica.",
+                      contenido="Chaleco Antibalas x1",
+                      precio={silver=2, hierro=1},             accion={tipo="item", item="Base.Vest_BulletCivilian"} },
+                },
+            },
+            {
+                id = "policia", nombre = "Policia",
+                items = {
+                    { id="casco_riot",    nombre="Casco Antidisturbios",     desc="Casco con visor, proteccion completa.",
+                      contenido="Casco Antidisturbios x1",
+                      precio={gold=1, acero=1},                accion={tipo="item", item="Base.Hat_RiotHelmet"} },
+                    { id="camisa_pol",    nombre="Camisa de Policia",        desc="Camisa azul oficial.",
+                      contenido="Camisa Policia x1",
+                      precio={silver=3},                       accion={tipo="item", item="Base.Shirt_PoliceBlue"} },
+                    { id="pant_pol",      nombre="Pantalones de Policia",    desc="Pantalon tactico azul.",
+                      contenido="Pantalon Policia x1",
+                      precio={silver=3},                       accion={tipo="item", item="Base.Trousers_Police"} },
+                    { id="zap_neg",       nombre="Zapatos Negros",           desc="Calzado de servicio.",
+                      contenido="Zapatos Negros x1",
+                      precio={bronze=15},                      accion={tipo="item", item="Base.Shoes_Black"} },
+                    { id="vest_pol",      nombre="Chaleco Antibalas Policia", desc="Anti-bala fuerte. Mid-tier.",
+                      contenido="Chaleco Antibalas Policia x1",
+                      precio={gold=3, acero=2, valyrio=1},      accion={tipo="item", item="Base.Vest_BulletPolice"} },
+                },
+            },
+            {
+                id = "bombero", nombre = "Bombero",
+                items = {
+                    { id="casco_fire",    nombre="Casco de Bombero",         desc="La mejor proteccion anti-mordida de la cabeza.",
+                      contenido="Casco Bombero x1",
+                      precio={gold=2, cuero=1, obsidiana=1},   accion={tipo="item", item="Base.Hat_Fireman"} },
+                    { id="jacket_fire",   nombre="Chaqueta de Bombero",      desc="Aislante. Mejor anti-fuego del juego.",
+                      contenido="Chaqueta Bombero x1",
+                      precio={gold=3, acero=1, obsidiana=1},   accion={tipo="item", item="Base.Jacket_Fireman"} },
+                    { id="pant_fire",     nombre="Pantalones de Bombero",    desc="Mayor proteccion anti-mordida en pantalones.",
+                      contenido="Pantalon Bombero x1",
+                      precio={gold=2, cuero=1},                accion={tipo="item", item="Base.Trousers_Fireman"} },
+                    { id="guantes_fire",  nombre="Guantes del Vigia",        desc="Cuero curtido, agarre firme.",
+                      contenido="Guantes de Cuero x1",
+                      precio={bronze=15, cuero=1},             accion={tipo="item", item="Base.Gloves_LeatherGloves"} },
+                    { id="botas_resist",  nombre="Botas Resistentes",        desc="Botas militares. Anti-mordida pies TOP.",
+                      contenido="Botas Militares x1",
+                      precio={gold=1, cuero=1, acero=1},       accion={tipo="item", item="Base.Shoes_ArmyBoots"} },
+                },
+            },
+            {
+                id = "militar", nombre = "Militar",
+                items = {
+                    { id="casco_mil",     nombre="Casco Militar",            desc="Casco camo del Norte.",
+                      contenido="Casco Militar x1",
+                      precio={gold=1, hierro=1},                accion={tipo="item", item="Base.Hat_Army"} },
+                    { id="jacket_des",    nombre="Chaqueta Camo Desierto",   desc="Camuflaje de zona seca.",
+                      contenido="Chaqueta Desert x1",
+                      precio={gold=2, hierro=1, acero=1},       accion={tipo="item", item="Base.Jacket_ArmyCamoDesert"} },
+                    { id="jacket_for",    nombre="Chaqueta Camo Bosque",     desc="Camuflaje de zona boscosa.",
+                      contenido="Chaqueta Forest x1",
+                      precio={gold=2, hierro=1, acero=1},       accion={tipo="item", item="Base.Jacket_ArmyCamoGreen"} },
+                    { id="pant_mil",      nombre="Pantalones Tacticos",      desc="Service Trousers del ejercito.",
+                      contenido="Pantalon Tactico x1",
+                      precio={gold=2, hierro=1},                accion={tipo="item", item="Base.Trousers_ArmyService"} },
+                    { id="botas_mil",     nombre="Botas Militares",          desc="Anti-mordida pies TOP.",
+                      contenido="Botas Militares x1",
+                      precio={gold=1, hierro=2},                accion={tipo="item", item="Base.Shoes_ArmyBoots"} },
+                    { id="vest_mil",      nombre="Chaleco Antibalas Militar", desc="Anti-bala TOP. La mejor del juego.",
+                      contenido="Chaleco Antibalas Militar x1",
+                      precio={gold=5, acero=2, valyrio=2, obsidiana=1}, accion={tipo="item", item="Base.Vest_BulletArmy"} },
+                },
+            },
+        },
+    },
+    {
+        id     = "bolsos",
+        nombre = "Bolsos del Reino",
+        cr=0.65, cg=0.85, cb=0.55,
         items = {
-            { id="gloves", nombre="Guantes del Cuervo",         desc="Cuero curtido, mano dura.",
-              precio={bronze=15, cuero=1},         accion={tipo="item", item="Base.Gloves_LeatherGloves"} },
-            { id="helm",   nombre="Casco del Vigilante Nocturno", desc="Casco protector de cabeza.",
-              precio={silver=1, acero=1},          accion={tipo="item", item="Base.Hat_Hardhat"} },
-            { id="vest",   nombre="Chaleco del Muro",           desc="Armadura ligera anti-mordida.",
-              precio={silver=2, acero=2},          accion={tipo="item", item="Base.Vest_HighVis_Blue"} },
+            { id="morral_aprendiz", nombre="Morral del Aprendiz",      desc="Capacidad 15.",
+              contenido="Morral x1",
+              precio={silver=3},                       accion={tipo="item", item="Base.Bag_Schoolbag"} },
+            { id="bolso_mercader",  nombre="Bolso del Mercader",       desc="Capacidad 18. Reduce 65% el peso.",
+              contenido="Bolso x1",
+              precio={gold=1},                         accion={tipo="item", item="Base.Bag_DuffelBag"} },
+            { id="mochila_viajero", nombre="Mochila del Viajero",      desc="Capacidad 20. Reduce 70% el peso.",
+              contenido="Mochila Viajero x1",
+              precio={gold=2},                         accion={tipo="item", item="Base.Bag_NormalHikingBag"} },
+            { id="mochila_cazador", nombre="Mochila del Cazador",      desc="Capacidad 22. Reduce 80% el peso.",
+              contenido="Mochila Cazador x1",
+              precio={gold=3, hierro=1},               accion={tipo="item", item="Base.Bag_BigHikingBag"} },
+            { id="mochila_vigia",   nombre="Mochila del Vigilante",    desc="Capacidad 28. Reduce 85%. La TOP del juego.",
+              contenido="Mochila Militar (ALICE) x1",
+              precio={gold=6, acero=1},                accion={tipo="item", item="Base.Bag_ALICEpack"} },
         },
     },
     {
         id     = "habilidades",
-        nombre = "Libros de Guerra",
+        nombre = "Maestrias",
         cr=0.85, cg=0.55, cb=0.95,
-        items = {
-            -- Re-balance: en PZ B42 subir 1 nivel de combat skill cuesta ~5000-15000 XP.
-            -- Tiers ajustados para que la XP rendida sea realmente util por el precio.
-            -- TIER LITE — 2000 XP, accesible (bronces)
-            { id="xp_lite_aim",    nombre="Practica del Arquero",          desc="+2000 XP en Aiming.",
-              precio={bronze=50, hierro=1},        accion={tipo="xp", perk="Aiming",     amount=2000} },
-            { id="xp_lite_str",   nombre="Entrenamiento del Herrero",      desc="+2000 XP en Strength.",
-              precio={bronze=50, hierro=1},        accion={tipo="xp", perk="Strength",   amount=2000} },
-            { id="xp_lite_fit",   nombre="Carrera del Mensajero",          desc="+2000 XP en Fitness.",
-              precio={bronze=50, hierro=1},        accion={tipo="xp", perk="Fitness",    amount=2000} },
-            { id="xp_lite_blade", nombre="Manejo Basico del Filo",         desc="+2000 XP en Long Blade.",
-              precio={bronze=50, hierro=1},        accion={tipo="xp", perk="LongBlade",  amount=2000} },
-            { id="xp_lite_axe",   nombre="Lecciones del Lenador",          desc="+2000 XP en Axe.",
-              precio={bronze=50, hierro=1},        accion={tipo="xp", perk="Axe",        amount=2000} },
-            -- TIER FULL — 5000 XP, plata
-            { id="xp_aim",       nombre="Leccion del Maestro de Armas",    desc="+5000 XP en Aiming.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="Aiming",      amount=5000} },
-            { id="xp_str",       nombre="Doctrina de los Umber",           desc="+5000 XP en Strength.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="Strength",    amount=5000} },
-            { id="xp_fit",       nombre="Sangre de los Primeros Hombres",  desc="+5000 XP en Fitness.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="Fitness",     amount=5000} },
-            { id="xp_blade",     nombre="Tratado de la Espada Larga",      desc="+5000 XP en Long Blade.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="LongBlade",   amount=5000} },
-            { id="xp_axe",       nombre="Manual del Hacha de Guerra",      desc="+5000 XP en Axe.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="Axe",         amount=5000} },
-            { id="xp_short",     nombre="Arte de la Hoja Corta",           desc="+5000 XP en Short Blade.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="ShortBlade",  amount=5000} },
-            { id="xp_spear",     nombre="Cronicas de la Lanza",            desc="+5000 XP en Spear.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="Spear",       amount=5000} },
-            { id="xp_reload",    nombre="Recargar bajo Asedio",            desc="+5000 XP en Reloading.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="Reloading",   amount=5000} },
-            { id="xp_maint",     nombre="Doctrina del Acero",              desc="+5000 XP en Maintenance.",
-              precio={bronze=80, hierro=1},        accion={tipo="xp", perk="Maintenance", amount=5000} },
-            -- LEGENDARIO — 15000 XP (~ subir un nivel medio entero), plata
-            { id="xp_blade_leg", nombre="Senda del Acero Valyrio",         desc="+15000 XP en Long Blade. Salta un nivel completo.",
-              precio={silver=3, hierro=1},         accion={tipo="xp", perk="LongBlade",   amount=15000} },
+        subcategorias = {
+            {
+                id = "fisico", nombre = "Fisico",
+                items = {
+                    -- Pasivas: curva 15x mas alta → precio "pasiva"
+                    { id="lvl_fitness",  nombre="Sangre de los Primeros Hombres", desc="Sube tu Fitness 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Fitness",  tier="pasiva"} },
+                    { id="lvl_strength", nombre="Doctrina de los Umber",          desc="Sube tu Strength 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Strength", tier="pasiva"} },
+                    -- Regulares
+                    { id="lvl_sprint",   nombre="Carrera del Mensajero",          desc="Sube tu Sprinting 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Sprinting", tier="regular"} },
+                    { id="lvl_nimble",   nombre="Danza del Cuervo",               desc="Sube tu Nimble 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Nimble",    tier="regular"} },
+                    { id="lvl_light",    nombre="Pasos del Lobo Huargo",          desc="Sube tu Lightfoot 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Lightfoot", tier="regular"} },
+                    { id="lvl_sneak",    nombre="Sombras de Braavos",             desc="Sube tu Sneaking 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Sneak",     tier="regular"} },
+                },
+            },
+            {
+                id = "armas", nombre = "Armas",
+                items = {
+                    { id="lvl_lblade",   nombre="Senda del Acero Valyrio",        desc="Sube tu Long Blade 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="LongBlade",  tier="regular"} },
+                    { id="lvl_sblade",   nombre="Arte de la Hoja Corta",          desc="Sube tu Short Blade 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="SmallBlade", tier="regular"} },
+                    { id="lvl_axe",      nombre="Manual del Hacha de Guerra",     desc="Sube tu Axe 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Axe",        tier="regular"} },
+                    { id="lvl_lblunt",   nombre="Disciplina del Mazo",            desc="Sube tu Long Blunt 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Blunt",      tier="regular"} },
+                    { id="lvl_spear",    nombre="Cronicas de la Lanza",           desc="Sube tu Spear 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Spear",      tier="regular"} },
+                    { id="lvl_maint",    nombre="Doctrina del Acero",             desc="Sube tu Maintenance 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Maintenance",tier="regular"} },
+                },
+            },
+            {
+                id = "soporte", nombre = "Soporte",
+                items = {
+                    { id="lvl_aim",      nombre="Practica del Arquero",           desc="Sube tu Aiming 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Aiming",     tier="regular"} },
+                    { id="lvl_reload",   nombre="Recargar bajo Asedio",           desc="Sube tu Reloading 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Reloading",  tier="regular"} },
+                    { id="lvl_firstaid", nombre="Sabiduria del Maestre",          desc="Sube tu First Aid 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="Doctor",     tier="regular"} },
+                    { id="lvl_sblunt",   nombre="Disciplina del Martillo",        desc="Sube tu Short Blunt 1 nivel completo.",
+                      accion={tipo="subir_nivel", perk="SmallBlunt", tier="regular"} },
+                },
+            },
         },
     },
     {
-        id     = "rasgos",
-        nombre = "Rasgos Heroicos",
-        cr=0.95, cg=0.85, cb=0.35,
+        id     = "reliquias",
+        nombre = "Reliquias del Reino",
+        cr=0.95, cg=0.55, cb=0.30,
         items = {
-            -- MAXIMO 1 POR VIDA del personaje
-            -- IDs B42: usar el ENUM CharacterTrait.<NAME> (UPPERCASE_SNAKE)
-            -- Confirmado en server/XpSystem/XpUpdate.lua:209+ (CharacterTrait.STRONG, OUT_OF_SHAPE, etc)
-            -- Precios PROPORCIONADOS al Cost vanilla del trait. Escala objetivo:
-            --   Cost 10 → ~3 Oro | Cost 4 → ~1 Oro | Cost 3 → ~4 Plata | Cost 2 → ~3 Plata
-            { id="trait_strong",   nombre="Bendicion del Gigante",   desc="Da el rasgo STRONG (+fuerza+dano). Cost 10pts. 1 por vida.",
-              precio={gold=3},                      accion={tipo="trait", trait="STRONG"} },
-            { id="trait_athletic", nombre="Sangre del Martir",       desc="Da el rasgo ATHLETIC (+stamina). Cost 10pts. 1 por vida.",
-              precio={gold=3},                      accion={tipo="trait", trait="ATHLETIC"} },
-            { id="trait_brave",    nombre="Espiritu Indomable",      desc="Da el rasgo BRAVE (resistencia al panico). Cost 4pts. 1 por vida.",
-              precio={gold=1, hierro=1},            accion={tipo="trait", trait="BRAVE"} },
-            { id="trait_eagle",    nombre="Ojo de Halcon",           desc="Da el rasgo EAGLE EYED (+vision). Cost 4pts. 1 por vida.",
-              precio={gold=1, hierro=1},            accion={tipo="trait", trait="EAGLE_EYED"} },
-            { id="trait_cats",     nombre="Vista de Gato Salvaje",   desc="Da el rasgo NIGHT VISION (mejor vision nocturna). Cost 3pts. 1 por vida.",
-              precio={silver=4, hierro=2},          accion={tipo="trait", trait="NIGHT_VISION"} },
-            { id="trait_irongut",  nombre="Tripa de Hierro",         desc="Da el rasgo IRON GUT (digestion mejorada). Cost 2pts. 1 por vida.",
-              precio={silver=3, hierro=1},          accion={tipo="trait", trait="IRON_GUT"} },
-        },
-    },
-    {
-        id     = "milagros",
-        nombre = "Milagros del Maestre",
-        cr=0.95, cg=0.45, cb=0.95,
-        items = {
-            -- MAXIMO 1 POR VIDA del personaje. Solo se compra si el player TIENE ese trait.
-            -- IDs B42: usar el ENUM CharacterTrait.<NAME>
-            -- Precios PROPORCIONADOS al abs(Cost) vanilla. Escala objetivo:
-            --   |Cost| 10 → ~3 Oro | 8 → ~2 Oro+1 Ac | 6 → ~2 Oro | 5 → ~1 Oro+2 Ac | 3 → ~4 Pl+2 Ac | 2 → ~2 Pl+1 Hi | 0 → ~2 Pl+1 Hi
-            { id="cura_weak",     nombre="Elixir del Vigor",        desc="Cura el rasgo WEAK. |Cost| 10. 1 por vida.",
-              precio={gold=3},                      accion={tipo="cura_trait", trait="WEAK"} },
-            { id="cura_thinskin", nombre="Piel del Dragon",         desc="Cura el rasgo THIN-SKINNED. |Cost| 8. 1 por vida.",
-              precio={gold=2, acero=1},             accion={tipo="cura_trait", trait="THIN_SKINNED"} },
-            { id="cura_outshape", nombre="Camino del Guerrero",     desc="Cura el rasgo OUT OF SHAPE. |Cost| 6. 1 por vida.",
-              precio={gold=2},                      accion={tipo="cura_trait", trait="OUT_OF_SHAPE"} },
-            { id="cura_asthma",   nombre="Bendicion del Cuervo",    desc="Cura el rasgo ASTHMATIC. |Cost| 5. 1 por vida.",
-              precio={gold=1, acero=2},             accion={tipo="cura_trait", trait="ASTHMATIC"} },
-            { id="cura_hemo",     nombre="Voto de la Guardia",      desc="Cura el rasgo HEMOPHOBIC. |Cost| 5. 1 por vida.",
-              precio={gold=1, acero=2},             accion={tipo="cura_trait", trait="HEMOPHOBIC"} },
-            { id="cura_smoker",   nombre="Aliento del Druida",      desc="Cura el rasgo SMOKER. |Cost| 3. 1 por vida.",
-              precio={silver=4, acero=2},           accion={tipo="cura_trait", trait="SMOKER"} },
-            { id="cura_slowheal", nombre="Bendicion de los Siete",  desc="Cura el rasgo SLOW HEALER. |Cost| 3. 1 por vida.",
-              precio={silver=4, acero=2},           accion={tipo="cura_trait", trait="SLOW_HEALER"} },
-            { id="cura_coward",   nombre="Coraje del Norte",        desc="Cura el rasgo COWARDLY. |Cost| 2. 1 por vida.",
-              precio={silver=2, hierro=1},          accion={tipo="cura_trait", trait="COWARDLY"} },
-            { id="cura_obese",    nombre="Cura de los Siete",       desc="Cura el rasgo OBESE. |Cost| 0 (trait raro). 1 por vida.",
-              precio={silver=2, hierro=1},          accion={tipo="cura_trait", trait="OBESE"} },
-        },
-    },
-    {
-        id     = "lujos",
-        nombre = "Lujos",
-        cr=1.0, cg=0.85, cb=0.30,
-        items = {
-            { id="vino_otono",  nombre="Vino del Otono",            desc="Una botella del mejor vino del Sur. Reduce estres y sube animo.",
-              precio={silver=1},                  accion={tipo="item", item="Base.WineBottle"} },
-            { id="banquete",    nombre="Festin de Invernalia",      desc="Rellena hambre, sed, descanso y estres.",
-              precio={silver=2},                  accion={tipo="restore", stats={"hunger","thirst","fatigue","stress"}} },
-            { id="cure",        nombre="Magia de Asshai",           desc="Cura una mordida zombi (anula la infeccion).",
-              precio={gold=1, obsidiana=1},       accion={tipo="cure_bite"} },
+            -- Ordenado de mas barato a mas caro. Todas son curaciones server-authoritative
+            -- via sendClientCommand("onHealthCheatCurrentPlayer", action="healthFull").
+            { id="balsamo_vidente",  nombre="Balsamo del Vidente",          desc="Cura todos los rasgunyos.",
+              contenido="Cura Rasgunyos",
+              precio={silver=3},                           accion={tipo="reliquia_cura_rasgunyo"} },
+            { id="vendaje_septon",   nombre="Vendaje del Septon",            desc="Detiene TODO sangrado del cuerpo.",
+              contenido="Cura Sangrado",
+              precio={silver=5},                           accion={tipo="reliquia_cura_sangrado"} },
+            { id="astillas_sagradas", nombre="Astillas Sagradas",             desc="Cierra cortes profundos del cuerpo.",
+              contenido="Cura Cortes Profundos",
+              precio={silver=5},                           accion={tipo="reliquia_cura_corte"} },
+            { id="tablilla_maestre", nombre="Tablilla del Maestre",          desc="Cura todas las fracturas.",
+              contenido="Cura Fracturas",
+              precio={gold=1},                             accion={tipo="reliquia_cura_fractura"} },
+            { id="vidriagon_bendito", nombre="Vidriagon Bendito",             desc="Cura mordeduras (sin infeccion zombi - eso solo el Beso del Dios).",
+              contenido="Cura Mordedura",
+              precio={gold=2},                             accion={tipo="reliquia_cura_mordedura"} },
+            { id="beso_dios",        nombre="Beso del Dios de Muchos Rostros", desc="Cura TODA dolencia (mordedura, hambre, sed, fatiga, infeccion). Uso unico por vida.",
+              contenido="Curacion Total",
+              precio={gold=9},                             accion={tipo="reliquia_godmode_flash"} },
         },
     },
     {
         id     = "materiales",
         nombre = "Materiales",
         cr=0.85, cg=0.65, cb=0.40,
-        items = {
-            { id="m_cuero",   nombre="Cuero Curtido",       desc="Para guantes y armaduras ligeras.",
-              precio={bronze=10},  accion={tipo="material", key="Holdoor_Cuero",     amount=1} },
-            { id="m_hierro",  nombre="Hierro del Norte",     desc="Forjado en herrerias del Norte.",
-              precio={bronze=25},  accion={tipo="material", key="Holdoor_Hierro",    amount=1} },
-            { id="m_acero",   nombre="Acero Castellano",     desc="Acero refinado, para armaduras de elite.",
-              precio={silver=1},   accion={tipo="material", key="Holdoor_Acero",     amount=1} },
-            { id="m_valyrio", nombre="Acero Valyrio",        desc="Forjado con fuego de dragones. Irrepetible.",
-              precio={gold=1},     accion={tipo="material", key="Holdoor_Valyrio",   amount=1} },
-            { id="m_obsid",   nombre="Vidrio de Dragon",     desc="La sustancia que cura toda mordida.",
-              precio={gold=1},     accion={tipo="material", key="Holdoor_Obsidiana", amount=1} },
+        subcategorias = {
+            {
+                id = "holdoor", nombre = "Holdoor",
+                items = {
+                    { id="m_cuero",   nombre="Cuero Curtido",       desc="Para guantes y armaduras ligeras.",
+                      contenido="+1 Cuero",
+                      precio={bronze=10},  accion={tipo="material", key="Holdoor_Cuero",     amount=1} },
+                    { id="m_hierro",  nombre="Hierro del Norte",     desc="Forjado en herrerias del Norte.",
+                      contenido="+1 Hierro",
+                      precio={bronze=25},  accion={tipo="material", key="Holdoor_Hierro",    amount=1} },
+                    { id="m_acero",   nombre="Acero Castellano",     desc="Acero refinado, para armaduras de elite.",
+                      contenido="+1 Acero",
+                      precio={silver=1},   accion={tipo="material", key="Holdoor_Acero",     amount=1} },
+                    { id="m_valyrio", nombre="Acero Valyrio",        desc="Forjado con fuego de dragones. Irrepetible.",
+                      contenido="+1 Valyrio",
+                      precio={gold=1},     accion={tipo="material", key="Holdoor_Valyrio",   amount=1} },
+                    { id="m_obsid",   nombre="Vidrio de Dragon",     desc="La sustancia que cura toda mordida.",
+                      contenido="+1 Obsidiana",
+                      precio={gold=1},     accion={tipo="material", key="Holdoor_Obsidiana", amount=1} },
+                },
+            },
+            {
+                id = "comunes", nombre = "Comunes",
+                items = {
+                    { id="mc_plank",    nombre="Tabla de Madera",       desc="Para construir paredes y barricar.",
+                      contenido="Tabla x1",
+                      precio={bronze=5},   accion={tipo="item", item="Base.Plank"} },
+                    { id="mc_nails",    nombre="Pack de Clavos",        desc="Clavos para carpinteria. 10 unidades.",
+                      contenido="Clavos x10",
+                      precio={bronze=8},   accion={tipo="package", items={"Base.Nails","Base.Nails","Base.Nails","Base.Nails","Base.Nails","Base.Nails","Base.Nails","Base.Nails","Base.Nails","Base.Nails"}} },
+                    { id="mc_log",      nombre="Tronco",                desc="Material crudo para construccion pesada.",
+                      contenido="Tronco x1",
+                      precio={bronze=10},  accion={tipo="item", item="Base.Log"} },
+                    { id="mc_sheetmetal", nombre="Chapa Metalica",      desc="Para reforzar puertas y ventanas.",
+                      contenido="Chapa Metalica x1",
+                      precio={bronze=15},  accion={tipo="item", item="Base.SheetMetal"} },
+                    { id="mc_wire",     nombre="Cable de Acero",        desc="Para vallas y craft.",
+                      contenido="Cable x1",
+                      precio={bronze=10},  accion={tipo="item", item="Base.Wire"} },
+                    { id="mc_metalbar", nombre="Barra de Metal",        desc="Para forja y construccion pesada.",
+                      contenido="Barra Metal x1",
+                      precio={bronze=15},  accion={tipo="item", item="Base.MetalBar"} },
+                },
+            },
         },
     },
 }
@@ -283,12 +443,91 @@ function HoldoorShopCatalog.precioStr(precio)
     return table.concat(parts, " + ")
 end
 
--- Busca un item del catalogo por categoria y id
+-- ════════════════════════════════════════════════════════════════════════════
+-- PRECIOS POR NIVEL OBJETIVO (sistema "vender niveles" para Libros de Guerra)
+-- ════════════════════════════════════════════════════════════════════════════
+-- El item del catalogo con accion={tipo="subir_nivel", perk=X, tier="regular"|"pasiva"}
+-- NO tiene precio fijo. El precio se calcula en cliente leyendo el nivel actual del
+-- player y consultando esta tabla con el nivel OBJETIVO (actual + 1).
+--
+-- Razon:
+--   - Skills regulares (Aiming, LongBlade, etc): total a nivel 10 = 32,775 XP
+--   - Skills pasivas (Fitness, Strength):        total a nivel 10 = 487,500 XP (~15x)
+--   - Si todo costara lo mismo, comprar Strength seria irrelevante. La tabla "pasiva"
+--     refleja el valor real de subir Fitness/Strength (mucho mas dificil de subir).
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- Display names en castellano para los perks (igual al panel Habilidades del juego).
+-- En la UI de Maestrias mostramos este nombre amigable en lugar del slug tecnico.
+HoldoorShopCatalog.perkDisplayName = {
+    Fitness     = "Estado Fisico",
+    Strength    = "Fuerza",
+    Sprinting   = "Carrera",
+    Nimble      = "Destreza",
+    Lightfoot   = "Pies Ligeros",
+    Sneak       = "Sigilo",
+    LongBlade   = "Arma de Hoja Larga",
+    SmallBlade  = "Arma de Hoja Corta",
+    Axe         = "Hacha",
+    Blunt       = "Arma Larga Contundente",
+    SmallBlunt  = "Arma Corta Contundente",
+    Spear       = "Lanza",
+    Maintenance = "Mantenimiento",
+    Aiming      = "Punteria",
+    Reloading   = "Recarga",
+    Doctor      = "Primeros Auxilios",
+}
+
+function HoldoorShopCatalog.perkLabel(slug)
+    if not slug then return "?" end
+    return (HoldoorShopCatalog.perkDisplayName and HoldoorShopCatalog.perkDisplayName[slug]) or slug
+end
+
+-- Tasa LINEAL precio = funcion(xpFaltante). Ajustada empiricamente.
+-- Equivalencias: 50 Bronce = 1 Plata, 30 Plata = 1 Oro.
+-- Mostramos precio en Plata por defecto. Si supera ciertos umbrales, mostramos en Oro.
+--
+-- Tasa regular: 1 Plata por cada 500 XP (Opcion A x2 lockeada 2026-06-16).
+-- Tasa pasiva:  1 Plata por cada 250 XP (2x mas caro por unidad porque cada XP
+--               pasivo "vale" mas — Fitness/Strength son 15x mas dificiles de subir
+--               naturalmente, una unidad XP de ellas es mas valiosa).
+HoldoorShopCatalog.tasaPorXP = {
+    regular = { xpPorPlata = 500 },
+    pasiva  = { xpPorPlata = 250 },
+}
+
+-- Calcula el precio para subir 1 nivel dado xpFaltante y tier.
+-- Devuelve precio en formato { silver = N, gold = M, ... }
+-- Si el precio en plata supera 30, lo convierte automaticamente a oro (1 Oro = 30 Plata).
+function HoldoorShopCatalog.precioPorXP(tier, xpFaltante)
+    local cfg = HoldoorShopCatalog.tasaPorXP[tier or "regular"]
+    if not cfg then return { silver = 3 } end
+    local platas = math.max(3, math.ceil((xpFaltante or 0) / cfg.xpPorPlata))
+    if platas >= 30 then
+        local oros = math.floor(platas / 30)
+        local resto = platas - (oros * 30)
+        if resto > 0 then
+            return { gold = oros, silver = resto }
+        end
+        return { gold = oros }
+    end
+    return { silver = platas }
+end
+
+-- Busca un item del catalogo por categoria y id.
+-- Soporta categorias con items directos (cat.items) o con sub-categorias (cat.subcategorias).
 function HoldoorShopCatalog.buscar(categoriaId, itemId)
     for _, cat in ipairs(HoldoorShopCatalog.categorias) do
         if cat.id == categoriaId then
-            for _, it in ipairs(cat.items) do
+            -- buscar en items directos
+            for _, it in ipairs(cat.items or {}) do
                 if it.id == itemId then return it end
+            end
+            -- buscar en sub-categorias
+            for _, sub in ipairs(cat.subcategorias or {}) do
+                for _, it in ipairs(sub.items or {}) do
+                    if it.id == itemId then return it end
+                end
             end
         end
     end
