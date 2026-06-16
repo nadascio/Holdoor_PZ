@@ -489,3 +489,225 @@ Nueva cascada en `esAdmin()`:
 **Validado in-game por Nahuel:** F10 y `/holdoor` funcionan correctamente en MP hosted. El log muestra `[Holdoor] esAdmin: detectado como CoopHost → admin OK`.
 
 **Estado v0.5.1 al cierre real:** completamente listo para subir a Steam Workshop. Mañana arrancamos Sprint v0.6.
+
+---
+
+## Sprint v0.6 — Modelo C híbrido (timer + target kills) + Cúmulos + Drops live (2026-06-15)
+
+**Contexto:** sprint de refactor mayor del motor de oleadas. Pasamos del modelo "total fijo de zombies por oleada" (v0.5) al modelo C híbrido (v0.6): cada oleada dura T segundos con stream continuo de zombies. Cierre por target kills (cierre limpio +25%) o por timer (sobreviviste, recompensa base) o trono cae (game over). Elimina el "zombie hunting" final.
+
+**Resumen de cierre:** modelo C funcional + drops live por kill + cúmulos de zombies. Sin testing exhaustivo en los 4 modos (solo TEST y Normal probados a fondo). 5 pendientes anotados para próxima sesión.
+
+### Cambios clave (orden temporal)
+
+**1) Refactor del motor de oleadas**
+- `_lanzarOleada` reescrito: lee `modosV6` (mults duración/spawn/kills/recompensa) + `oleadasV6` (curva base por # oleada).
+- `_spawnTick` reemplaza `_spawnTanda`: spawn continuo con curva lerp(spawnInicio→spawnFin) según progreso temporal.
+- `_chequearCierreOleada`: cierre por kills >= target (CIERRE LIMPIO, flag `cierreLimpio=true`) o por timer (`elapsed >= duracionSeg`).
+- `onZombieMuerto` simplificado: incrementa `oleadaKills`, dispara `_rollDropsPorKill`. Sin `zombiesRestantes` (no existe en modelo C).
+- Eliminado del flow: `_asegurarColchon`, `encoladosTiers`, `_spawnTanda`, counter "Zombis X/Y".
+
+**2) Config v0.6 en HoldoorConfig.lua**
+- `modosV6` con mults por modo (fácil 0.8× / normal 1.0× / difícil 1.1× / pesadilla 1.2× duración).
+- `oleadasV6` con 12 entradas de curva base (8 normales + 4 extras para difícil/pesadilla).
+- `pausaOleadasSegV6 = 30s` (TEST: 5s override).
+- `cierreLimpioBonus = 0.25` (+25% recompensa).
+- `aggroIntervalSec/Radio/Volumen` para aggro sostenido.
+- `dropPorKillBase` (chances bronce/plata/oro/item por kill).
+- `dropMultPorModoV6` (multiplicadores por dificultad).
+- `dropMaterialesPorKillBase` (Cuero 5% / Hierro 2% / Acero 1% / Valyrio 0.1% / Obsidiana 0.1%).
+- `recompensaFinOleadaMultV6 = 0.60` (rebalance — kills dan monedas live, fin oleada baja al 60%).
+
+**3) Cúmulos (sistema clave por feedback de Nahuel)**
+- Spawn perdigonado (1 zombi por tick) era anti-climático y los zombies venían lentos en hilera.
+- Refactor: `_spawnTick` ahora spawnea **grupos de 2-5 zombies juntos** en tiles adyacentes alrededor del ángulo elegido. Comparten destino. Se sienten como horda real.
+- Cluster apretado: offset random -2 a +2 alrededor del centro del cúmulo.
+- Cada cúmulo arranca con sonido localizado (`addSound`) para reforzar agresividad.
+
+**4) Aggro real (combinación 2 mecanismos)**
+- `_aggroSostenido` cada 4s: hace `addSound(nil, baseX, baseY, baseZ, radio=120, vol=200)` (atrae lejos) + llama `_reAggroZombies` (path explícito de cercanos).
+- `_reAggroZombies` (recuperado del modelo viejo): itera IsoZombies cercanos al cell y fuerza `pathToLocation(destX, destY, destZ)` hacia tile cerca del Trono.
+- `addSound` solo no alcanza en B42 (zombies pasivos). El `pathToLocation` explícito garantiza agresividad.
+- Print diagnóstico en aggro: `[Holdoor] AGGRO sound radio=X vol=Y ok=true/false`.
+
+**5) Drops por kill (live)**
+- `_rollDropsPorKill` en cada `onZombieMuerto`:
+  - **Bronce** (silencioso, `player:Say` sobre cabeza): 20-35% chance escalado por modo.
+  - **Plata** (toast amarillo + Say): 2-12% chance.
+  - **Oro** (toast dorado épico + sonido `LevelPerk`): 0.1-3% chance.
+  - **Item raro** (toast violeta + sonido): 0.3-2% chance, validado con `InventoryItemFactory.CreateItem` antes de notificar (evita toasts fantasma de items que no existen en B42).
+  - **Materiales** (Cuero/Hierro/Acero/Valyrio/Obsidiana): 5/2/1/0.1/0.1% chance escalado por modo. Solo 1 material por kill (si cae Cuero, no rolea más raros).
+- Drops sobre la cabeza del personaje vía `player:Say()` además del toast superior.
+
+**6) HUD nuevo modelo C**
+- Reemplaza "Zombis X/Y" por:
+  - `⏱ Tiempo: 2:34` (countdown del timer)
+  - `Kills: 23 / 50` (vs target)
+- Header en oleada activa: `OL.3 NOR 23/50` (kills vs target en vez de zombies vivos).
+- `lblFzaHUD` durante pausa/preparación: muestra `Siguiente: ~X kills` (target de oleada N+1).
+- Refresh cada 1s durante fase activa (antes era cada 2s — segundero saltaba de a 2).
+- Radar deshabilitado (`mostrarRadar = false` hardcoded — código comentado, no eliminado).
+
+**7) Anuncios**
+- Frases épicas (Valar Morghulis) movidas al toast superior (antes player:Say sobre cabeza se tapaba).
+- Toast `HoldoorToast.mostrar` con duración 3s + fade in/out.
+- Toast de CIERRE LIMPIO en pausa: `"CIERRE LIMPIO! +25% recompensa (X/Y kills)"` + sonido.
+- Cartel grande centrado `HoldoorAnnounce` se mantiene para OLEADA inicio/completada y eventos épicos (ÚLTIMA OLEADA, VICTORIA, TRONO CAÍDO).
+
+**8) Botón "Quitar base/Trono" mantenido**
+- Layout panel F10 reorganizado en 2 columnas:
+  - Marcar mi base | Quitar base / Trono (acciones de base)
+  - INICIAR OLEADAS | DETENER OLEADAS (control oleadas)
+  - Forzar oleada (full ancho, secundario)
+- Modal de confirmación al Quitar (destruye IsoThumpable + resetea ModData).
+
+**9) HP Trono reset al iniciar nueva instancia**
+- Cuando `HoldoorServer.iniciar()` corre, antes de empezar oleadas: itera piezas del Trono y `setHealth(maxHP)`. Cada nueva sesión arranca con Trono full.
+
+**10) HP Trono rebalanceado** (feedback de Nahuel: 1000-1500 era demasiado, los zombies no podían romperlo nunca)
+- Fácil: 1500 → 600
+- Normal: 1250 → 500
+- Difícil: 1100 → 400
+- Pesadilla: 1000 → 300
+
+**11) radioSpawn default = 15 tiles** (eran 20-30, los zombies tardaban mucho en llegar)
+- Cambio en los 5 modos del config.
+- Slider del panel F10 sigue ajustable por user (10-100).
+- Spawn real = `radioSpawn + 5` (al borde del círculo del user).
+
+**12) Speed = 2 (Fast Shamblers, NO Sprinters)**
+- Speed 1 = Sprinters BUGGY en B42 (no pathean bien).
+- Speed 2 = Fast Shamblers (caminan rápido, lo correcto).
+- Sprinter sigue siendo speed=3 cuando es corredor.
+
+**13) Fix bug clave: kills/monedas no contaban durante limpieza pre-oleada**
+- Antes: `_zombiesIgnorarN` contaba "próximas N muertes a ignorar". Pero `OnZombieDead` es async → si user mataba zombies mientras la limpieza estaba procesándose, sus kills se "absorbían" por el contador.
+- Fix: cambiado a sistema por TIEMPO (`_zombiesIgnorarHasta = os.time() + 2`). Ventana de 2s post-limpieza, después todo cuenta.
+- Mismo fix en cliente: `_killsIgnorarHasta`.
+
+**14) Bug del `estado.modoId` que nunca se asignaba**
+- `_lanzarOleada` leía `estado.modoId` que era nil → fallback a "normal" siempre.
+- Modo TEST se trataba como Normal → target 30 en lugar de 9.
+- Fix: leer de `estado.config.modoId` que SÍ se asigna en `iniciar()`.
+
+**15) Bug crash al CIERRE LIMPIO**
+- En cliente, `pcall(function() getSoundManager():PlayUISound("LevelPerk") end)` crasheaba con "Object tried to call nil in pcall" (gotcha #18: kahlua no atrapa este error).
+- Fix: usar la helper `playUISound("LevelPerk")` ya definida (con check `soundsEnabled` + pcall propio).
+
+**16) HUD label "Siguiente" actualizado para modelo C**
+- Antes calculaba con `tamanoOleada * escala` (lógica vieja).
+- Ahora lee `oleadasV6[N+1].targetKills × multKills` del modo.
+- Texto: `"Siguiente: ~50 kills"` en vez de `"Siguiente: ~11 zombis"`.
+
+### Pendientes que quedaron sin atacar (próxima sesión)
+
+1. **Crawlers/Arrastradores funcionan mal** (oleada 2 TEST con `setCrawler(true)` hardcoded del modelo viejo).
+2. **Modo TEST: composición especial por oleada** (oleada 1 lentos / 2 arrastradores / 3 rápidos). En modelo C todas siguen `pctCorredores` que es 0% en TEST.
+3. **Bug "llega al target y no termina la oleada"** — Nahuel lo reportó pero capaz era confusión visual. Por confirmar.
+4. **Drops de items: validar variedad real** — Nahuel pidió y armé pool ampliado pero falta test casual en partida larga.
+5. **Drops de monedas: bajar cantidad** — Nahuel dijo "demasiado, pero por ahora dejalo así". Para rebalancear después.
+6. **Textos sobre la cabeza tapándose** — estético, no urgente.
+7. **MP host detection vía `isCoopHost`** — funcionó vos solo, falta testear cliente remoto (amigo).
+
+### Aprendizajes técnicos / gotchas nuevos
+
+- **speed=1 en B42 son Sprinters (BUGGY)** — no usar para zombies "rápidos pero no sprinters". Usar speed=2 (Fast Shamblers) que es el equivalente al "caminar rápido". Documentado en gotcha #24.
+- **`estado.modoId` no se asigna en este mod** — el modo vive en `estado.config.modoId` solo. Cualquier código que necesite el modo debe leerlo de ahí.
+- **`pcall(function() getSoundManager():PlayUISound(...) end)` puede crashear igual** — kahlua no atrapa "Object tried to call nil". Usar siempre helper `playUISound()` que tiene guard + pcall propio.
+- **Spawn perdigonado vs cúmulos** — feedback de UX importante: spawnear 1 zombi a la vez se siente débil. Cúmulos de 2-5 juntos con destino compartido cambia completamente la sensación de "horda".
+- **`addSound` solo no alcanza para agresividad sostenida** — combinarlo con `pathToLocation` explícito vía `_reAggroZombies` cada 4-5s.
+- **Eventos `OnZombieDead` son ASYNC** — al usar `setHealth(0)`, los eventos no son instantáneos. Usar ventanas de tiempo (no contadores) para sincronización.
+
+### Estado al cierre
+
+Mod funcional en SP modo TEST y Normal. HP Trono rebalanceado. Drops live funcionando. Cúmulos visiblemente mejorados. Pendientes documentados para próxima sesión.
+
+**NO testeado:** Difícil, Pesadilla, MP cliente remoto, comportamiento de crawlers, drops de materiales raros (Valyrio/Obsidiana en sesión real).
+
+**Versión:** 0.6-dev (mod.info sigue en 0.5.1, se actualiza al cerrar sprint).
+
+---
+
+## Sprint v0.6.1 — Whitelist items + fix CRÍTICO mouse passthrough + drag del HUD restaurado (2026-06-15)
+
+Sprint correctivo encadenado al v0.6 después del crash + bug crítico del inventario vanilla bloqueado por overlays del mod.
+
+### Contexto
+
+Después de mergear v0.6, al testear drops por kill apareció un **crash al matar zombies** (item inválido en pool de drops + `pcall` no atrapando excepción Java). Al resolver eso, el user reportó un **bug críticamente más severo**: el inventario vanilla de PZ no scrolleaba, no mostraba tooltips al hacer hover, ni respondía al click derecho en la scrollbar. Funcionalidad core del juego rota por culpa de nuestros overlays. **El user lo calificó de "atrocidad" y "obligatorio fixearlo".**
+
+### Implementación — 5 ejes
+
+#### 1. Pool de items 100% validado contra B42 vanilla
+
+**Antes:** pool de 26 items, varios con nombres inventados/desactualizados (`Base.WaterBottleFull`, `Base.WineBottle`, `Base.Shotgun_Shells`, `Base.223Bullets`, `Base.Hat_Hardhat`, `Base.Vest_HighVis_Blue`).
+
+**Ahora:** pool de 52 items, **uno por uno grepeado** contra `C:/Program Files (x86)/Steam/steamapps/common/ProjectZomboid/media/scripts/generated/items/{food,weapon,clothing,literature,normal,drainable,container}.txt`. Categorías: medico (10), comida (10), herramientas (7), municion (5), libros (6), ropa (6), tesorosGoT (8 — armas vanilla con estética GoT: Katana, CrudeSword, WoodAxe, etc).
+
+#### 2. Botón TEST de validación batch en panel admin
+
+`[TEST] DARME TODOS LOS ITEMS DEL POOL` en HoldoorUI.lua. Itera el pool entero, intenta cada item con `getScriptManager():FindItem()` + `inv:AddItem()` bajo pcall, loguea ✅/❌ por item, halo note final con resultado. **No corta si alguno falla**, sigue la tirada completa. Test confirmó 52/52 OK en build actual de B42.
+
+#### 3. Safety net en runtime para items inválidos
+
+Reemplazado `InventoryItemFactory.CreateItem()` (tira excepción Java que escapa pcall) por `getScriptManager():FindItem()` (devuelve `nil` limpio) en `_rollDropsPorKill`. Gotcha #30 lockeado.
+
+#### 4. Items "fantasma" — chances bajadas + notificación de botín
+
+**Bug encontrado:** `_distribuirRecompensaOleada` entregaba ~14 items por oleada en Normal **sin notificación**. El jugador veía el inventario lleno sin saber cuándo le llegaron.
+
+**Fix:**
+- `rarezaChances` bajadas: 40/18/6/1.5 → **10/5/2/0.5** (target ~3-5 items/oleada en Normal).
+- Cliente muestra al cierre de oleada `Botín: 2x Bandage, 1x Sword, ...` en chat + toast.
+
+#### 5. FIX CRÍTICO — mouse passthrough roto (la batalla larga)
+
+**Descubrimiento clave:** en B42, `setWantMouseEvents(false)` por sí solo NO basta para que un panel sea ignorado del hit-test del mouse de Java. Necesita ADEMÁS uno de estos dos:
+- `setVisible(false)` → ignorado completamente
+- Rect chico (NO fullscreen) → solo bloquea su propia zona
+
+La gotcha #21 vieja decía que `setWantMouseEvents(false)` era la API real. Esa info era **incompleta**. Se rescribe en gotcha #29 (supersede).
+
+**Diagnóstico iterativo:** se agregaron teclas F11/F12/F9/F8/F7/F6 que toggleaban cada overlay individualmente con `removeFromUIManager`. Después de varias rondas el patrón apareció: los overlays con `setVisible(true)` permanente bloqueaban; el único que NO bloqueaba era `HoldoorAnnounce` porque arrancaba `setVisible(false)`.
+
+**Trampa cazada:** los propios mensajes de TEST (`HoldoorClient.chat`) disparaban `HoldoorToast` que hacía `setVisible(true)` y se sumaba al problema. Cambiar diagnósticos a `player:Say()` evitó el falso positivo.
+
+**Fix aplicado a cada overlay:**
+
+| Overlay | Antes | Fix |
+|---|---|---|
+| `HoldoorOverlay` (fullscreen invisible, base+cruz) | siempre setVisible(true) | arranca setVisible(false), activado al abrir panel admin con base marcada |
+| `HoldoorOverlayTrono` (fullscreen, dibuja sprite trono) | siempre setVisible(true) | rect chico reposicionado cada frame al área exacta del trono (180×270 px). Coords relativas (0,0) en drawTextureScaled. Tick de 0.5s activa/desactiva según haya trono en el mundo. |
+| `HoldoorHUD` lateral | rect chico siempre, fue refactoreado en sub-zonas (paranoia previa) | mantenido refactor + drag custom en `headerZone` (clase `HoldoorHUDDragZone`) que mueve el HUD parent al arrastrar. |
+| `HoldoorAnnounce`, `HoldoorToast` | ya tenían setVisible(false) por default | (sin cambios — el #31 documenta el comportamiento) |
+
+**Caso edge — sprite del trono pegado al borde:** cuando el player se aleja, el trono sale del viewport e `IsoUtils.XToScreen` devuelve coords clampeadas al borde → sprite "flotando" en esquina. Fix: detectar fuera-de-viewport y achicar rect a 1×1 en (0,0) sin dibujar (gotcha #33).
+
+### Gotchas nuevos documentados
+
+- **#29 (CRÍTICO, SUPERSEDE #21):** `setWantMouseEvents(false)` + `setVisible(true)` + rect fullscreen → bloquea el inventario igual.
+- **#30:** `pcall` no atrapa excepciones Java en B42. Usar `getScriptManager():FindItem()` para validar items.
+- **#31:** `HoldoorClient.chat()` dispara Toast internamente. Para diagnósticos usar `player:Say()`.
+- **#32:** Items "fantasma" — auditar todas las vías de `_distribuirItems` que NO notifiquen al cliente.
+- **#33:** `IsoUtils.XToScreen` para objeto fuera del viewport → sprite pegado al borde. Achicar rect a 1×1.
+- **#34:** Patrón de diagnóstico con F-keys toggle individual por overlay.
+
+### Aprendizajes
+
+1. **`setWantMouseEvents(false)` es necesario pero NO suficiente en B42.** Siempre verificar `setVisible(false)` por default o rect chico para overlays que no estén renderizando algo concreto en ese momento.
+2. **Auditar SIEMPRE todas las vías que entregan items al inventario.** Una vía sin notificación crea bug "items fantasma".
+3. **Validar items contra `media/scripts/generated/items/*.txt` del juego** antes de meterlos en el pool. Asumir naming es peligroso (Hat_Hardhat ≠ Hat_HardHat).
+4. **Diagnósticos no deben usar el mismo canal que diagnostican.** Si estamos cazando Toast, los mensajes de TEST NO pueden disparar Toast.
+5. **Diagnóstico iterativo con teclas individuales** > tirar fixes a ciegas. Cada F-key acotó el culpable en 1 minuto de test.
+
+### Estado al cierre
+
+✅ Inventario vanilla funcionando 100% (scroll, hover, tooltips, scrollbar drag)
+✅ Drops por kill no crashean
+✅ Items "fantasma" notificados al cierre de oleada
+✅ HUD lateral movible (drag restaurado)
+✅ Sprite del trono no queda pegado al borde
+
+**Pendiente menor:** `HoldoorToast` cuando aparece (3s) bloquea inventario en esa zona. Si lo confirmamos como molesto en partida real, aplicar mismo approach que Trono (rect chico solo del cuadrito arriba, ~600×80 px en lugar de fullscreen).
+
+**Versión:** 0.6.1-dev (cerrado, mod.info pendiente bump).

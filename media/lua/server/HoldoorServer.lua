@@ -45,7 +45,22 @@ function HoldoorServer.init()
     for k, v in pairs(HoldoorConfig.defaults) do
         HoldoorServer.estado.config[k] = v
     end
-    print("[Holdoor] Servidor inicializado v" .. HoldoorConfig.VERSION)
+    -- v0.6.2: reset COMPLETO del estado en cada carga de mundo. Sin esto, si el usuario juega
+    -- SP y despues abre MP hosted en el mismo proceso PZ (sin cerrar el cliente), el estado
+    -- residual del SP previo (estado.activo=true, ownerUsername=X) hace que el server real
+    -- rechace el iniciar con "Ya hay oleadas activas iniciadas por X".
+    -- HoldoorServer.estado es global del modulo Lua → persiste entre cargas de mundo dentro
+    -- del mismo proceso PZ. OnGameStart se dispara en cada mundo pero antes init() solo
+    -- reseteaba config.
+    HoldoorServer.estado.activo         = false
+    HoldoorServer.estado.fase           = "inactivo"
+    HoldoorServer.estado.ownerUsername  = nil
+    HoldoorServer.estado.oleadaActual   = 0
+    HoldoorServer.estado.killsOleada    = {}
+    HoldoorServer.estado.killsTotal     = {}
+    HoldoorServer.estado.baseDefinida   = false
+    HoldoorServer.estado.encoladosTiers = {}
+    print("[Holdoor] Servidor inicializado v" .. HoldoorConfig.VERSION .. " — estado reseteado")
     print("[Holdoor] addZombiesInOutfit disponible: " .. tostring(type(addZombiesInOutfit) == "function"))
     local sandboxOK = SandboxVars ~= nil and SandboxVars.ZombieConfig ~= nil
     print("[Holdoor] Control velocidad zombies: " .. (sandboxOK and ("DISPONIBLE (Speed=" .. tostring(SandboxVars.ZombieConfig.Speed) .. ")") or "NO DISPONIBLE"))
@@ -95,6 +110,40 @@ function HoldoorServer.iniciar(jugador, config)
     estado.oleadaActual = 0
     estado.killsOleada  = {}
     estado.killsTotal   = {}
+
+    -- v0.6.1: registrar participantes activos (vivos + en zona) para detectar derrota
+    -- por muerte total. Cuando todos mueren / se desconectan → oleada se da por perdida.
+    estado.participantes = {}   -- { [username] = true }
+    pcall(function()
+        local ok, ps = pcall(getOnlinePlayers)
+        if ok and ps then
+            local oks, np = pcall(function() return ps:size() end)
+            if oks and np then
+                for i = 0, np - 1 do
+                    local okp, p = pcall(function() return ps:get(i) end)
+                    if okp and p then
+                        local u
+                        pcall(function() u = p:getUsername() end)
+                        if u then estado.participantes[u] = true end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- v0.6 fix: resetear HP del Trono al iniciar nueva instancia. Sino conserva HP
+    -- residual de la sesion anterior (ej. termina test con 1200/1500 → arranca normal con 1200).
+    if estado.trono and estado.trono.piezas then
+        local maxHpTrono = estado.trono.maxHP or 1500
+        for _, p in ipairs(estado.trono.piezas) do
+            if p and p.obj then
+                pcall(function() p.obj:setHealth(maxHpTrono) end)
+            end
+        end
+        estado.tronoHP = maxHpTrono
+        HoldoorServer.notificarTodos("tronoHP", { hp = maxHpTrono, maxHp = maxHpTrono })
+        print(string.format("[Holdoor] HP Trono reseteado a %d/%d al iniciar nueva instancia", maxHpTrono, maxHpTrono))
+    end
 
     print("[Holdoor] Iniciado por " .. jugador:getUsername() .. " | Jugadores: " .. numPlayers .. " | Mult: x" .. mult)
     HoldoorServer.notificarTodos("iniciado", {
@@ -219,40 +268,36 @@ end
 
 -- Ejecuta la accion del item (item, package, xp, restore, cure_bite).
 -- Devuelve true si pudo ejecutar, false si hubo error.
+-- v0.6.1: en MP los items se entregan via comando al cliente "darItem" porque
+-- InventoryItemFactory.CreateItem es null en server-side context (gotcha 2026-06-16) y
+-- AddItem(string) server-side crea items "fantasma" no equipables. El cliente local
+-- hace el AddItem con su propio inventario sincronizado.
 local function ejecutarAccion(jugador, accion)
     if not accion or not accion.tipo then return false end
 
     if accion.tipo == "item" then
-        local inv = jugador:getInventory()
-        if not inv then return false end
-        local ok = pcall(function() inv:AddItem(accion.item) end)
-        return ok
+        -- v0.6.1 fix MP definitivo: en MP hosted, sendClientCommand al host local NO llega
+        -- (PZ engine no rutea loopback). Y llamar onComandoServidor directo ejecuta en
+        -- server-context donde InventoryItemFactory es null. Solucion: ejecutarAccion solo
+        -- COBRA (las monedas/materiales ya se restaron antes de llamar a esta funcion).
+        -- La ENTREGA del item la hace HoldoorClient.comprar despues de que server confirme,
+        -- en cliente-context puro donde InventoryItemFactory existe.
+        return true
 
     elseif accion.tipo == "package" then
-        local inv = jugador:getInventory()
-        if not inv then return false end
-        local any = false
-        for _, itemName in ipairs(accion.items or {}) do
-            local ok = pcall(function() inv:AddItem(itemName) end)
-            if ok then any = true end
-        end
-        return any
+        -- Idem: el cliente entrega el package despues del cobro server-side.
+        return true
 
     elseif accion.tipo == "xp" then
         -- En B42, Perks.FromString puede devolver nil para algunos nombres (Strength, etc).
         -- Fallback: probar acceso directo Perks[name].
         local ok = false
-        pcall(function()
-            local perk = Perks.FromString(accion.perk)
-            if not perk then perk = Perks[accion.perk] end
-            if perk then
-                jugador:getXp():AddXP(perk, accion.amount or 0)
-                ok = true
-            else
-                print("[Holdoor] xp FAIL: perk '" .. tostring(accion.perk) .. "' no encontrado")
-            end
-        end)
-        return ok
+        -- v0.6.1 fix MP: el AddXP server-side se sobreescribe por el cliente cada vez que
+        -- syncea (XP sube 1 nivel y vuelve a bajar). Solucion: NO hacer AddXP aca, dejar
+        -- que HoldoorClient.comprar lo haga en cliente-context puro despues del cobro.
+        -- Mismo patron que items (drop al piso) — el AddXP cliente-side sincroniza al
+        -- server automaticamente sin ser sobreescrito.
+        return true
 
     elseif accion.tipo == "restore" then
         -- En B42 los stats se setean via getStats():set(CharacterStat.X, value).
@@ -475,6 +520,53 @@ function HoldoorServer._comprar(jugador, args)
 end
 
 -- Entrega monedas a todos los jugadores y les avisa por cliente para que actualicen el HUD.
+-- v0.6.1: helper reutilizable. Busca a un player con privilegios admin online.
+-- Comprueba: (1) accessLevel "admin" explicito, (2) en SP/MP hosted, el primer player
+-- online (que es el host) tiene privilegios admin implicitos via CoopHost.
+-- Devuelve IsoPlayer o nil.
+function HoldoorServer._buscarHostAdmin()
+    local ok, players = pcall(getOnlinePlayers)
+    if not ok or not players then return nil end
+    local ok2, n = pcall(function() return players:size() end)
+    if not ok2 or not n or n == 0 then return nil end
+
+    -- Pasada 1: buscar accessLevel "admin" explicito
+    for i = 0, n - 1 do
+        local ok3, p = pcall(function() return players:get(i) end)
+        if ok3 and p then
+            local lvl
+            pcall(function() lvl = p:getAccessLevel() end)
+            if lvl == "admin" then return p end
+        end
+    end
+
+    -- Pasada 2 (fallback hosted): devolver el primer player online.
+    -- En MP hosted ES el host (que tiene privilegios admin via CoopHost aunque
+    -- getAccessLevel devuelva "" o "none"). En dedicated sin admin real, el comando
+    -- /additem fallara, pero al menos no devolvemos nil sin intentarlo.
+    local ok3, p = pcall(function() return players:get(0) end)
+    if ok3 and p then return p end
+    return nil
+end
+
+-- v0.6.1: helper para entregar items via comando /additem admin (mismo patron que tienda).
+-- El item entra DIRECTO al inventario del target, equipable y legitimo. Usar para drops
+-- por kill / recompensa fin oleada / cualquier flow que entregue items en MP.
+function HoldoorServer._entregarItemsViaAdmin(targetUsername, items)
+    if not targetUsername or not items or #items == 0 then return false end
+    local hostAdmin = HoldoorServer._buscarHostAdmin()
+    if not hostAdmin then
+        print("[Holdoor] _entregarItemsViaAdmin WARN: no hay admin online para " .. tostring(targetUsername))
+        return false
+    end
+    pcall(function()
+        sendServerCommand(hostAdmin, HoldoorConfig.MODULE, "ejecutarAddItem", {
+            target = targetUsername, items = items,
+        })
+    end)
+    return true
+end
+
 function HoldoorServer._distribuirMonedas(bronze, silver, gold)
     if (bronze or 0) <= 0 and (silver or 0) <= 0 and (gold or 0) <= 0 then return end
 
@@ -544,6 +636,15 @@ function HoldoorServer.detenerPorLimite(ultBonusSilver, ultBonusGold)
     estado.activo            = false
     estado.fase              = "inactivo"
     estado.zombiesRestantes  = 0
+
+    -- v0.6: limpiar zombies cercanos al ganar la partida (sino siguen viniendo los
+    -- spawneados durante la ultima oleada y se acumulan ~40 zombies encima del player).
+    if estado.baseDefinida then
+        local eliminados = HoldoorServer._limpiarZona()
+        if eliminados and eliminados > 0 then
+            HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminados })
+        end
+    end
 
     local oleadas = estado.oleadaActual
 
@@ -696,69 +797,247 @@ function HoldoorServer._spawnTanda()
     print("[Holdoor] Tanda: +" .. spawnadosTanda .. " | En cola: " .. remaining)
 end
 
-function HoldoorServer._lanzarOleada()
+-- ════════════════════════════════════════════════════════════════════
+-- v0.6 — _spawnTick: spawn continuo modelo C (timer + target).
+-- Se ejecuta desde onTick. Spawnea 1 zombi cuando toca según intervalo
+-- lerp(spawnInicio → spawnFin) según progreso temporal de la oleada.
+-- ════════════════════════════════════════════════════════════════════
+
+function HoldoorServer._spawnTick()
+    -- v0.6 fix #1: SPAWN DE CÚMULOS (no perdigonado 1 zombi a la vez).
+    -- Cada tick que toque, spawneamos un GRUPO de 2-5 zombies juntos en tiles
+    -- adyacentes. Comparten destino. Se sienten como horda real, no como hilera.
     local estado = HoldoorServer.estado
-    estado.oleadaActual = estado.oleadaActual + 1
-    local oleada = estado.oleadaActual
-    local cfg    = estado.config
+    if estado.fase ~= "activa" then return end
+    if not estado.baseDefinida then return end
 
-    -- Resetear flag del colchon FINAL para que pueda dispararse una vez por oleada
-    estado._colchonFinalDisparado = false
+    local ahora = os.time()
+    if (estado.proximoSpawnSec or 0) > ahora then return end
 
-    -- Limpiar zona antes de cada oleada: elimina world-zombies que contaminaron la pausa
-    local eliminados = HoldoorServer._limpiarZona()
-    if eliminados > 0 then
-        HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminados })
+    -- Calcular intervalo actual (lerp lineal entre spawnInicio y spawnFin según progreso)
+    local elapsed  = ahora - (estado.oleadaInicioSec or ahora)
+    local total    = estado.oleadaDuracionSec or 180
+    local progreso = math.min(1.0, math.max(0.0, elapsed / total))
+    local intervalo = (estado.spawnInicio or 8.0) * (1.0 - progreso)
+                    + (estado.spawnFin    or 4.0) * progreso
+
+    -- Decidir velocidad del cúmulo entero (todos los del grupo van iguales).
+    -- speed 2 = Fast Shamblers (caminan rápido, lo correcto).
+    -- speed 1 = Sprinters (BUGGY en B42, no se pathea bien — NO usar).
+    -- speed 3 = Slow Shamblers (muy lentos).
+    local esCorredorCumulo = ZombRand(1000) < math.floor((estado.pctCorredores or 0) * 1000)
+    local speed = esCorredorCumulo and 3 or 2
+
+    -- Tamaño del cúmulo: 2-5 zombies. Random por tick para que cada cúmulo se sienta distinto.
+    local tamCumulo = 2 + ZombRand(4)   -- 2, 3, 4 o 5
+
+    -- Posición base del cúmulo: ángulo random, distancia = radioConfigurado + 5 (fijo).
+    local bx, by, bz = estado.baseX, estado.baseY, estado.baseZ
+    local radio = (estado.config and estado.config.radioSpawn) or 25
+    local dist  = radio + 5
+
+    -- SandboxVar Speed (todos los zombies del cúmulo lo heredan)
+    local origSpeed = SandboxVars and SandboxVars.ZombieConfig and SandboxVars.ZombieConfig.Speed
+    if origSpeed ~= nil then SandboxVars.ZombieConfig.Speed = speed end
+
+    -- Intentar hasta 6 ángulos para encontrar uno exterior válido
+    local spawnX, spawnY = nil, nil
+    for try = 1, 6 do
+        local ang  = ZombRand(360)
+        local sx   = math.floor(bx + math.cos(math.rad(ang)) * dist)
+        local sy   = math.floor(by + math.sin(math.rad(ang)) * dist)
+
+        local ok_sq, spawnSq = pcall(function() return getCell():getGridSquare(sx, sy, bz) end)
+        if ok_sq and spawnSq then
+            local ok_out, esExterior = pcall(function() return spawnSq:isOutside() end)
+            if ok_out and esExterior then
+                spawnX, spawnY = sx, sy
+                break
+            end
+        end
     end
 
-    -- Cantidad con escala por oleada y multiplicador de jugadores
-    local escala  = math.min(1 + (oleada - 1) * (cfg.escalaPorOleada or 0.10), 3.0)
-    local mult    = cfg.playerMultiplier or 1.0
-    local cantidad = math.floor((cfg.tamanoOleada or 20) * mult * escala)
+    -- Spawnear el cúmulo entero en tiles adyacentes alrededor del centro encontrado
+    local spawneados = 0
+    if spawnX and spawnY then
+        -- Destino compartido: tile aleatoria CERCA del Trono (no en el centro exacto)
+        local angD = ZombRand(360)
+        local dD   = ZombRand(math.max(1, math.floor(radio * 0.4)))
+        local destX = math.floor(bx + math.cos(math.rad(angD)) * dD)
+        local destY = math.floor(by + math.sin(math.rad(angD)) * dD)
 
-    -- Speedrunners
-    local srPct   = math.min(oleada * (cfg.srPorOleada or 0.10), 1.0)
-    local srCount = math.floor(cantidad * srPct)
-    local srSpeed = 3  -- capped: sin speed 4 (sprinters buggy)
-    local total   = cantidad + srCount
+        for i = 1, tamCumulo do
+            -- Offset random -2..+2 alrededor del centro del cúmulo
+            local offX = ZombRand(5) - 2
+            local offY = ZombRand(5) - 2
+            local zx, zy = spawnX + offX, spawnY + offY
+            if HoldoorServer._spawnUno(zx, zy, bz, destX, destY, bz, 0) then
+                spawneados = spawneados + 1
+            end
+        end
 
-    -- Construir tiers para spawn escalonado
-    local composicion = HoldoorServer.calcularComposicion(oleada, cantidad)
-    if srCount > 0 then
-        table.insert(composicion, { count = srCount, speed = srSpeed, crawl = 0, texto = "Corredores extras" })
+        -- addSound localizado en el centro del cúmulo (los empuja a la base)
+        if spawneados > 0 then
+            pcall(addSound, nil, spawnX, spawnY, bz, 50, 150)
+        end
     end
-    estado.encoladosTiers   = composicion
-    estado.tamanoTanda      = cfg.tamanoTanda or 12
-    estado.tandaIntervalSec = cfg.tandaIntervalSec or 8
 
-    if total <= 0 then
-        estado.fase = "activa"; estado.zombiesTotal = 0; estado.zombiesRestantes = 0
-        HoldoorServer.notificarTodos("oleadaActiva", { numero=oleada, zombies=0, normales=0, speedrunners=0 })
+    -- Restaurar SandboxVar Speed
+    if origSpeed ~= nil and SandboxVars and SandboxVars.ZombieConfig then
+        SandboxVars.ZombieConfig.Speed = origSpeed
+    end
+
+    if spawneados > 0 then
+        estado.zombiesSpawneados = (estado.zombiesSpawneados or 0) + spawneados
+        print(string.format("[Holdoor] Cumulo: +%d zombies (speed=%d) @ radio %d, intervalo=%.1fs",
+            spawneados, speed, dist, intervalo))
+    end
+
+    -- Schedule próximo cúmulo
+    estado.proximoSpawnSec = ahora + intervalo
+end
+
+-- v0.6 — Aggro sostenido: addSound + re-path explicito.
+-- 1) addSound para atraer zombies lejanos.
+-- 2) _reAggroZombies para path EXPLICITO de los cercanos (pathToLocation directo).
+--    Si addSound falla por alguna razon, el path explicito garantiza que vengan.
+function HoldoorServer._aggroSostenido()
+    local estado = HoldoorServer.estado
+    if estado.fase ~= "activa" then return end
+    if not estado.baseDefinida then return end
+
+    local ahora = os.time()
+    local interval = HoldoorConfig.aggroIntervalSec or 4
+    if ahora < (estado.aggroUltimoSec or 0) + interval then return end
+    estado.aggroUltimoSec = ahora
+
+    -- 1) Sonido amplio desde la base
+    local radio = HoldoorConfig.aggroRadio or 120
+    local vol   = HoldoorConfig.aggroVolumen or 200
+    local sndOk = pcall(addSound, nil, estado.baseX, estado.baseY, estado.baseZ, radio, vol)
+    print(string.format("[Holdoor] AGGRO sound radio=%d vol=%d ok=%s",
+        radio, vol, tostring(sndOk)))
+
+    -- 2) Re-path EXPLICITO: forzar pathToLocation en todos los zombies cercanos.
+    --    Es el fallback que en modelo viejo funcionaba (los zombies seguian su path
+    --    aunque addSound no los aggreara). Cada 4s mantiene los paths frescos.
+    HoldoorServer._reAggroZombies()
+end
+
+-- v0.6 — Check de cierre de oleada (timer Y/O target kills, lo que pase primero).
+function HoldoorServer._chequearCierreOleada()
+    local estado = HoldoorServer.estado
+    if estado.fase ~= "activa" then return end
+
+    local ahora     = os.time()
+    local elapsed   = ahora - (estado.oleadaInicioSec or ahora)
+    local duracion  = estado.oleadaDuracionSec or 180
+    local kills     = estado.oleadaKills or 0
+    local target    = estado.oleadaTargetKills or 50
+
+    -- CIERRE LIMPIO: matas target antes del timer → bonus +25%
+    if kills >= target and not estado.cierreLimpio then
+        estado.cierreLimpio = true
+        print(string.format("[Holdoor] CIERRE LIMPIO! Oleada %d cerrada en %ds (%d/%d kills)",
+            estado.oleadaActual, elapsed, kills, target))
         HoldoorServer._oleadaCompletada()
         return
     end
 
-    local amenazaTexto = composicion[#composicion].texto
-    local frase     = HoldoorConfig.frases[ZombRand(#HoldoorConfig.frases) + 1]
-    local esUltima  = (oleada >= (cfg.maxOleadas or 0))
+    -- CIERRE POR TIMER: oleada agotó duración → recompensa estándar
+    if elapsed >= duracion then
+        print(string.format("[Holdoor] Cierre por timer. Oleada %d (%d/%d kills, no logro target)",
+            estado.oleadaActual, kills, target))
+        HoldoorServer._oleadaCompletada()
+        return
+    end
+end
 
-    print("[Holdoor] OLEADA " .. oleada .. (esUltima and " [ULTIMA]" or "") .. ": " .. cantidad .. "N + " .. srCount .. "SR = " .. total)
+function HoldoorServer._lanzarOleada()
+    -- ════════════════════════════════════════════════════════════════
+    -- Sprint v0.6 — modelo C híbrido (timer + target kills)
+    -- Sin "total fijo" de zombies. Sin tandas. Sin cola. Spawn continuo
+    -- vía _spawnTick que se ejecuta desde _tickServidor. Cierre por
+    -- timer Y/O target kills (lo que pase primero).
+    -- ════════════════════════════════════════════════════════════════
+    local estado = HoldoorServer.estado
+    estado.oleadaActual = estado.oleadaActual + 1
+    local oleada = estado.oleadaActual
+    -- Fix v0.6: estado.modoId nunca se asigna directo, vive en estado.config.modoId
+    local modoId = (estado.config and estado.config.modoId) or "normal"
 
+    -- Limpiar zona antes de cada oleada (igual que v0.5)
+    local eliminados = HoldoorServer._limpiarZona()
+    if eliminados and eliminados > 0 then
+        HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminados })
+    end
+
+    -- Obtener config del modo V6 (fallback a normal)
+    local modoCfg = (HoldoorConfig.modosV6 or {})[modoId] or HoldoorConfig.modosV6.normal
+
+    -- Obtener config de la oleada actual (clamp al último entry de la curva)
+    local oleadaIdx = math.min(oleada, #(HoldoorConfig.oleadasV6 or {}))
+    local oleadaCfg = HoldoorConfig.oleadasV6[oleadaIdx] or {
+        duracionSeg = 180, targetKills = 50,
+        spawnInicio = 4.0, spawnFin = 2.0,
+        pctCorredores = 0.10,
+    }
+
+    -- Calcular parametros con multiplicadores del modo
+    local duracion      = math.floor((oleadaCfg.duracionSeg or 180) * (modoCfg.multDuracion or 1.0))
+    local target        = math.floor((oleadaCfg.targetKills or 50) * (modoCfg.multKills or 1.0))
+    local spawnInicio   = (oleadaCfg.spawnInicio or 4.0) * (modoCfg.multSpawn or 1.0)
+    local spawnFin      = (oleadaCfg.spawnFin or 2.0)    * (modoCfg.multSpawn or 1.0)
+    local pctCorredores = oleadaCfg.pctCorredores or 0.10
+
+    -- Setear estado del modelo C
+    estado.fase                = "activa"
+    estado.oleadaInicioSec     = os.time()
+    estado.oleadaDuracionSec   = duracion
+    estado.oleadaTargetKills   = target
+    estado.oleadaKills         = 0
+    estado.spawnInicio         = spawnInicio
+    estado.spawnFin            = spawnFin
+    estado.pctCorredores       = pctCorredores
+    estado.proximoSpawnSec     = os.time() + spawnInicio  -- primer spawn al final del intervalo inicial
+    estado.zombiesSpawneados   = 0
+    estado.cierreLimpio        = false
+    estado.aggroUltimoSec      = 0
+
+    -- Compatibilidad: codigo viejo lee zombiesTotal/Restantes. En modelo C no hay
+    -- total fijo. Los seteamos a 0 (no se usan para counter de oleada).
+    estado.zombiesTotal     = 0
+    estado.zombiesRestantes = 0
+
+    -- Frases épicas + flag de ultima oleada
+    local frase    = HoldoorConfig.frases[ZombRand(#HoldoorConfig.frases) + 1]
+    local esUltima = (oleada >= (modoCfg.maxOleadas or 8))
+
+    print(string.format(
+        "[Holdoor] OLEADA %d %s — modo=%s duracion=%ds target=%d kills | spawn %.1fs->%.1fs | %.0f%% corredores",
+        oleada, esUltima and "[ULTIMA]" or "", modoId,
+        duracion, target, spawnInicio, spawnFin, pctCorredores * 100
+    ))
+
+    -- Notificar al cliente (formato modelo C)
     HoldoorServer.notificarTodos("oleada", {
-        numero=oleada, cantidad=cantidad, speedrunners=srCount,
-        total=total, frase=frase.texto, autor=frase.autor, amenaza=amenazaTexto,
-        esUltima=esUltima,
+        numero        = oleada,
+        duracion      = duracion,
+        target        = target,
+        spawnInicio   = spawnInicio,
+        spawnFin      = spawnFin,
+        pctCorredores = pctCorredores,
+        frase         = frase.texto,
+        autor         = frase.autor,
+        amenaza       = pctCorredores > 0 and "Muertos + corredores" or "Muertos vivientes",
+        esUltima      = esUltima,
     })
 
-    estado.fase             = "activa"
-    estado.zombiesTotal     = total
-    estado.zombiesRestantes = total
-    estado.ultimoSonidoSec  = os.time()
-
-    HoldoorServer._spawnTanda()
-
+    -- Estado "activa" para el HUD del cliente
     HoldoorServer.notificarTodos("oleadaActiva", {
-        numero=oleada, zombies=total, normales=cantidad, speedrunners=srCount,
+        numero   = oleada,
+        duracion = duracion,
+        target   = target,
     })
 end
 
@@ -937,22 +1216,19 @@ function HoldoorServer._limpiarZona()
                             end
                         end
                     end
-                    -- MATAR (no removeFromWorld) — en MP, removeFromWorld deja zombies "fantasma"
-                    -- que vuelven a aparecer al re-sincronizarse el chunk. setHealth(0) los mata
-                    -- correctamente: trigger normal del motor → cadaver visible y sincronizado.
-                    -- IMPORTANTE: cada muerte va a disparar onZombieMuerto async. Si seteamos
-                    -- zombiesRestantes de la oleada nueva ANTES de que se disparen esos eventos,
-                    -- las muertes de la limpieza descuentan del counter de la oleada → arranca
-                    -- "3/10" cuando deberia ser "10/10". Por eso incrementamos _zombiesIgnorarN
-                    -- antes de matar: los proximos N eventos onZombieMuerto se descartan.
+                    -- v0.6 fix: ignorar muertes por TIEMPO no por contador.
+                    -- Antes contabamos N muertes a ignorar pero los onZombieDead son async →
+                    -- si user mataba zombies mientras los de limpieza estaban procesandose,
+                    -- sus kills se "absorbian" por el contador. Ahora ventana fija de 2s.
                     for _, z in ipairs(toRemove) do
                         local ok_kill = false
                         pcall(function() z:setHealth(0.0); ok_kill = true end)
                         if not ok_kill then pcall(function() z:setHealth(0); ok_kill = true end) end
-                        if ok_kill then
-                            eliminados = eliminados + 1
-                            HoldoorServer.estado._zombiesIgnorarN = (HoldoorServer.estado._zombiesIgnorarN or 0) + 1
-                        end
+                        if ok_kill then eliminados = eliminados + 1 end
+                    end
+                    -- Setear ventana de gracia: 2s para que el motor procese los setHealth(0) async
+                    if eliminados > 0 then
+                        HoldoorServer.estado._zombiesIgnorarHasta = os.time() + 2
                     end
                 end
             end
@@ -974,21 +1250,16 @@ end
 -- ─────────────────────────────────────────────
 function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugador)
     local cfg = HoldoorServer.estado.config or {}
-    local zombisTotalOleada = HoldoorServer.estado.zombiesTotal or 0
+    -- v0.6 modelo C: no hay `zombisTotalOleada`. Usamos `oleadaKills` reales.
+    local oleadaKills  = HoldoorServer.estado.oleadaKills or 0
+    local oleadaTarget = HoldoorServer.estado.oleadaTargetKills or 1
+    local cierreLimpio = HoldoorServer.estado.cierreLimpio or false
 
     local mult = HoldoorConfig.dropMult[modoId] or HoldoorConfig.dropMult.normal
     local rewardTbl = HoldoorConfig.rewardTable[modoId] or HoldoorConfig.rewardTable.normal
 
-    -- ── 1) Calcular kills del player local (para performance bonus) ──
-    -- En MP suma todos los players. En SP solo el player 0.
-    local killsTotalesPlayers = 0
-    for _, kills in pairs(statsJugador or {}) do
-        killsTotalesPlayers = killsTotalesPlayers + (kills or 0)
-    end
-    local ratioKills = 0
-    if zombisTotalOleada > 0 then
-        ratioKills = killsTotalesPlayers / zombisTotalOleada
-    end
+    -- ── 1) Performance bonus: ratio kills vs target ──
+    local ratioKills = (oleadaKills > 0 and oleadaTarget > 0) and (oleadaKills / oleadaTarget) or 0
     local hayPerformanceBonus = ratioKills >= (HoldoorConfig.performanceThreshold or 0.70)
 
     -- Perfect run: Trono termino la oleada con HP COMPLETO (no recibio daño)
@@ -1003,8 +1274,13 @@ function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugad
     end
 
     -- ── 2) MONEDAS ──
-    -- Bronce: base por zombis matados (2x el viejo: floor/2 en vez de floor/4)
-    local bronzeBase = math.max(1, math.floor(zombisTotalOleada / 2)) + ZombRand(5)
+    -- v0.6: base por kills REALES de la oleada (no por "total fijo" que ya no existe).
+    -- Rebalance: como ahora los kills dan monedas durante la oleada, bajamos la base
+    -- de fin de oleada al 60% (recompensaFinOleadaMultV6) para no doblar el ingreso.
+    local rebalanceFin = HoldoorConfig.recompensaFinOleadaMultV6 or 0.60
+    local bronzeBase = math.max(1, math.floor(oleadaKills / 2)) + ZombRand(5)
+    bronzeBase = math.floor(bronzeBase * rebalanceFin)
+
     -- Bonus oleada tardia: +5% por oleada despues de la 3a
     local bonusTardio = math.max(0, (numOleada - 3)) * 0.05
     -- Multiplicador final monedas
@@ -1014,6 +1290,10 @@ function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugad
     end
     if hayPerfectRun then
         multMonedas = multMonedas * (1.0 + (HoldoorConfig.perfectRunCoinBonus or 0.25))
+    end
+    -- v0.6 BONUS CIERRE LIMPIO: +25% si mataste >= target antes del timer
+    if cierreLimpio then
+        multMonedas = multMonedas * (1.0 + (HoldoorConfig.cierreLimpioBonus or 0.25))
     end
     local bronze = math.floor(bronzeBase * multMonedas + 0.5)
 
@@ -1074,9 +1354,11 @@ function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugad
             end
         end
     end
-    if #itemsEntregados > 0 then
-        HoldoorServer._distribuirItems(itemsEntregados)
-    end
+    -- v0.6.1 MP fix: NO entregamos los items aca server-side. _entregarItemsViaAdmin
+    -- usa sendServerCommand que NO llega al host local hosted (gotcha #36 aplicado al
+    -- caso de items). En vez, mandamos la lista en el comando "oleadaCompletada" y el
+    -- cliente del host ejecuta /additem en cliente-context (reusa flow tienda).
+    -- itemsEntregados se pasa via "oleadaCompletada" mas abajo en la llamada a notificarTodos.
 
     print(string.format("[Holdoor] Recompensa oleada %d (%s): %dB %dP %dO | mats=%s | items=%d | perf=%.0f%% (%s) | perfectRun=%s",
         numOleada, modoId, bronze, silver, gold,
@@ -1201,21 +1483,28 @@ function HoldoorServer._oleadaCompletada()
         print("[Holdoor] Fin de oleada: " .. eliminadosFinOleada .. " zombis residuales limpiados")
     end
 
+    -- v0.6: pausa de 30s default, override por modo (TEST usa 5s para testing rapido)
+    local modoIdAct = (estado.config and estado.config.modoId) or "normal"
+    local modoCfg   = (HoldoorConfig.modosV6 or {})[modoIdAct] or {}
+    local pausaSeg  = modoCfg.pausaSeg or HoldoorConfig.pausaOleadasSegV6 or PAUSA_SEGS or 30
     estado.fase        = "pausa"
-    estado.pausaFinSec = os.time() + PAUSA_SEGS
+    estado.pausaFinSec = os.time() + pausaSeg
 
     local killsStr = buildKillsStr(estado.killsOleada)
     HoldoorServer.notificarTodos("oleadaCompletada", {
-        numero    = estado.oleadaActual,
-        pausa     = PAUSA_SEGS,
-        killsStr  = killsStr,
-        killsData = estado.killsOleada,
-        bronze    = resumen.bronze or 0,
-        silver    = resumen.silver or 0,
-        gold      = resumen.gold or 0,
-        materiales = resumen.materiales or {},  -- {cuero=2, hierro=1, ...}
-        items      = resumen.items or {},       -- {"Base.Bandage", "Base.Pills", ...}
-        lucky      = (resumen.silver or 0) + (resumen.gold or 0) > 0,
+        numero       = estado.oleadaActual,
+        pausa        = pausaSeg,
+        killsStr     = killsStr,
+        killsData    = estado.killsOleada,
+        bronze       = resumen.bronze or 0,
+        silver       = resumen.silver or 0,
+        gold         = resumen.gold or 0,
+        materiales   = resumen.materiales or {},
+        items        = resumen.items or {},
+        lucky        = (resumen.silver or 0) + (resumen.gold or 0) > 0,
+        cierreLimpio = estado.cierreLimpio or false,   -- v0.6: si fue CIERRE LIMPIO (kills >= target)
+        kills        = estado.oleadaKills or 0,
+        target       = estado.oleadaTargetKills or 0,
     })
 
     estado.killsOleada = {}
@@ -1286,38 +1575,11 @@ function HoldoorServer.onTick()
         end
 
     elseif estado.fase == "activa" then
-        local ahora = os.time()
-
-        -- Spawn de siguientes tandas escalonadas
-        local remaining = 0
-        for _, t in ipairs(estado.encoladosTiers or {}) do remaining = remaining + t.count end
-        if remaining > 0 and ahora >= estado.proximaTandaSec then
-            HoldoorServer._spawnTanda()
-        end
-
-        -- Pulso de sonido cada 7s: atrae zombis lejanos y los mantiene activos
-        if ahora >= (estado.ultimoSonidoSec or 0) + 7 then
-            estado.ultimoSonidoSec = ahora
-            local bx = estado.baseX
-            local by = estado.baseY
-            local bz = estado.baseZ
-            local r  = math.floor((estado.config.radioSpawn or 20) * 2 + 30)
-            pcall(addSound, nil, bx, by, bz, r, 150)
-        end
-
-        -- Re-aggro cada 12s: re-path zombis cercanos hacia la base
-        -- Refresca el objetivo de zombis que se distrajeron o llegaron y se quedaron quietos
-        if ahora >= (estado.ultimoAggroSec or 0) + 12 then
-            estado.ultimoAggroSec = ahora
-            HoldoorServer._reAggroZombies()
-        end
-
-        -- Colchón de densidad cada 3s: si los zombis vivos cerca bajan demasiado
-        -- y todavía hay encolados, forzamos un refuerzo inmediato.
-        if ahora >= (estado.ultimoColchonSec or 0) + 3 then
-            estado.ultimoColchonSec = ahora
-            HoldoorServer._asegurarColchon()
-        end
+        -- v0.6 modelo C: spawn continuo + aggro sostenido + cierre por timer/target.
+        -- Reemplaza la lógica vieja de _spawnTanda + _reAggroZombies + _asegurarColchon.
+        HoldoorServer._spawnTick()           -- spawn 1 zombi si toca según intervalo lerp
+        HoldoorServer._aggroSostenido()      -- addSound cada 4s desde base (radio 120)
+        HoldoorServer._chequearCierreOleada() -- cierre por target kills o timer
 
     elseif estado.fase == "pausa" then
         if os.time() >= estado.pausaFinSec then
@@ -1332,6 +1594,145 @@ function HoldoorServer.onTick()
 end
 
 -- ─────────────────────────────────────────────
+--  v0.6 DROPS POR KILL (escalados por modo)
+--  Bronce: silencioso. Plata/Oro/Item: toast épico al cliente.
+-- ─────────────────────────────────────────────
+
+function HoldoorServer._rollDropsPorKill(zombie, matadorUsername)
+    local estado  = HoldoorServer.estado
+    local modoId  = (estado.config and estado.config.modoId) or "normal"
+    local mults   = (HoldoorConfig.dropMultPorModoV6 or {})[modoId]
+                 or HoldoorConfig.dropMultPorModoV6.normal
+    local base    = HoldoorConfig.dropPorKillBase or {}
+
+    -- Calcular chances finales con multiplicadores del modo
+    local cBronce = (base.bronceChance or 0.25) * (mults.bronce or 1.0)
+    local cPlata  = (base.plataChance  or 0.05) * (mults.plata  or 1.0)
+    local cOro    = (base.oroChance    or 0.005) * (mults.oro   or 1.0)
+    local cItem   = (base.itemChance   or 0.007) * (mults.item  or 1.0)
+
+    local bronze, silver, gold = 0, 0, 0
+
+    -- Roll bronce (silencioso, sin toast)
+    if ZombRand(10000) < math.floor(cBronce * 10000) then
+        local bMin = base.bronceMin or 1
+        local bMax = base.bronceMax or 3
+        bronze = bMin + ZombRand(math.max(1, bMax - bMin + 1))
+    end
+
+    -- Roll plata (toast amarillo)
+    if ZombRand(10000) < math.floor(cPlata * 10000) then
+        silver = 1
+    end
+
+    -- Roll oro (toast dorado épico + sonido)
+    if ZombRand(10000) < math.floor(cOro * 10000) then
+        gold = 1
+    end
+
+    -- Distribuir monedas (si hubo algo)
+    if bronze > 0 or silver > 0 or gold > 0 then
+        HoldoorServer._distribuirMonedas(bronze, silver, gold)
+        -- Notif al cliente: el cliente decide si poner toast/sonido segun el tipo.
+        -- El cliente SIEMPRE pone player:Say sobre la cabeza (incluso para bronce).
+        if gold > 0 then
+            HoldoorServer.notificarTodos("dropKill", {
+                tipo = "gold", cantidad = gold, texto = "+" .. gold .. " ORO !!!",
+            })
+        elseif silver > 0 then
+            HoldoorServer.notificarTodos("dropKill", {
+                tipo = "silver", cantidad = silver, texto = "+" .. silver .. " Plata",
+            })
+        elseif bronze > 0 then
+            HoldoorServer.notificarTodos("dropKill", {
+                tipo = "bronce", cantidad = bronze, texto = "+" .. bronze .. " Br",
+            })
+        end
+    end
+
+    -- Roll item raro
+    if ZombRand(10000) < math.floor(cItem * 10000) then
+        -- Elegir pool random del itemDropPool y un item común de ese pool
+        local pools = {}
+        for poolName, poolData in pairs(HoldoorConfig.itemDropPool or {}) do
+            if poolData.items and #poolData.items > 0 then
+                table.insert(pools, poolData)
+            end
+        end
+        if #pools > 0 then
+            local pool = pools[ZombRand(#pools) + 1]
+            -- Filtrar items comunes y poco comunes (no raros/épicos en drops por kill)
+            local candidatos = {}
+            for _, def in ipairs(pool.items) do
+                if def.rareza == "comun" or def.rareza == "poco_comun" then
+                    table.insert(candidatos, def)
+                end
+            end
+            if #candidatos > 0 then
+                local def = candidatos[ZombRand(#candidatos) + 1]
+                -- v0.6: validar que el item EXISTA en B42 antes de notificar drop.
+                -- IMPORTANTE: usar getScriptManager():FindItem() (devuelve nil limpio).
+                -- InventoryItemFactory.CreateItem() TIRA excepcion Java atrapada por Break On Error
+                -- aunque este dentro de pcall (gotcha PZ B42 — pcall no atrapa exceptions Java).
+                local itemValido = false
+                local sm = getScriptManager and getScriptManager() or nil
+                if sm then
+                    local scr = sm:FindItem(def.item)
+                    itemValido = (scr ~= nil)
+                end
+                if itemValido then
+                    local qtyMin = (def.qty and def.qty[1]) or 1
+                    local qtyMax = (def.qty and def.qty[2]) or 1
+                    local qty = qtyMin + ZombRand(math.max(1, qtyMax - qtyMin + 1))
+                    local items = {}
+                    for _ = 1, qty do table.insert(items, def.item) end
+                    -- v0.6.1 MP fix: NO entregamos aca (sendServerCommand al host local no
+                    -- llega via loopback - gotcha #36 aplicado a items). Mandamos items+target
+                    -- en el notificarTodos "dropKill" y el cliente del matador ejecuta /additem.
+                    local nombreItem = def.item:gsub("^Base%.", "")
+                    HoldoorServer.notificarTodos("dropKill", {
+                        tipo = "item",
+                        cantidad = qty,
+                        texto = "Loot raro: " .. (qty > 1 and (qty .. "x ") or "") .. nombreItem,
+                        target = matadorUsername,
+                        items = items,
+                    })
+                else
+                    -- Item no válido en este build de B42 — saltear silencioso (no crashear ni mostrar toast fantasma)
+                    print("[Holdoor] dropKill: item '" .. tostring(def.item) .. "' no existe en B42, saltado")
+                end
+            end
+        end
+    end
+
+    -- v0.6: drops de materiales por kill. Chances muy bajas (Cuero 5% → Obsidiana 0.1%).
+    -- Aplica mult del modo (Pesadilla casi triplica las chances).
+    local matsBase = HoldoorConfig.dropMaterialesPorKillBase or {}
+    local matCfgs = {
+        { key = "Holdoor_Cuero",     chance = (matsBase.cueroChance     or 0) * (mults.bronce or 1), nombre = "Cuero",     col = "cuero" },
+        { key = "Holdoor_Hierro",    chance = (matsBase.hierroChance    or 0) * (mults.plata  or 1), nombre = "Hierro",    col = "hierro" },
+        { key = "Holdoor_Acero",     chance = (matsBase.aceroChance     or 0) * (mults.plata  or 1), nombre = "Acero",     col = "acero" },
+        { key = "Holdoor_Valyrio",   chance = (matsBase.valyrioChance   or 0) * (mults.oro    or 1), nombre = "Valyrio",   col = "valyrio" },
+        { key = "Holdoor_Obsidiana", chance = (matsBase.obsidianaChance or 0) * (mults.oro    or 1), nombre = "Obsidiana", col = "obsidiana" },
+    }
+    for _, m in ipairs(matCfgs) do
+        if ZombRand(10000) < math.floor(m.chance * 10000) then
+            -- Distribuir 1 material directamente al ModData del player
+            local materiales = { [m.col] = 1 }
+            HoldoorServer._distribuirMateriales(materiales)
+            HoldoorServer.notificarTodos("dropKill", {
+                tipo = "material",
+                cantidad = 1,
+                texto = "+1 " .. m.nombre,
+                material = m.col,
+            })
+            -- Solo 1 material por kill (si cayó cuero, no testeamos los más raros)
+            break
+        end
+    end
+end
+
+-- ─────────────────────────────────────────────
 --  KILL COUNTER — avanza cuando se mata un zombi
 -- ─────────────────────────────────────────────
 
@@ -1339,14 +1740,11 @@ function HoldoorServer.onZombieMuerto(zombie)
     local estado = HoldoorServer.estado
     if estado.fase ~= "activa" then return end
 
-    -- Ignorar las proximas N muertes que vienen de _limpiarZona (limpieza pre-oleada,
-    -- detener, etc.). Sino esas muertes descuentan del contador de la oleada nueva.
-    if (estado._zombiesIgnorarN or 0) > 0 then
-        estado._zombiesIgnorarN = estado._zombiesIgnorarN - 1
-        return
-    end
+    -- v0.6 fix: ignorar muertes durante ventana de 2s post-limpieza (no por contador).
+    -- Los setHealth(0) async de _limpiarZona se procesan en <2s. Despues todo cuenta.
+    if os.time() < (estado._zombiesIgnorarHasta or 0) then return end
 
-    -- Ignorar muertes de zombies que mueren lejos de la base (mundo normal)
+    -- Ignorar muertes de zombies que mueren lejos de la base (mundo normal, no del mod)
     local ok, zx, zy = pcall(function() return zombie:getX(), zombie:getY() end)
     if ok and zx then
         local dx = zx - estado.baseX
@@ -1355,16 +1753,30 @@ function HoldoorServer.onZombieMuerto(zombie)
         if (dx * dx + dy * dy) > (radioFiltro * radioFiltro) then return end
     end
 
-    estado.zombiesRestantes = math.max(0, estado.zombiesRestantes - 1)
+    -- v0.6 modelo C: incrementar kills (sin "zombies restantes" porque no hay total fijo).
+    estado.oleadaKills = (estado.oleadaKills or 0) + 1
 
-    HoldoorServer.notificarTodos("zombiesMuertos", {
-        restantes = estado.zombiesRestantes,
-        total     = estado.zombiesTotal,
+    -- Notificar al cliente del kill (para HUD: actualiza "Kills X/Y" en tiempo real)
+    HoldoorServer.notificarTodos("killUpdate", {
+        kills  = estado.oleadaKills,
+        target = estado.oleadaTargetKills or 0,
     })
 
-    if estado.zombiesRestantes <= 0 then
-        HoldoorServer._oleadaCompletada()
+    -- v0.6.1 MP: identificar al matador para dropear solo a el (no a todos).
+    -- Si no se identifica, fallback al primer player online (SP / hosted solo).
+    local matadorUsername = nil
+    pcall(function()
+        local atk = zombie:getAttackedBy()
+        if atk then matadorUsername = atk:getUsername() end
+    end)
+    if not matadorUsername then
+        local ok, p = pcall(getSpecificPlayer, 0)
+        if ok and p then pcall(function() matadorUsername = p:getUsername() end) end
     end
+
+    -- Drops por kill (v0.6: escalados por modo). El cierre por target se chequea
+    -- en _chequearCierreOleada (llamado desde onTick), no aca.
+    HoldoorServer._rollDropsPorKill(zombie, matadorUsername)
 end
 
 -- ─────────────────────────────────────────────
@@ -2586,6 +2998,16 @@ function HoldoorServer._plantarTrono(x, y, z)
         pcall(function() thumpable:setHealth(hpAbs) end)
         pcall(function() sq:RecalcAllWithNeighbours(true) end)
 
+        -- v0.6.1: sync MP del IsoThumpable a clientes remotos (gotcha #8 fix).
+        -- Test 2026-06-16: probamos 5 APIs candidatas con pcall y solo 2 existen en B42:
+        --   transmitUpdatedSprite   → OK, esta es la que se mantiene
+        --   transmitCompleteItemToServer → existe pero DEPRECATED en MP (warn explicito)
+        -- Las otras 3 (syncIsoObject / sendObjectChange / sq:transmitObjectChange) tiran
+        -- "Object tried to call nil" porque NO existen en B42, y pcall no atrapa esa
+        -- excepcion Java (gotcha #30). Por eso solo dejamos transmitUpdatedSprite.
+        -- Si tu amigo en MP no ve el Trono, este sync no fue suficiente — buscar otra API.
+        pcall(function() thumpable:transmitUpdatedSprite() end)
+
         local registro = { obj = thumpable, x = px, y = py, z = z, sprite = sprite, hpMax = hpAbs, esCentro = esCentro }
         table.insert(piezas, registro)
         if esCentro then piezaCentral = registro end
@@ -2873,6 +3295,23 @@ end
 -- ─────────────────────────────────────────────
 
 function HoldoorServer.notificarTodos(tipo, datos)
+    -- v0.6.1 fix final: en MP hosted, sendServerCommand al host local NO llega via
+    -- loopback (mismo proceso). Por eso llamamos onComandoServidor directo PRIMERO para
+    -- que el HUD del host se sincronize. Esto se ejecuta en server-context, donde APIs
+    -- como InventoryItemFactory son null — PERO ahora los items se entregan via /additem
+    -- (cliente-side, fuera de notificarTodos), entonces no hay choque de context.
+    -- Para clientes remotos, sendServerCommand SÍ llega (van por la red).
+    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+        pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, tipo, datos)
+    end
+
+    -- Broadcast a clientes remotos (excluye al host local que ya manejamos arriba)
+    local localUser
+    pcall(function()
+        local lp = getSpecificPlayer(0)
+        if lp then localUser = lp:getUsername() end
+    end)
+
     local ok, players = pcall(getOnlinePlayers)
     if ok and players then
         local ok2, n = pcall(function() return players:size() end)
@@ -2880,15 +3319,14 @@ function HoldoorServer.notificarTodos(tipo, datos)
             for i = 0, n - 1 do
                 local ok3, p = pcall(function() return players:get(i) end)
                 if ok3 and p then
-                    pcall(sendClientCommand, p, HoldoorConfig.MODULE, tipo, datos)
+                    local pUser
+                    pcall(function() pUser = p:getUsername() end)
+                    if pUser ~= localUser then
+                        pcall(sendServerCommand, p, HoldoorConfig.MODULE, tipo, datos)
+                    end
                 end
             end
-            return
         end
-    end
-    -- Fallback single player: llamar al cliente directamente
-    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
-        pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, tipo, datos)
     end
 end
 
@@ -2937,6 +3375,19 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
     elseif comando == "comprar" then
         HoldoorServer._comprar(jugador, args)
 
+    elseif comando == "delegarAddXp" or comando == "delegarAddItem" then
+        -- v0.6.1: cliente NO admin pidio entregar XP/items. Delegamos al host admin.
+        local hostAdmin = HoldoorServer._buscarHostAdmin()
+        if hostAdmin then
+            local nextCmd = (comando == "delegarAddXp") and "ejecutarAddXp" or "ejecutarAddItem"
+            pcall(function()
+                sendServerCommand(hostAdmin, HoldoorConfig.MODULE, nextCmd, args)
+            end)
+            print("[Holdoor] " .. comando .. ": delegado a " .. tostring(hostAdmin:getUsername()) .. " para " .. tostring(args.target))
+        else
+            print("[Holdoor] " .. comando .. " WARN: no hay admin online")
+        end
+
     elseif comando == "pedirEstado" then
         local estado = HoldoorServer.estado
         local ahora  = os.time()
@@ -2960,10 +3411,64 @@ end
 --  REGISTRO DE EVENTOS
 -- ─────────────────────────────────────────────
 
+-- v0.6.1: handler de muerte de player. Si todos los participantes de la oleada activa
+-- mueren o se desconectan → oleada se da por perdida.
+function HoldoorServer._onPlayerMuerto(jugador)
+    local estado = HoldoorServer.estado
+    if not estado.activo then return end
+    if not estado.participantes then return end
+
+    local username
+    pcall(function() username = jugador:getUsername() end)
+    if not username then return end
+
+    print("[Holdoor] Player muerto: " .. tostring(username))
+    estado.participantes[username] = nil  -- removerlo del registro
+
+    -- Chequear si quedan participantes vivos y conectados
+    local quedanVivos = 0
+    pcall(function()
+        local ok, ps = pcall(getOnlinePlayers)
+        if ok and ps then
+            local oks, np = pcall(function() return ps:size() end)
+            if oks and np then
+                for i = 0, np - 1 do
+                    local okp, p = pcall(function() return ps:get(i) end)
+                    if okp and p then
+                        local u, dead
+                        pcall(function() u = p:getUsername() end)
+                        pcall(function() dead = p:isDead() end)
+                        if u and not dead and estado.participantes[u] then
+                            quedanVivos = quedanVivos + 1
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if quedanVivos == 0 then
+        print("[Holdoor] TODOS los participantes muertos/desconectados → oleada perdida")
+        HoldoorServer.notificarTodos("derrotaColectiva", {
+            oleadas = estado.oleadaActual or 0,
+            mensaje = "El Trono ha caido. Todos los defensores han caido.",
+        })
+        -- Reusar la logica de derrota del Trono
+        HoldoorServer._tronoCayo()
+    else
+        HoldoorServer.notificarTodos("playerCaido", {
+            username = username,
+            vivos = quedanVivos,
+        })
+        print("[Holdoor] Quedan " .. quedanVivos .. " defensores vivos")
+    end
+end
+
 Events.OnGameStart.Add(HoldoorServer.init)
 Events.OnTick.Add(HoldoorServer.onTick)
 Events.OnZombieDead.Add(HoldoorServer.onZombieMuerto)
 Events.OnClientCommand.Add(HoldoorServer.onComandoCliente)
+Events.OnPlayerDeath.Add(HoldoorServer._onPlayerMuerto)
 
 -- ─────────────────────────────────────────────
 -- GALERIA DE TRONOS (modo diagnóstico visual)

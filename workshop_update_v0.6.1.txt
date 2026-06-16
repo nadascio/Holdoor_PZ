@@ -1,0 +1,60 @@
+v0.6.1 — Fixes Multiplayer (consolidado)
+
+Sprint dedicado al MP: muchos bugs que en SP no se notaban porque server y cliente comparten estado, en MP hosted se hicieron evidentes. Lista completa de fixes:
+
+━━━━━━━━━━ INVENTARIO ━━━━━━━━━━
+
+Fix items "fantasma" no equipables (MP)
+- Bug: cualquier item entregado por el mod (tienda, drop por kill, recompensa de oleada) aparecia en el inventario pero no se podia equipar ni usar. La TimedAction de equipar se cancelaba a 1/5.
+- Causa: AddItem desde server-context crea items que el server no reconoce (sync rotos en MP).
+- Fix: el server cobra, el cliente entrega via comando admin /additem.
+- Aplica a: tienda, drop por kill, botin de fin de oleada.
+
+Fix XP de libros de skill (MP)
+- Bug: comprar libro de skill subia XP del perk e inmediatamente lo bajaba devuelta.
+- Causa: mismo root cause que items fantasma (server-context).
+- Fix: cliente entrega XP via comando admin /addxp.
+
+Delegacion para clientes no-admin
+- Implementado patron cliente -> server -> host admin -> /additem.
+- Permite que clientes remotos que no son admin reciban items pagando al server.
+
+━━━━━━━━━━ HUD MP ━━━━━━━━━━
+
+Fix HUD del host en MP hosted
+- Bug: el HUD del host quedaba "[Inactivo]" mientras la oleada corria.
+- Causa: sendServerCommand no hace loopback al host local en hosted.
+- Fix: call directo a HoldoorClient.onComandoServidor desde notificarTodos.
+
+Fix "Ya hay oleadas activas iniciadas por X" en server fresco
+- Bug: estado SP residual bloqueaba iniciar oleadas en server nuevo del mismo proceso.
+- Fix: HoldoorServer.init() ahora resetea estado completo en cada carga de mundo.
+
+Fix cliente remoto no veia el Trono colocado por el host
+- Bug: IsoThumpable creado server-side no sincronizaba visualmente con clientes remotos.
+- Fix: cascada de 5 APIs de sync B42 ejecutadas con pcall despues de AddSpecialObject.
+
+━━━━━━━━━━ MULTIPLAYER GAMEPLAY ━━━━━━━━━━
+
+Derrota colectiva
+- Si todos los participantes mueren o se desconectan durante una oleada, la partida termina con derrota colectiva (el Trono cae).
+- Tracking via Events.OnPlayerDeath + lista de participantes activos.
+
+Sobreviviste N oleadas (off-by-one)
+- Fix: si moris en la oleada 3, ahora dice "Sobreviviste 2 oleadas. Caiste en la 3ra" (correcto), no "Sobreviviste 3 oleadas".
+
+━━━━━━━━━━ MODO TEST ━━━━━━━━━━
+
+Drops boosteados en TEST
+- Drops por kill mejorados: cuero 50%, hierro 40%, acero 30%, valyrio 20%, obsidiana 15%.
+- Recompensa de oleada: x2 monedas, x2 materiales, x3 items.
+- End-of-wave gold bonus 80% (5-10 oro).
+- Pensado para iterar rapido sin esperar al evento.
+
+━━━━━━━━━━ LIMPIEZA ━━━━━━━━━━
+
+- Removidas teclas de diagnostico (F6/F7/F8/F9/F11/F12) que se usaron en debugging del scroll del inventario.
+- Removido boton [TEST] DARME TODOS LOS ITEMS DEL POOL del panel admin (ya cumplio su funcion en v0.6.0).
+- F10 sigue abriendo el panel admin (en SP y en MP para el host).
+
+Hold the door... Hodor.

@@ -371,18 +371,83 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         if HoldoorUI then HoldoorUI.actualizarTodo() end
 
     elseif comando == "oleadaActiva" then
+        -- v0.6 modelo C: recibimos duracion + target en vez de zombies fijos
         HoldoorClient.estado.fase             = "activa"
-        HoldoorClient.estado.zombiesTotal     = args.zombies or 0
-        HoldoorClient.estado.zombiesRestantes = args.zombies or 0
-        HoldoorClient.estado.srTotal          = args.speedrunners or 0
-        HoldoorClient.estado.killsOleada      = 0  -- resetear contador personal de oleada
+        HoldoorClient.estado.oleadaInicioSec  = os.time()  -- timer local del cliente
+        HoldoorClient.estado.oleadaDuracionSec = args.duracion or 180
+        HoldoorClient.estado.oleadaTargetKills = args.target or 50
+        HoldoorClient.estado.oleadaKills      = 0
+        HoldoorClient.estado.killsOleada      = 0  -- resetear contador personal
+        -- Compatibilidad: zombies total/restantes ya no se usan, los dejamos en 0
+        HoldoorClient.estado.zombiesTotal     = 0
+        HoldoorClient.estado.zombiesRestantes = 0
+        HoldoorClient.estado.srTotal          = 0
         -- Auto-expandir HUD al inicio de oleada
         if HoldoorHUD and HoldoorHUD.instance and not HoldoorHUD.instance.expandido then
             HoldoorHUD.instance:_setExpandido(true)
         end
         if HoldoorUI then HoldoorUI.actualizarTodo() end
 
+    elseif comando == "killUpdate" then
+        -- v0.6 modelo C: el server avisa cuando suben los kills (para refresh HUD en vivo)
+        HoldoorClient.estado.oleadaKills      = args.kills or 0
+        HoldoorClient.estado.oleadaTargetKills = args.target or HoldoorClient.estado.oleadaTargetKills
+        if HoldoorUI then HoldoorUI.actualizarTodo() end
+
+    elseif comando == "dropKill" then
+        -- v0.6 drops por kill: notif sobre la cabeza del personaje (player:Say) + toast épico arriba
+        local r, g, b = 0.95, 0.85, 0.45   -- amarillo plata por default
+        if args.tipo == "gold" then r, g, b = 1.0, 0.85, 0.20             -- dorado épico
+        elseif args.tipo == "item" then r, g, b = 0.80, 0.55, 1.0         -- violeta loot
+        elseif args.tipo == "bronce" then r, g, b = 0.85, 0.55, 0.30      -- bronce
+        elseif args.tipo == "material" then
+            -- Colores por tipo de material
+            if args.material == "cuero"     then r, g, b = 0.75, 0.55, 0.35
+            elseif args.material == "hierro" then r, g, b = 0.65, 0.65, 0.70
+            elseif args.material == "acero"  then r, g, b = 0.80, 0.85, 0.95
+            elseif args.material == "valyrio" then r, g, b = 0.75, 0.45, 1.0
+            elseif args.material == "obsidiana" then r, g, b = 0.65, 0.30, 0.85
+            end
+        end
+        -- Sobre la cabeza del personaje (player:Say) — el user lo quiere asi
+        local p = getSpecificPlayer(0)
+        if p and args.texto then pcall(function() p:Say(args.texto) end) end
+        -- Tambien toast arriba (salvo bronce que es muy frecuente)
+        if args.tipo ~= "bronce" and HoldoorToast and args.texto then
+            pcall(HoldoorToast.mostrar, args.texto, r, g, b)
+        end
+        -- Sonido para gold/item/material premium (plata y materiales bajos silenciosos por no spammear).
+        -- v0.6 fix: usar helper playUISound — pcall directo a getSoundManager crashea en algunos contextos.
+        if args.tipo == "gold" or args.tipo == "item" then
+            playUISound("LevelPerk")
+        elseif args.tipo == "material" and (args.material == "valyrio" or args.material == "obsidiana") then
+            playUISound("LevelPerk")
+        end
+
+        -- v0.6.1 MP fix: si el dropKill incluye items + target, entregar via /additem en
+        -- cliente-context (mismo patron que tienda y fin de oleada). El server puso
+        -- args.target = matadorUsername. Solo el cliente local del matador procesa.
+        if args.tipo == "item" and args.target and args.items then
+            local me = getSpecificPlayer(0)
+            local meUser = me and me:getUsername() or nil
+            if meUser == args.target then
+                if HoldoorClient.esAdmin() then
+                    for _, itemName in ipairs(args.items) do
+                        local cmd = string.format('/additem "%s" "%s" 1', meUser, tostring(itemName))
+                        pcall(function() SendCommandToServer(cmd) end)
+                    end
+                    print("[Holdoor] dropKill items entregados via /additem (admin): " .. #args.items)
+                else
+                    sendClientCommand(HoldoorConfig.MODULE, "delegarAddItem", {
+                        target = meUser, items = args.items,
+                    })
+                    print("[Holdoor] dropKill items delegados al host admin: " .. #args.items)
+                end
+            end
+        end
+
     elseif comando == "zombiesMuertos" then
+        -- LEGACY (v0.5): el server viejo emitía este evento. Modelo C usa killUpdate.
         HoldoorClient.estado.zombiesRestantes = args.restantes or 0
         HoldoorClient.estado.zombiesTotal     = args.total or HoldoorClient.estado.zombiesTotal
         if HoldoorUI then HoldoorUI.actualizarTodo() end
@@ -402,6 +467,47 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
 
         HoldoorClient.chat("[HOLDOOR] Oleada " .. (args.numero or "?") .. " completada! Proxima en " .. pausaSeg .. "s..." .. (monStr ~= "" and ("  " .. monStr) or ""), 0.2, 1, 0.4)
 
+        -- v0.6.1: resumen de items entregados (antes era silencioso → bug confundia con drops sin notif)
+        if args.items and #args.items > 0 then
+            local conteos = {}
+            local orden = {}
+            for _, full in ipairs(args.items) do
+                local nm = tostring(full):gsub("^Base%.", "")
+                if conteos[nm] == nil then table.insert(orden, nm); conteos[nm] = 0 end
+                conteos[nm] = conteos[nm] + 1
+            end
+            local partsI = {}
+            for _, nm in ipairs(orden) do
+                local c = conteos[nm]
+                table.insert(partsI, (c > 1 and (c .. "x ") or "") .. nm)
+            end
+            local botinStr = "Botin: " .. table.concat(partsI, ", ")
+            HoldoorClient.chat("[HOLDOOR] " .. botinStr, 0.80, 0.55, 1.0)
+            if HoldoorToast then
+                pcall(HoldoorToast.mostrar, botinStr, 0.80, 0.55, 1.0)
+            end
+
+            -- v0.6.1 MP fix: entregar los items via /additem en cliente-context. Si soy admin
+            -- (host hosted), ejecuto SendCommandToServer directo. Si NO, delego al host admin
+            -- via sendClientCommand (mismo patron que la tienda).
+            local me = getSpecificPlayer(0)
+            local targetUser = me and me:getUsername() or nil
+            if targetUser then
+                if HoldoorClient.esAdmin() then
+                    for _, itemName in ipairs(args.items) do
+                        local cmd = string.format('/additem "%s" "%s" 1', targetUser, tostring(itemName))
+                        pcall(function() SendCommandToServer(cmd) end)
+                    end
+                    print("[Holdoor] Botin oleada entregado via /additem (admin): " .. #args.items .. " items")
+                else
+                    sendClientCommand(HoldoorConfig.MODULE, "delegarAddItem", {
+                        target = targetUser, items = args.items,
+                    })
+                    print("[Holdoor] Botin oleada delegado al host admin: " .. #args.items .. " items")
+                end
+            end
+        end
+
         -- Si cayo un drop raro: avisar destacado en chat
         if args.lucky then
             if (args.gold or 0) > 0 then
@@ -412,6 +518,19 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         end
 
         playUISound("LevelPerk")
+
+        -- v0.6: si fue CIERRE LIMPIO (kills >= target antes del timer), toast épico
+        if args.cierreLimpio and HoldoorToast then
+            HoldoorToast.mostrar(
+                string.format("CIERRE LIMPIO! +25%% recompensa  (%d/%d kills)",
+                    args.kills or 0, args.target or 0),
+                1.0, 0.85, 0.30
+            )
+            -- v0.6 fix: usar helper playUISound (con guards) en vez de pcall directo a
+            -- getSoundManager() — eso crasheaba con "Object tried to call nil" que kahlua
+            -- NO atrapa (gotcha #18). La helper tiene check + pcall propio.
+            playUISound("LevelPerk")
+        end
 
         -- Anuncio épico con ranking de kills y monedas ganadas
         if HoldoorAnnounce then
@@ -471,16 +590,63 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.chat("[HOLDOOR] !!! EL TRONO DE HIERRO HA CAIDO !!!", 1, 0.10, 0.10)
         HoldoorClient.chat("[HOLDOOR] La defensa fue rota. Las oleadas se detienen.", 1, 0.30, 0.20)
         if HoldoorAnnounce then
-            HoldoorAnnounce.mostrar(
-                "EL TRONO HA CAIDO",
-                "Sobreviviste " .. (args.oleadas or 0) .. " oleadas antes de la derrota.",
-                1.0, 0.10, 0.10, 480
-            )
+            -- v0.6.1 fix off-by-one: oleadas-1 porque caiste EN la oleada actual,
+            -- no la sobreviviste. Ej: si moriste en la 3ra, sobreviviste 2.
+            local sobrevividas = math.max(0, (args.oleadas or 1) - 1)
+            local subline
+            if sobrevividas == 0 then
+                subline = "Caiste en la primera oleada."
+            elseif sobrevividas == 1 then
+                subline = "Sobreviviste 1 oleada. Caiste en la 2da."
+            else
+                subline = "Sobreviviste " .. sobrevividas .. " oleadas. Caiste en la " .. (sobrevividas + 1) .. "."
+            end
+            HoldoorAnnounce.mostrar("EL TRONO HA CAIDO", subline, 1.0, 0.10, 0.10, 480)
         end
 
     elseif comando == "monedasActualizadas" then
         -- Refresca el HUD para que muestre el saldo nuevo
         if HoldoorUI then HoldoorUI.actualizarTodo() end
+
+    elseif comando == "darItem" then
+        -- v0.6.1 fix MP definitivo (2026-06-16): items creados con inv:AddItem en cliente
+        -- estan SIN sincronizar al server, lo que cancela cualquier TimedAction sobre ellos
+        -- (equipar, dropear, etc — la barra verde se corta a 1/5). Workaround: dropear el
+        -- item al SUELO via cell:getGridSquare():AddWorldInventoryItem — PZ B42 sincroniza
+        -- world items al server automaticamente (mismo flow que loot vanilla). Despues el
+        -- user lo recoge con click derecho → "Levantar" (action vanilla syncea bien).
+        local me = getSpecificPlayer(0)
+        if not me then return end
+        local meUser
+        pcall(function() meUser = me:getUsername() end)
+        if args.target and meUser ~= args.target then return end
+
+        local sq
+        pcall(function() sq = me:getCurrentSquare() end)
+        if not sq then return end
+
+        local function dropearItem(itemName)
+            local item
+            pcall(function() item = InventoryItemFactory.CreateItem(itemName) end)
+            if item then
+                local ok = pcall(function() sq:AddWorldInventoryItem(item, 0.0, 0.0, 0.0) end)
+                print("[Holdoor][darItem] '" .. itemName .. "' dropeado al piso ok=" .. tostring(ok))
+                return ok
+            else
+                print("[Holdoor][darItem] CreateItem fallo para '" .. itemName .. "'")
+                return false
+            end
+        end
+
+        if args.item then dropearItem(args.item) end
+        if args.items then
+            for _, itemName in ipairs(args.items) do dropearItem(itemName) end
+        end
+        -- Mensaje al user para que sepa que tiene que levantarlo del piso
+        local nItems = (args.item and 1 or 0) + (args.items and #args.items or 0)
+        if nItems > 0 then
+            HoldoorClient.chat("[HOLDOOR] +" .. nItems .. " item" .. (nItems > 1 and "s" or "") .. " a tus pies (click derecho → Levantar)", 0.5, 1, 0.6)
+        end
 
     elseif comando == "transferOK" then
         local tipoLbl = ({bronze="Bronce", silver="Plata", gold="Oro"})[args.tipo] or args.tipo
@@ -502,12 +668,31 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
     elseif comando == "aplicarTrait" then
         HoldoorClient.aplicarTraitLocal(args.trait)
 
+    elseif comando == "ejecutarAddXp" then
+        if args.target and args.perk and args.amount then
+            local cmd = string.format('/addxp "%s" %s=%d', args.target, tostring(args.perk), args.amount)
+            pcall(function() SendCommandToServer(cmd) end)
+            print("[Holdoor] ejecutarAddXp: " .. cmd)
+        end
+
+    elseif comando == "ejecutarAddItem" then
+        if args.target and args.items then
+            for _, itemName in ipairs(args.items) do
+                local cmd = string.format('/additem "%s" "%s" 1', args.target, tostring(itemName))
+                pcall(function() SendCommandToServer(cmd) end)
+                print("[Holdoor] ejecutarAddItem: " .. cmd)
+            end
+        end
+
     elseif comando == "curarTrait" then
         HoldoorClient.curarTraitLocal(args.trait)
 
     elseif comando == "zonaLimpiada" then
         local n = args.cantidad or 0
         if n > 0 then
+            -- v0.6 fix: ignorar por TIEMPO no por contador. Ventana de 2s para que los
+            -- setHealth(0) async procesen y NO confundir con kills reales del user.
+            HoldoorClient.estado._killsIgnorarHasta = os.time() + 2
             HoldoorClient.chat("[HOLDOOR] Zona despejada: " .. n .. " caminantes eliminados.", 0.4, 0.8, 1)
         end
 
@@ -545,11 +730,8 @@ function HoldoorClient.mostrarOleada(args)
         -- Alarma de ultima oleada: sube la tension
         playUISound("BurglarAlarm1")
     end
-    if sr > 0 then
-        HoldoorClient.chat("OLEADA " .. args.numero .. " -- " .. (args.cantidad or 0) .. " + " .. sr .. " corredores en camino", 1, 0.3, 0.1)
-    else
-        HoldoorClient.chat("OLEADA " .. args.numero .. " -- " .. total .. " en camino", 1, 0.3, 0.1)
-    end
+    -- v0.6: removido chat() "OLEADA N -- X en camino" — en modelo C no hay total fijo,
+    -- decia "0 en camino" siempre. El cartel grande centrado de HoldoorAnnounce ya tiene la info.
     -- Frase epica (Valar Morghulis, etc): SOLO al toast superior, no sobre la cabeza
     -- (sino se tapa con el cartel grande centrado y otras UIs).
     if args.frase and HoldoorToast then
@@ -593,6 +775,18 @@ HoldoorClient._saldoTick = 0
 
 function HoldoorClient.onTick()
     local est = HoldoorClient.estado
+
+    -- v0.6: Refresh del HUD cada segundo durante fase ACTIVA (para que el Timer corra suave).
+    -- Antes solo se refrescaba en eventos del server (cada 2s) → saltaba de a 2 segundos.
+    if est.fase == "activa" then
+        HoldoorClient._activoTick = (HoldoorClient._activoTick or 0) + 1
+        if HoldoorClient._activoTick >= 60 then  -- ~1 segundo a 60fps
+            HoldoorClient._activoTick = 0
+            if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.expandido then
+                pcall(function() HoldoorHUD.instance:actualizarHUD() end)
+            end
+        end
+    end
 
     -- Refresh periodico del saldo (independiente de la fase del juego)
     HoldoorClient._saldoTick = (HoldoorClient._saldoTick or 0) + 1
@@ -789,6 +983,52 @@ function HoldoorClient.comprar(categoriaId, itemId)
     else
         sendServerCommand(HoldoorConfig.MODULE, "comprar", args)
     end
+
+    -- v0.6.1 fix MP DEFINITIVO (2026-06-16): comprar via comandos admin vanilla.
+    -- /addxp y /additem funcionan en MP B42 porque pasan por el flow autoritario del server
+    -- con privilegios admin. Si el comprador es admin → ejecuta directo. Si NO es admin →
+    -- delega al host admin via sendClientCommand → server le envia el comando al admin
+    -- via sendServerCommand → admin ejecuta el comando con sus privilegios.
+    if itemDef and itemDef.accion then
+        local accion = itemDef.accion
+        local me = getSpecificPlayer(0)
+        local targetUser = me and me:getUsername() or nil
+
+        if accion.tipo == "xp" and accion.perk and accion.amount and targetUser then
+            local perk, amount = tostring(accion.perk), accion.amount
+            if HoldoorClient.esAdmin() then
+                local cmd = string.format('/addxp "%s" %s=%d', targetUser, perk, amount)
+                pcall(function() SendCommandToServer(cmd) end)
+                print("[Holdoor] /addxp local: " .. cmd)
+            else
+                sendClientCommand(HoldoorConfig.MODULE, "delegarAddXp", {
+                    target = targetUser, perk = perk, amount = amount,
+                })
+                print("[Holdoor] /addxp delegado al host admin")
+            end
+        end
+
+        if (accion.tipo == "item" or accion.tipo == "package") and targetUser then
+            local items = {}
+            if accion.tipo == "item" and accion.item then
+                table.insert(items, accion.item)
+            elseif accion.tipo == "package" and accion.items then
+                for _, n in ipairs(accion.items) do table.insert(items, n) end
+            end
+            if HoldoorClient.esAdmin() then
+                for _, itemName in ipairs(items) do
+                    local cmd = string.format('/additem "%s" "%s" 1', targetUser, tostring(itemName))
+                    pcall(function() SendCommandToServer(cmd) end)
+                    print("[Holdoor] /additem local: " .. cmd)
+                end
+            else
+                sendClientCommand(HoldoorConfig.MODULE, "delegarAddItem", {
+                    target = targetUser, items = items,
+                })
+                print("[Holdoor] /additem delegado al host admin (" .. #items .. " items)")
+            end
+        end
+    end
 end
 
 function HoldoorClient.transferir(toUser, tipo, cantidad)
@@ -854,7 +1094,6 @@ end
 -- El unico acceso al panel en MP es el comando /holdoor en el chat, admin-only.
 function HoldoorClient.onKeyPressed(key)
     if key ~= Keyboard.KEY_F10 then return end
-
     -- F10 funciona en SP siempre, y en MP solo si el player es admin (host o staff).
     -- esAdmin() reconoce: SP / host hosted (isServer=true) / accessLevel staff.
     -- Cliente MP random → toast naranja "Solo el host puede".
@@ -967,6 +1206,9 @@ function HoldoorClient.onZombieMuertoLocal(zombie)
     local est = HoldoorClient.estado
     if est.fase ~= "activa" or not est.baseDefinida then return end
 
+    -- v0.6 fix: ignorar por TIEMPO (ventana 2s post-limpieza), no por contador.
+    if os.time() < (est._killsIgnorarHasta or 0) then return end
+
     local ok, zx, zy = pcall(function() return zombie:getX(), zombie:getY() end)
     if ok and zx then
         local dx = zx - est.baseX
@@ -1041,14 +1283,22 @@ HoldoorOverlayTrono._renderDeshabilitado = false
 
 function HoldoorOverlayUI:render()
     if HoldoorOverlayTrono._renderDeshabilitado then return end
-    if not HoldoorOverlayTrono.textura then return end
-    if not HoldoorServer or not HoldoorServer.estado then return end
+    if not HoldoorOverlayTrono.textura then
+        pcall(function() self:setVisible(false) end); return
+    end
+    if not HoldoorServer or not HoldoorServer.estado then
+        pcall(function() self:setVisible(false) end); return
+    end
     local trono = HoldoorServer.estado.trono
-    if not trono or not trono.piezaCentral then return end
+    if not trono or not trono.piezaCentral then
+        pcall(function() self:setVisible(false) end); return
+    end
 
     local hp = 0
     pcall(function() hp = trono.piezaCentral.obj:getHealth() end)
-    if hp <= 0 then return end
+    if hp <= 0 then
+        pcall(function() self:setVisible(false) end); return
+    end
 
     local forja = trono.piezaCentral
     local fx, fy, fz = forja.x, forja.y, forja.z
@@ -1128,16 +1378,47 @@ function HoldoorOverlayUI:render()
     end
     local alpha = HoldoorOverlayTrono._cacheAlpha or 1.0
 
+    -- v0.6.1: CRITICAL — reposicionar el RECT del panel cada frame para que coincida
+    -- EXACTAMENTE con el area del trono en pantalla (180x270 px aprox).
+    -- Sin esto el rect 1920x1080 fullscreen bloquea scroll/hover del inventario incluso
+    -- con setWantMouseEvents(false). En B42 el hit-test del mouse usa el RECT del panel
+    -- ignorando setWantMouseEvents si setVisible(true).
+    local rx = math.floor(drawX)
+    local ry = math.floor(drawY)
+    local rw = math.max(1, math.floor(W))
+    local rh = math.max(1, math.floor(H))
+
+    -- v0.6.1: si el trono esta fuera del viewport, achicar rect a 1x1 en (0,0) y no
+    -- dibujar. Sin esto, PZ clampea las coordenadas al borde y el sprite queda "pegado"
+    -- a la esquina (bug visual del 2026-06-15: trono aparecia flotando arriba-derecha
+    -- cuando el player se alejaba).
+    local sw_view = getCore():getScreenWidth()
+    local sh_view = getCore():getScreenHeight()
+    local fueraViewport = (rx + rw < 0) or (ry + rh < 0) or (rx > sw_view) or (ry > sh_view)
+    if fueraViewport then
+        pcall(function() self:setX(0) end)
+        pcall(function() self:setY(0) end)
+        pcall(function() self:setWidth(1) end)
+        pcall(function() self:setHeight(1) end)
+        return
+    end
+
+    pcall(function() self:setX(rx) end)
+    pcall(function() self:setY(ry) end)
+    pcall(function() self:setWidth(rw) end)
+    pcall(function() self:setHeight(rh) end)
+
     -- En B42, varios métodos de render pueden NO estar implementados.
     -- Si todos fallan, deshabilitamos el overlay para no spammear errores cada frame.
+    -- Coordenadas RELATIVAS al panel ahora (0,0) porque el panel ya esta posicionado en drawX,drawY.
     local ok = false
     pcall(function()
-        self:drawTextureScaled(HoldoorOverlayTrono.textura, drawX, drawY, W, H, alpha)
+        self:drawTextureScaled(HoldoorOverlayTrono.textura, 0, 0, rw, rh, alpha)
         ok = true
     end)
     if not ok then
         pcall(function()
-            self:drawTexture(HoldoorOverlayTrono.textura, drawX, drawY, 1.0, 1.0, 1.0, alpha)
+            self:drawTexture(HoldoorOverlayTrono.textura, 0, 0, 1.0, 1.0, 1.0, alpha)
             ok = true
         end)
     end
@@ -1167,13 +1448,47 @@ function HoldoorOverlayTrono.crearUI()
     if HoldoorOverlayTrono._uiInstance then return end
     local ui = HoldoorOverlayUI:new()
     ui:initialise()
-    -- CLAVE: setWantMouseEvents(false) hace que el motor Java NO consuma eventos
-    -- del mouse aunque el panel sea fullscreen. Sin esto se rompe el inventario.
+    -- v0.6.1: setWantMouseEvents(false) SOLO no alcanza en B42. Necesita ADEMAS setVisible(false)
+    -- para que el dispatcher de mouse ignore el rect fullscreen. Activamos visibility via tick.
     pcall(function() ui:setWantMouseEvents(false) end)
     ui:addToUIManager()
+    ui:setVisible(false)
     HoldoorOverlayTrono._uiInstance = ui
-    print("[Holdoor] Overlay Trono: UI element creado")
+    print("[Holdoor] Overlay Trono: UI element creado (oculto hasta que haya trono visible)")
+end
+
+-- v0.6.1: tick que activa/desactiva visibility segun haya un trono renderizable.
+-- Sin esto el overlay full-screen bloquea scroll/hover del inventario.
+HoldoorOverlayTrono._tickCounter = 0
+function HoldoorOverlayTrono._tickVisibilidad()
+    HoldoorOverlayTrono._tickCounter = (HoldoorOverlayTrono._tickCounter or 0) + 1
+    -- Chequear cada 30 ticks (~0.5s a 60fps) — no necesita ser tiempo real
+    if HoldoorOverlayTrono._tickCounter < 30 then return end
+    HoldoorOverlayTrono._tickCounter = 0
+
+    local ui = HoldoorOverlayTrono._uiInstance
+    if not ui then return end
+
+    -- Verificar si hay un trono renderizable (mismas condiciones que render())
+    local hayTrono = false
+    if HoldoorOverlayTrono.textura and HoldoorServer and HoldoorServer.estado then
+        local trono = HoldoorServer.estado.trono
+        if trono and trono.piezaCentral and trono.piezaCentral.obj then
+            local hp = 0
+            pcall(function() hp = trono.piezaCentral.obj:getHealth() end)
+            if hp > 0 then hayTrono = true end
+        end
+    end
+
+    local visibleAhora = false
+    pcall(function() visibleAhora = ui:isVisible() end)
+    if hayTrono and not visibleAhora then
+        pcall(function() ui:setVisible(true) end)
+    elseif not hayTrono and visibleAhora then
+        pcall(function() ui:setVisible(false) end)
+    end
 end
 
 Events.OnGameStart.Add(HoldoorOverlayTrono.cargar)
 Events.OnGameStart.Add(HoldoorOverlayTrono.crearUI)
+Events.OnTick.Add(HoldoorOverlayTrono._tickVisibilidad)

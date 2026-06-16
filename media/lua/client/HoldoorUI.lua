@@ -152,12 +152,16 @@ function HoldoorOverlay:render()
     end
 end
 
--- Crea el overlay una sola vez al iniciar el juego
+-- Crea el overlay una sola vez al iniciar el juego.
+-- v0.6.1: arranca con setVisible(false) — en B42 los panels invisibles SON ignorados
+-- por el dispatcher de mouse, los visibles NO (aunque tengan setWantMouseEvents=false).
+-- El overlay se activa al abrir el panel admin (HoldoorUI.abrir) y se oculta al cerrar.
 function HoldoorOverlay.crear()
     if HoldoorUI.overlay then return end
     local overlay = HoldoorOverlay:new()
     overlay:initialise()
     overlay:addToUIManager()
+    overlay:setVisible(false)
     HoldoorUI.overlay = overlay
 end
 
@@ -170,9 +174,15 @@ function HoldoorUI.abrir()
         if HoldoorUI.instancia:isVisible() then
             HoldoorUI.instancia:setVisible(false)
             HoldoorUI.instancia:removeFromUIManager()
+            -- v0.6.1: panel cerrado → overlay oculto (sino bloquea mouse del inventario)
+            if HoldoorUI.overlay then HoldoorUI.overlay:setVisible(false) end
         else
             HoldoorUI.instancia:setVisible(true)
             HoldoorUI.instancia:addToUIManager()
+            -- v0.6.1: panel abierto → overlay visible solo si hay base marcada
+            if HoldoorUI.overlay and HoldoorClient and HoldoorClient.estado and HoldoorClient.estado.baseDefinida then
+                HoldoorUI.overlay:setVisible(true)
+            end
         end
         return
     end
@@ -181,6 +191,10 @@ function HoldoorUI.abrir()
     panel:initialise()
     panel:addToUIManager()
     HoldoorUI.instancia = panel
+    -- v0.6.1: panel recien abierto → overlay visible si hay base
+    if HoldoorUI.overlay and HoldoorClient and HoldoorClient.estado and HoldoorClient.estado.baseDefinida then
+        HoldoorUI.overlay:setVisible(true)
+    end
 end
 
 -- ─────────────────────────────────────────────
@@ -744,50 +758,121 @@ local function amenazaInfo(oleada)
     end
 end
 
+-- v0.6.1: Sub-zona del HUD que SÍ captura mouse. El HUD principal es PASSTHROUGH total
+-- (setWantMouseEvents=false), entonces los botones / header viven DENTRO de estas zonas
+-- para que reciban clicks. Sin estas zonas, todo el HUD seria click-through y los botones
+-- (TIENDA, Enviar monedas, toggle +/-) no funcionarian.
+-- El refactor del 2026-06-15 separa el HUD en:
+--   - HUD root (passthrough — no captura nada, no rompe inventario/hover detras)
+--   - headerZone (sub-zona arriba — labels titulo + boton toggle)
+--   - btnZone (sub-zona abajo — botones Enviar / TIENDA)
+-- Los labels del body del HUD viven en el root porque solo se renderizan (no necesitan mouse).
+HoldoorHUDInputZone = ISPanel:derive("HoldoorHUDInputZone")
+function HoldoorHUDInputZone:new(x, y, w, h)
+    local o = ISPanel.new(self, x, y, w, h)
+    setmetatable(o, self); self.__index = self
+    o.background  = false   -- transparente — deja ver el fondo del HUD padre
+    o.borderColor = { r=0, g=0, b=0, a=0 }
+    return o
+end
+-- Default setWantMouseEvents=true → captura clicks de los botones hijos.
+
+-- v0.6.1: Sub-zona ESPECIAL con drag custom. Cuando el user arrastra el mouse sobre
+-- esta zona, se mueve el PADRE (HoldoorHUD entero). Se usa para el headerZone para
+-- que el HUD lateral siga siendo movible despues del refactor de sub-zonas.
+-- Los hijos clickeables (ej. btnToggle) consumen sus propios clicks antes de llegar
+-- aca, por lo que no se rompe el flujo de botones.
+HoldoorHUDDragZone = HoldoorHUDInputZone:derive("HoldoorHUDDragZone")
+function HoldoorHUDDragZone:new(x, y, w, h)
+    local o = HoldoorHUDInputZone.new(self, x, y, w, h)
+    setmetatable(o, self); self.__index = self
+    o._dragging = false
+    return o
+end
+function HoldoorHUDDragZone:onMouseDown(x, y)
+    if not self.parent then return false end
+    self._dragging = true
+    self._dragOffX = getMouseX() - self.parent:getX()
+    self._dragOffY = getMouseY() - self.parent:getY()
+    return true
+end
+function HoldoorHUDDragZone:onMouseUp(x, y)
+    self._dragging = false
+    return true
+end
+function HoldoorHUDDragZone:onMouseUpOutside(x, y)
+    self._dragging = false
+    return true
+end
+function HoldoorHUDDragZone:onMouseMove(dx, dy)
+    if self._dragging and self.parent then
+        self.parent:setX(getMouseX() - self._dragOffX)
+        self.parent:setY(getMouseY() - self._dragOffY)
+    end
+    return true
+end
+function HoldoorHUDDragZone:onMouseMoveOutside(dx, dy)
+    if self._dragging and self.parent then
+        self.parent:setX(getMouseX() - self._dragOffX)
+        self.parent:setY(getMouseY() - self._dragOffY)
+    end
+    return true
+end
+
 function HoldoorHUD:new(x, y)
     local o = ISPanel.new(self, x, y, HUD_W, HUD_H_HEAD)
     setmetatable(o, self)
     self.__index = self
     o.backgroundColor = COLOR_HUD_BG
     o.borderColor     = COLOR_BORDE
-    o.moveWithMouse   = true
+    -- v0.6.1: moveWithMouse REMOVIDO. El HUD root no recibe eventos por ser passthrough.
+    -- Para drag necesitariamos sub-zona dedicada — se hace en otro sprint si Nahuel lo quiere.
     o.expandido       = false
     return o
 end
 
--- HUD lateral: el panel padre captura mouse SOLO en el header (zona draggable)
--- y cuando el cursor esta sobre algun hijo interactivo (botones).
--- En el resto del area del HUD el mouse pasa al inventario y otras UIs detras.
--- Resuelve el bug donde el inventario no se expande con el HUD presente.
-function HoldoorHUD:isMouseOver()
-    local mx, my = getMouseX() - self:getAbsoluteX(), getMouseY() - self:getAbsoluteY()
-    -- 1) Header (titulo + boton +/-): draggable
-    if my >= 0 and my <= HUD_H_HEAD and mx >= 0 and mx <= self.width then
-        return true
-    end
-    -- 2) Sobre algun hijo interactivo (botones TIENDA, Enviar monedas, etc.)
-    return self:isMouseOverChild()
-end
+-- v0.6.1: HUD root PASSTHROUGH total. PZ no le envia ningun evento del mouse.
+-- Los clicks de los botones llegan via las sub-zonas (headerZone, btnZone) que SI capturan.
+-- Esto resuelve el bug critico donde el HUD bloqueaba scroll/hover/tooltips del inventario
+-- vanilla detras (encontrado 2026-06-15, plan A con guards fallo, este es plan B definitivo).
+function HoldoorHUD:isMouseOver()              return false end
+function HoldoorHUD:onMouseDown(x, y)          return false end
+function HoldoorHUD:onMouseUp(x, y)            return false end
+function HoldoorHUD:onMouseMove(dx, dy)        return false end
+function HoldoorHUD:onMouseMoveOutside(dx, dy) return false end
+function HoldoorHUD:onMouseDownOutside(x, y)   return false end
+function HoldoorHUD:onMouseUpOutside(x, y)     return false end
+function HoldoorHUD:onRightMouseDown(x, y)     return false end
+function HoldoorHUD:onRightMouseUp(x, y)       return false end
+function HoldoorHUD:onMouseWheel(del)          return false end
 
 function HoldoorHUD:initialise()
     ISPanel.initialise(self)
+    -- CLAVE: passthrough total. Sin esto el rect del HUD bloquea inventario detras.
+    pcall(function() self:setWantMouseEvents(false) end)
     self:_crearContenido()
 end
 
 function HoldoorHUD:_crearContenido()
     local pad = 8
 
-    -- Header
+    -- v0.6.1: headerZone captura clicks del header (btnToggle) Y permite DRAG del HUD.
+    -- Usa HoldoorHUDDragZone (extiende InputZone) que mueve al padre al arrastrar.
+    self.headerZone = HoldoorHUDDragZone:new(0, 0, HUD_W, HUD_H_HEAD)
+    self.headerZone:initialise()
+    self:addChild(self.headerZone)
+
+    -- Header — adentro de la zona interactiva (NO directo en self)
     self.lblTit = ISLabel:new(pad, 7, 16, "HOLDOOR", COLOR_HUD_ORO.r, COLOR_HUD_ORO.g, COLOR_HUD_ORO.b, 1, UIFont.Small, true)
-    self:addChild(self.lblTit)
+    self.headerZone:addChild(self.lblTit)
 
     self.lblHeadInfo = ISLabel:new(pad + 78, 7, 16, "", 0.90, 0.85, 0.55, 1, UIFont.Small, true)
-    self:addChild(self.lblHeadInfo)
+    self.headerZone:addChild(self.lblHeadInfo)
 
     self.btnToggle = ISButton:new(HUD_W - 32, 3, 28, 22, "+", self, HoldoorHUD.onToggle)
     self.btnToggle.backgroundColor = { r=0.10, g=0.09, b=0.07, a=1 }
     self.btnToggle.borderColor     = { r=0.50, g=0.35, b=0.10, a=0.7 }
-    self:addChild(self.btnToggle)
+    self.headerZone:addChild(self.btnToggle)
 
     -- Body
     local y = HUD_H_HEAD + 8
@@ -839,19 +924,27 @@ function HoldoorHUD:_crearContenido()
     y = y + 18
     y = y + 4
 
-    -- Boton enviar monedas a otro jugador
-    self.btnEnviar = ISButton:new(pad, y, HUD_W - pad * 2, 24, "Enviar monedas a otro jugador", self, HoldoorHUD.onEnviar)
+    -- v0.6.1: btnZone captura clicks de Enviar+TIENDA. Coords de los botones son
+    -- RELATIVAS a btnZone (no a self). Sin esta zona los botones no recibirian clicks
+    -- porque el HUD root es passthrough.
+    local btnZoneH = 30 + 26 + 4   -- alto Enviar + alto TIENDA + padding
+    self.btnZone = HoldoorHUDInputZone:new(0, y, HUD_W, btnZoneH)
+    self.btnZone:initialise()
+    self:addChild(self.btnZone)
+
+    -- Boton enviar monedas a otro jugador — coords RELATIVAS a btnZone (y=0)
+    self.btnEnviar = ISButton:new(pad, 0, HUD_W - pad * 2, 24, "Enviar monedas a otro jugador", self, HoldoorHUD.onEnviar)
     self.btnEnviar.backgroundColor = { r=0.20, g=0.30, b=0.18, a=1 }
     self.btnEnviar.borderColor     = { r=0.40, g=0.65, b=0.25, a=1 }
-    self:addChild(self.btnEnviar)
-    y = y + 30
+    self.btnZone:addChild(self.btnEnviar)
 
-    -- Boton tienda
-    self.btnTienda = ISButton:new(pad, y, HUD_W - pad * 2, 26, "TIENDA", self, HoldoorHUD.onTienda)
+    -- Boton tienda — coords RELATIVAS a btnZone (y=30)
+    self.btnTienda = ISButton:new(pad, 30, HUD_W - pad * 2, 26, "TIENDA", self, HoldoorHUD.onTienda)
     self.btnTienda.backgroundColor = { r=0.25, g=0.12, b=0.35, a=1 }
     self.btnTienda.borderColor     = { r=0.70, g=0.30, b=0.95, a=1 }
-    self:addChild(self.btnTienda)
-    y = y + 34
+    self.btnZone:addChild(self.btnTienda)
+
+    y = y + btnZoneH + 4
 
     -- Radar — visible solo cuando quedan <= 5 zombies en oleada activa
     self.lblRadarTit = ISLabel:new(pad, y, 16, "RADAR  -- zombis restantes", 1.0, 0.30, 0.18, 1, UIFont.Small, true)
@@ -894,7 +987,10 @@ function HoldoorHUD:_setExpandido(v)
         self.lblFzaHUD, self.lblAmenHUD, self.lblBaseDir, self.lblTronoHP,
         self.lblNotifHUD,
         self.lblKillsHUD, self.lblKillsPartidaHUD,
-        self.btnEnviar, self.btnTienda,   -- monedas/materiales dibujados en :render()
+        -- v0.6.1: en lugar de btnEnviar/btnTienda directos, ocultamos su zona
+        -- (los botones viven dentro de btnZone tras el refactor). Monedas/materiales
+        -- siguen dibujandose en :render() del HUD root, no son ISLabel.
+        self.btnZone,
     }
     for _, c in ipairs(hijos) do if c then c:setVisible(v) end end
     -- Radar: visible solo si expandido Y radarVisible
@@ -941,11 +1037,10 @@ function HoldoorHUD:actualizarHUD()
         self.lblHeadInfo:setName("PREP " .. segsLeft .. "s " .. modoCorto)
         self.lblHeadInfo:setColor(0.90, 0.85, 0.55, 1)
     elseif fase == "activa" then
-        local rest = est.zombiesRestantes or 0
-        local tot  = est.zombiesTotal or 0
-        local sr   = est.srTotal or 0
-        local suffix = sr > 0 and ("+" .. sr .. "SR") or ""
-        self.lblHeadInfo:setName("OL." .. oleada .. " " .. modoCorto .. " " .. rest .. "/" .. tot .. " " .. suffix)
+        -- v0.6 modelo C: header muestra "OL.N MODO 23/45" (kills vs target)
+        local kills  = est.oleadaKills or 0
+        local target = est.oleadaTargetKills or 0
+        self.lblHeadInfo:setName("OL." .. oleada .. " " .. modoCorto .. " " .. kills .. "/" .. target)
         self.lblHeadInfo:setColor(COLOR_HUD_RED.r, COLOR_HUD_RED.g, COLOR_HUD_RED.b, 1)
     elseif fase == "pausa" then
         local segsLeft = math.max(0, math.ceil(est.countdownFinLocal - os.time()))
@@ -1015,17 +1110,17 @@ function HoldoorHUD:actualizarHUD()
             self.lblTimHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
         end
     elseif fase == "activa" then
-        local rest = est.zombiesRestantes or 0
-        local tot  = est.zombiesTotal or 0
-        local sr   = est.srTotal or 0
-        local norm = tot - sr
-        if sr > 0 then
-            self.lblTimHUD:setName("Zombis: " .. rest .. "/" .. tot .. "  (" .. norm .. "Z + " .. sr .. " SR)")
-        else
-            self.lblTimHUD:setName("Zombis: " .. rest .. " / " .. tot)
-        end
-        if rest > 0 then
+        -- v0.6 modelo C: Timer + Kills (en vez de Zombis X/Y).
+        local inicio = est.oleadaInicioSec or os.time()
+        local total  = est.oleadaDuracionSec or 180
+        local restante = math.max(0, total - (os.time() - inicio))
+        local mm = math.floor(restante / 60)
+        local ss = restante % 60
+        self.lblTimHUD:setName(string.format("Tiempo: %d:%02d", mm, ss))
+        if restante <= 15 then
             self.lblTimHUD:setColor(COLOR_HUD_RED.r, COLOR_HUD_RED.g, COLOR_HUD_RED.b, 1)
+        elseif restante <= 45 then
+            self.lblTimHUD:setColor(COLOR_HUD_WARN.r, COLOR_HUD_WARN.g, COLOR_HUD_WARN.b, 1)
         else
             self.lblTimHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
         end
@@ -1038,14 +1133,29 @@ function HoldoorHUD:actualizarHUD()
         self.lblTimHUD:setColor(0.55, 0.55, 0.55, 1)
     end
 
-    -- Fuerza de la próxima oleada
-    if activo then
-        local cfg    = est.config or {}
-        local tam    = cfg.tamanoOleada or 20
+    -- v0.6 modelo C: en fase activa mostramos KILLS X/Y. En otras fases, target de la oleada siguiente.
+    if fase == "activa" then
+        local kills  = est.oleadaKills or 0
+        local target = est.oleadaTargetKills or 0
+        self.lblFzaHUD:setName(string.format("Kills: %d / %d", kills, target))
+        if target > 0 and kills >= target then
+            self.lblFzaHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)   -- target alcanzado = cierre limpio
+        else
+            self.lblFzaHUD:setColor(0.85, 0.70, 0.40, 1)
+        end
+    elseif activo then
+        -- v0.6: target real de la oleada SIGUIENTE (lee oleadasV6 + mult del modo)
+        local modoId = (est.config and est.config.modoId) or "normal"
+        local modoCfg = (HoldoorConfig.modosV6 or {})[modoId] or HoldoorConfig.modosV6.normal or {}
         local prox   = oleada + 1
-        local escala = math.min(1 + (prox - 1) * 0.1, 3.0)
-        local nZom   = math.floor(tam * escala)
-        self.lblFzaHUD:setName("Siguiente: ~" .. nZom .. " zombis")
+        local idx    = math.min(prox, #(HoldoorConfig.oleadasV6 or {}))
+        local oleadaCfg = HoldoorConfig.oleadasV6 and HoldoorConfig.oleadasV6[idx]
+        if oleadaCfg then
+            local targetProx = math.floor((oleadaCfg.targetKills or 50) * (modoCfg.multKills or 1.0))
+            self.lblFzaHUD:setName("Siguiente: ~" .. targetProx .. " kills")
+        else
+            self.lblFzaHUD:setName("Siguiente: --")
+        end
         self.lblFzaHUD:setColor(0.85, 0.70, 0.40, 1)
     else
         self.lblFzaHUD:setName("Siguiente: --")
@@ -1139,9 +1249,12 @@ function HoldoorHUD:actualizarHUD()
         end
     end
 
-    -- Radar: activar/desactivar segun zombies restantes
+    -- v0.6 modelo C: el radar queda DESHABILITADO permanentemente. En modelo C
+    -- nunca quedan "pocos zombies al final" porque el spawn es continuo hasta el timer.
+    -- El código del radar sigue presente comentado (preservación intencional) por si
+    -- en futuro se reactiva (ej. para boss fights o eventos especiales).
     local zombiesLeft = est.zombiesRestantes or 0
-    local mostrarRadar = (est.fase == "activa" and zombiesLeft > 0 and zombiesLeft <= 5)
+    local mostrarRadar = false  -- v0.6: false hardcoded (era: fase==activa and zombiesLeft<=5)
     if mostrarRadar ~= self.radarVisible then
         self.radarVisible = mostrarRadar
         self.radarTick    = 89  -- forzar escaneo inmediato al activarse
@@ -1316,19 +1429,6 @@ end
 
 function HoldoorHUD.crear()
     if HoldoorHUD.instance then return end
-    -- [TEST DIAGNOSTICO 2026-06-15] HUD comentado temporalmente para confirmar
-    -- si es el causante del bloqueo de hover sobre inventario y otras UIs.
-    -- Si con esto el inventario funciona OK → confirmado que es el HUD.
-    -- Si NO → el culpable es otro panel. Buscar.
-    --[[
-    local sw = getCore():getScreenWidth()
-    local hud = HoldoorHUD:new(sw - HUD_W - 16, 16)
-    hud:initialise()
-    hud:addToUIManager()
-    HoldoorHUD.instance = hud
-    --]]
-    -- Re-activado todo despues del diagnostico. Cada panel fullscreen ahora llama
-    -- setWantMouseEvents(false) en su :initialise() para no consumir eventos del mouse.
     local sw = getCore():getScreenWidth()
     local hud = HoldoorHUD:new(sw - HUD_W - 16, 16)
     hud:initialise()
@@ -1340,6 +1440,10 @@ function HoldoorHUD.crear()
 end
 
 Events.OnGameStart.Add(HoldoorHUD.crear)
+
+-- v0.6.1: las funciones diagnosticas de toggle UI (F6/F7/F8/F9/F11/F12) fueron removidas
+-- antes del release. Se usaron para cazar el bug de mouse passthrough (gotcha #29).
+-- Si en el futuro se necesitan, restaurar desde git history del sprint v0.6.1.
 
 -- ─────────────────────────────────────────────
 --  ANUNCIO ÉPICO CENTRADO

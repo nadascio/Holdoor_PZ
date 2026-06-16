@@ -1,0 +1,21 @@
+v0.6.0 — Sistema de oleadas rediseñado
+
+Cambio mayor: el modelo de oleadas se rehizo de cero.
+
+Antes: matabas N zombis y la oleada terminaba.
+Ahora: cada oleada tiene tiempo Y meta de kills al mismo tiempo. Llegás al target antes del tiempo → CIERRE LIMPIO con +25% de recompensa.
+
+Otros highlights:
+- Cúmulos de 2-5 zombis (no más spawn perdigonado)
+- Drops live por kill (monedas, materiales, items raros al instante)
+- Aggro real: los zombis vienen agresivos al Trono, no se quedan pasivos
+- HP del Trono rebalanceado por dificultad
+- Pool de items raros ampliado (51 items validados contra B42 vanilla)
+- Notificación visible del botín al cerrar cada oleada
+
+Fixes críticos:
+- El inventario vanilla ya no se rompe con el mod activo (bug del scroll/hover de items)
+- HUD lateral movible restaurado
+- Drops por kill ya no crashean con items inválidos
+
+Hold the door... Hodor.
