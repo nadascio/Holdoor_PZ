@@ -152,6 +152,14 @@ function HoldoorServer.iniciar(jugador, config)
         multiplier = mult,
     })
 
+    -- v0.7: limpieza ANTES del countdown de preparacion. Los async OnZombieDead
+    -- se procesan durante los 5s de preparacion (fase != "activa") = no cuentan
+    -- como kills. Cuando arranca _lanzarOleada, kills=0 limpio.
+    local eliminadosIni = HoldoorServer._limpiarZona() or 0
+    if eliminadosIni > 0 then
+        HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminadosIni })
+    end
+
     HoldoorServer._iniciarPreparacion(5)
 end
 
@@ -877,10 +885,12 @@ function HoldoorServer._spawnTick()
     -- Tamaño del cúmulo: 2-5 zombies. Random por tick para que cada cúmulo se sienta distinto.
     local tamCumulo = 2 + ZombRand(4)   -- 2, 3, 4 o 5
 
-    -- Posición base del cúmulo: ángulo random, distancia = radioConfigurado + 5 (fijo).
+    -- Posición base del cúmulo: ángulo random, distancia = radioConfigurado + 15.
+    -- v0.7: subido de +5 a +15 (de 20 a 30 tiles del Trono) para alejar el spawn
+    -- de la zona congestionada de cadáveres acumulados.
     local bx, by, bz = estado.baseX, estado.baseY, estado.baseZ
     local radio = (estado.config and estado.config.radioSpawn) or 25
-    local dist  = radio + 5
+    local dist  = radio + 15
 
     -- SandboxVar Speed (todos los zombies del cúmulo lo heredan)
     local origSpeed = SandboxVars and SandboxVars.ZombieConfig and SandboxVars.ZombieConfig.Speed
@@ -1012,28 +1022,58 @@ function HoldoorServer._lanzarOleada()
     -- Fix v0.6: estado.modoId nunca se asigna directo, vive en estado.config.modoId
     local modoId = (estado.config and estado.config.modoId) or "normal"
 
-    -- Limpiar zona antes de cada oleada (igual que v0.5)
-    local eliminados = HoldoorServer._limpiarZona()
-    if eliminados and eliminados > 0 then
-        HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminados })
-    end
+    -- v0.7: NO limpiar aca. La limpieza al INICIAR instancia se hizo en `comenzar`
+    -- (antes del countdown de preparacion). Las limpiezas entre oleadas se hacen
+    -- en _oleadaCompletada con fase="pausa" para no contar async como kills.
 
     -- Obtener config del modo V6 (fallback a normal)
     local modoCfg = (HoldoorConfig.modosV6 or {})[modoId] or HoldoorConfig.modosV6.normal
 
-    -- Obtener config de la oleada actual (clamp al último entry de la curva)
-    local oleadaIdx = math.min(oleada, #(HoldoorConfig.oleadasV6 or {}))
-    local oleadaCfg = HoldoorConfig.oleadasV6[oleadaIdx] or {
-        duracionSeg = 180, targetKills = 50,
-        spawnInicio = 4.0, spawnFin = 2.0,
-        pctCorredores = 0.10,
-    }
+    -- v0.7 #14: Modos en HoldoorConfig.hordasMP usan flow CONTINUO con /createhorde2.
+    -- Si modoId esta en esa tabla → leemos params de ahi (duracion, target).
+    -- Sino → flow legacy (curvaFacilV7 si modo=facil, sino oleadasV6 + multipliers).
+    local hordasMPCfg = HoldoorConfig.hordasMP and HoldoorConfig.hordasMP[modoId]
+    local hordasMPOleadaCfg = nil
+    if hordasMPCfg and hordasMPCfg.oleadas then
+        local idxMP = math.min(oleada, #hordasMPCfg.oleadas)
+        hordasMPOleadaCfg = hordasMPCfg.oleadas[idxMP]
+    end
 
-    -- Calcular parametros con multiplicadores del modo
-    local duracion      = math.floor((oleadaCfg.duracionSeg or 180) * (modoCfg.multDuracion or 1.0))
-    local target        = math.floor((oleadaCfg.targetKills or 50) * (modoCfg.multKills or 1.0))
-    local spawnInicio   = (oleadaCfg.spawnInicio or 4.0) * (modoCfg.multSpawn or 1.0)
-    local spawnFin      = (oleadaCfg.spawnFin or 2.0)    * (modoCfg.multSpawn or 1.0)
+    -- v0.7: Facil viejo usa curva propia (curvaFacilV7) — legacy, solo si NO hay hordasMP.
+    local usaCurvaPropia = (modoId == "facil") and (not hordasMPOleadaCfg) and HoldoorConfig.curvaFacilV7 and #HoldoorConfig.curvaFacilV7 > 0
+    local oleadaCfg
+    if hordasMPOleadaCfg then
+        oleadaCfg = hordasMPOleadaCfg
+    elseif usaCurvaPropia then
+        local idx = math.min(oleada, #HoldoorConfig.curvaFacilV7)
+        oleadaCfg = HoldoorConfig.curvaFacilV7[idx]
+    else
+        local oleadaIdx = math.min(oleada, #(HoldoorConfig.oleadasV6 or {}))
+        oleadaCfg = HoldoorConfig.oleadasV6[oleadaIdx] or {
+            duracionSeg = 180, targetKills = 50,
+            spawnInicio = 4.0, spawnFin = 2.0,
+            pctCorredores = 0.10,
+        }
+    end
+
+    -- Calcular parametros: si hordasMP o curva propia, valores absolutos. Sino multipliers.
+    local duracion, target, spawnInicio, spawnFin
+    if hordasMPOleadaCfg then
+        duracion    = math.floor(oleadaCfg.duracionSeg or 300)
+        target      = math.floor(oleadaCfg.targetKills or 50)
+        spawnInicio = 0   -- no aplica (no usamos _spawnTick)
+        spawnFin    = 0
+    elseif usaCurvaPropia then
+        duracion    = math.floor(oleadaCfg.duracionSeg or 300)
+        target      = math.floor(oleadaCfg.targetKills or 50)
+        spawnInicio = oleadaCfg.spawnInicio or 15.0
+        spawnFin    = oleadaCfg.spawnFin    or 15.0
+    else
+        duracion    = math.floor((oleadaCfg.duracionSeg or 180) * (modoCfg.multDuracion or 1.0))
+        target      = math.floor((oleadaCfg.targetKills or 50) * (modoCfg.multKills or 1.0))
+        spawnInicio = (oleadaCfg.spawnInicio or 4.0) * (modoCfg.multSpawn or 1.0)
+        spawnFin    = (oleadaCfg.spawnFin or 2.0)    * (modoCfg.multSpawn or 1.0)
+    end
     local pctCorredores = oleadaCfg.pctCorredores or 0.10
 
     -- Setear estado del modelo C
@@ -1085,6 +1125,189 @@ function HoldoorServer._lanzarOleada()
         duracion = duracion,
         target   = target,
     })
+
+    -- v0.7 #13: TEST flow paralelo con hordas MP.
+    -- Si modo=test Y flag activo, NO usa _spawnTick. Spawnea N hordas con /createhorde2.
+    -- Setea estado.usarHordasMPActivo que onTick lee para skipear _spawnTick.
+    local hordasMP = HoldoorConfig.testHordasMP
+    if modoId == "test" and hordasMP and hordasMP.activo then
+        estado.usarHordasMPActivo = true
+        HoldoorServer._spawnHordasMP(oleada)
+    else
+        estado.usarHordasMPActivo = false
+        estado._hordasMPPendientes = nil
+    end
+
+    -- v0.7 #14: FACIL (y futuros modos en hordasMP) usa flow CONTINUO con /createhorde2.
+    -- Cada intervaloSeg dispara cantPuntos hordas (cardinales random). NO usa _spawnTick.
+    -- _aggroSostenido sigue corriendo igual.
+    if hordasMPOleadaCfg then
+        estado.usarHordasContinuasMP = true
+        estado.hordasContinuasCfg = hordasMPOleadaCfg   -- guardar config de la oleada actual
+        estado.proximoSpawnCicloSec = os.time()         -- primer ciclo al T=0
+        -- Bridge /removezombies PRE-spawn: limpia cadaveres residuales del setHealth previo
+        -- (se ejecuto en _oleadaCompletada de la oleada anterior, o en comenzar() para oleada 1).
+        local radioBridge = HoldoorConfig.aggroRadio or 150
+        HoldoorServer.notificarTodos("ejecutarLimpiezaAdmin", {
+            x = estado.baseX, y = estado.baseY, z = estado.baseZ or 0, radio = radioBridge,
+        })
+        print(string.format(
+            "[Holdoor FacilHordasMP] Oleada %d arranca | %d puntos x %d zombies cada %ds | duracion=%ds | target=%d | bridge pre-spawn radio=%d",
+            oleada, hordasMPOleadaCfg.cantPuntos or 2, hordasMPOleadaCfg.zombiesPorPunto or 3,
+            hordasMPOleadaCfg.intervaloSeg or 30, duracion, target, radioBridge
+        ))
+    else
+        estado.usarHordasContinuasMP = false
+        estado.hordasContinuasCfg = nil
+    end
+end
+
+-- ─────────────────────────────────────────────
+-- v0.7 #14: SPAWN CONTINUO via /createhorde2 (flow Facil + futuros)
+-- En onTick rama "activa", si usarHordasContinuasMP=true, este se ejecuta
+-- en lugar de _spawnTick. Cada intervaloSeg dispara cantPuntos hordas
+-- en cardinales N/E/S/O elegidos al azar (rotacion random por ciclo).
+-- ─────────────────────────────────────────────
+function HoldoorServer._procesarHordasContinuas()
+    local estado = HoldoorServer.estado
+    if not estado.usarHordasContinuasMP then return end
+    local cfg = estado.hordasContinuasCfg
+    if not cfg then return end
+    local ahora = os.time()
+    if ahora < (estado.proximoSpawnCicloSec or 0) then return end
+
+    local modoId = (estado.config and estado.config.modoId) or "facil"
+    local cfgMP = HoldoorConfig.hordasMP and HoldoorConfig.hordasMP[modoId] or {}
+    -- v0.7 #14c: la distancia de spawn la define el panel (radioSpawn). Asi el circulo
+    -- amarillo de pelotitas refleja EXACTO donde aparecen los zombies. Default fallback 15.
+    local dist = (estado.config and estado.config.radioSpawn)
+              or (HoldoorConfig.defaults and HoldoorConfig.defaults.radioSpawn)
+              or 15
+    local rad  = cfgMP.radiusSpawnInterno or 3
+    local bx, by, bz = estado.baseX, estado.baseY, estado.baseZ or 0
+
+    -- 4 puntos cardinales (PZ Y+ = sur, Y- = norte)
+    local cardinales = {
+        { x = bx,        y = by - dist, label = "N" },
+        { x = bx + dist, y = by,        label = "E" },
+        { x = bx,        y = by + dist, label = "S" },
+        { x = bx - dist, y = by,        label = "O" },
+    }
+
+    -- Rotacion random: shuffle Fisher-Yates con ZombRand, elegir los primeros cantPuntos.
+    for i = #cardinales, 2, -1 do
+        local j = ZombRand(i) + 1
+        cardinales[i], cardinales[j] = cardinales[j], cardinales[i]
+    end
+    local n = math.min(cfg.cantPuntos or 2, #cardinales)
+    local cnt = cfg.zombiesPorPunto or 3
+    local labels = {}
+    for i = 1, n do
+        local p = cardinales[i]
+        HoldoorServer.notificarTodos("ejecutarHordaAdmin", {
+            x = p.x, y = p.y, z = bz,
+            count = cnt, radius = rad, label = p.label,
+        })
+        table.insert(labels, p.label)
+    end
+    print(string.format(
+        "[Holdoor FacilHordasMP] Ciclo: %s x %d zombies (proximo ciclo en %ds)",
+        table.concat(labels, "/"), cnt, cfg.intervaloSeg or 30
+    ))
+
+    -- Reschedule proximo ciclo
+    estado.proximoSpawnCicloSec = ahora + (cfg.intervaloSeg or 30)
+end
+
+-- ─────────────────────────────────────────────
+-- v0.7 #13: SPAWN VIA HORDAS MP (solo TEST con flag activo)
+-- Programa N hordas en puntos cardinales segun el patron de la oleada.
+-- Las hordas se procesan en onTick (_procesarHordasMPPendientes).
+-- ─────────────────────────────────────────────
+function HoldoorServer._spawnHordasMP(oleadaNum)
+    local cfg = HoldoorConfig.testHordasMP or {}
+    local estado = HoldoorServer.estado
+    local bx = estado.baseX
+    local by = estado.baseY
+    local bz = estado.baseZ or 0
+
+    local dist = cfg.distanciaTrono or 22
+    local cnt  = cfg.zombiesPorHorda or 15
+    local rad  = cfg.radiusSpawnInterno or 3
+
+    -- 4 puntos cardinales alrededor del Trono. En PZ Y+ = sur, Y- = norte.
+    local puntos = {
+        { x = bx,        y = by - dist, label = "N" },
+        { x = bx + dist, y = by,        label = "E" },
+        { x = bx,        y = by + dist, label = "S" },
+        { x = bx - dist, y = by,        label = "O" },
+    }
+
+    local patron = (cfg.patronPorOleada or {})[oleadaNum] or "simultaneo"
+    local ahora = os.time()
+    estado._hordasMPPendientes = {}
+
+    if patron == "simultaneo" then
+        -- Las 4 al T=0
+        for _, p in ipairs(puntos) do
+            table.insert(estado._hordasMPPendientes, {
+                ts = ahora, x = p.x, y = p.y, z = bz, count = cnt, radius = rad, label = p.label,
+            })
+        end
+    elseif patron == "escalonado" then
+        -- Una cada N seg
+        local intervalo = cfg.escalonadoIntervaloSeg or 30
+        for i, p in ipairs(puntos) do
+            table.insert(estado._hordasMPPendientes, {
+                ts = ahora + (i - 1) * intervalo, x = p.x, y = p.y, z = bz, count = cnt, radius = rad, label = p.label,
+            })
+        end
+    elseif patron == "hibrido" then
+        -- 2 al T=0 (N + E) + 2 al T=hibridoSegundaTandaSeg (S + O)
+        local t2 = ahora + (cfg.hibridoSegundaTandaSeg or 60)
+        table.insert(estado._hordasMPPendientes, { ts = ahora, x = puntos[1].x, y = puntos[1].y, z = bz, count = cnt, radius = rad, label = puntos[1].label })
+        table.insert(estado._hordasMPPendientes, { ts = ahora, x = puntos[2].x, y = puntos[2].y, z = bz, count = cnt, radius = rad, label = puntos[2].label })
+        table.insert(estado._hordasMPPendientes, { ts = t2,    x = puntos[3].x, y = puntos[3].y, z = bz, count = cnt, radius = rad, label = puntos[3].label })
+        table.insert(estado._hordasMPPendientes, { ts = t2,    x = puntos[4].x, y = puntos[4].y, z = bz, count = cnt, radius = rad, label = puntos[4].label })
+    else
+        -- Default: simultaneo
+        for _, p in ipairs(puntos) do
+            table.insert(estado._hordasMPPendientes, {
+                ts = ahora, x = p.x, y = p.y, z = bz, count = cnt, radius = rad, label = p.label,
+            })
+        end
+    end
+
+    print(string.format(
+        "[Holdoor TEST-HordasMP] Oleada %d patron=%s | %d hordas agendadas | %d zombies/horda | dist=%d tiles",
+        oleadaNum, patron, #estado._hordasMPPendientes, cnt, dist
+    ))
+end
+
+-- v0.7 #13: procesar cola de hordas pendientes en onTick (fase activa).
+-- Cuando un timestamp vence, emite evento para que el cliente host dispare
+-- /createhorde2 admin via SendCommandToServer (bridge MP-safe).
+function HoldoorServer._procesarHordasMPPendientes()
+    local estado = HoldoorServer.estado
+    local cola = estado._hordasMPPendientes
+    if not cola or #cola == 0 then return end
+    local ahora = os.time()
+    local i = 1
+    while cola[i] do
+        local h = cola[i]
+        if h.ts <= ahora then
+            table.remove(cola, i)
+            HoldoorServer.notificarTodos("ejecutarHordaAdmin", {
+                x = h.x, y = h.y, z = h.z, count = h.count, radius = h.radius, label = h.label,
+            })
+            print(string.format(
+                "[Holdoor TEST-HordasMP] Horda %s disparada en (%d,%d) | %d zombies",
+                h.label, h.x, h.y, h.count
+            ))
+        else
+            i = i + 1
+        end
+    end
 end
 
 -- ─────────────────────────────────────────────
@@ -1233,22 +1456,72 @@ function HoldoorServer._asegurarColchon()
     end
 end
 
-function HoldoorServer._limpiarZona()
+-- v0.7: limpieza SOLO de cadaveres (IsoDeadBody). NO toca zombies vivos.
+-- Pensada para ejecutar DURANTE oleada activa (cada 30s) para que los cadaveres
+-- acumulados no bloqueen los tiles de spawn de nuevos zombies.
+-- Mismo radio (radioSpawn + 30 = ~45 tiles) que _limpiarZona.
+function HoldoorServer._limpiarCadaveres()
     local estado = HoldoorServer.estado
     local bx = estado.baseX
     local by = estado.baseY
     local bz = estado.baseZ
-    local radio = math.floor((estado.config.radioSpawn or 20) + 12)
+    local radio = math.floor((estado.config.radioSpawn or 20) + 30)
 
     local ok_cell, cell = pcall(getCell)
     if not ok_cell or not cell then return 0 end
 
-    local eliminados = 0
+    local cadaveresRemovidos = 0
     for dx = -radio, radio do
         for dy = -radio, radio do
             if dx * dx + dy * dy <= radio * radio then
                 local ok_sq, sq = pcall(function() return cell:getGridSquare(bx + dx, by + dy, bz) end)
                 if ok_sq and sq then
+                    local cuerpos = {}
+                    local ok_smo, smobjs = pcall(function() return sq:getStaticMovingObjects() end)
+                    if ok_smo and smobjs then
+                        local ok_ssz, ssz = pcall(function() return smobjs:size() end)
+                        if ok_ssz and ssz then
+                            for i = 0, ssz - 1 do
+                                local ok_sget, sobj = pcall(function() return smobjs:get(i) end)
+                                if ok_sget and sobj and instanceof(sobj, "IsoDeadBody") then
+                                    table.insert(cuerpos, sobj)
+                                end
+                            end
+                        end
+                    end
+                    for _, body in ipairs(cuerpos) do
+                        local ok_rc = pcall(function() sq:removeCorpse(body, false) end)
+                        if ok_rc then cadaveresRemovidos = cadaveresRemovidos + 1 end
+                    end
+                end
+            end
+        end
+    end
+
+    if cadaveresRemovidos > 0 then
+        print("[Holdoor] Cadaveres in-oleada removidos: " .. cadaveresRemovidos .. " (radio " .. radio .. ")")
+    end
+    return cadaveresRemovidos
+end
+
+function HoldoorServer._limpiarZona()
+    local estado = HoldoorServer.estado
+    local bx = estado.baseX
+    local by = estado.baseY
+    local bz = estado.baseZ
+    local radio = math.floor((estado.config.radioSpawn or 20) + 30)   -- v0.7: +12 -> +30 (~45 tiles)
+
+    local ok_cell, cell = pcall(getCell)
+    if not ok_cell or not cell then return 0 end
+
+    local eliminados = 0
+    local cadaveresRemovidos = 0
+    for dx = -radio, radio do
+        for dy = -radio, radio do
+            if dx * dx + dy * dy <= radio * radio then
+                local ok_sq, sq = pcall(function() return cell:getGridSquare(bx + dx, by + dy, bz) end)
+                if ok_sq and sq then
+                    -- v0.7: zombies vivos (IsoZombie) en MovingObjects
                     local toRemove = {}
                     local ok_mo, objs = pcall(function() return sq:getMovingObjects() end)
                     if ok_mo and objs then
@@ -1262,23 +1535,46 @@ function HoldoorServer._limpiarZona()
                             end
                         end
                     end
-                    -- v0.6 fix: ignorar muertes por TIEMPO no por contador.
-                    -- Antes contabamos N muertes a ignorar pero los onZombieDead son async →
-                    -- si user mataba zombies mientras los de limpieza estaban procesandose,
-                    -- sus kills se "absorbian" por el contador. Ahora ventana fija de 2s.
+                    -- setHealth(0) — patron MP-safe del gotcha #22. Ventana de 2s en
+                    -- _zombiesIgnorarHasta evita inflar kills por async OnZombieDead.
                     for _, z in ipairs(toRemove) do
                         local ok_kill = false
                         pcall(function() z:setHealth(0.0); ok_kill = true end)
                         if not ok_kill then pcall(function() z:setHealth(0); ok_kill = true end) end
                         if ok_kill then eliminados = eliminados + 1 end
                     end
-                    -- Setear ventana de gracia: 2s para que el motor procese los setHealth(0) async
                     if eliminados > 0 then
                         HoldoorServer.estado._zombiesIgnorarHasta = os.time() + 2
+                    end
+
+                    -- v0.7: cadáveres (IsoDeadBody) en StaticMovingObjects.
+                    -- Sin ellos, los tiles quedan bloqueados y addZombiesInOutfit
+                    -- falla silently → no spawnean zombies nuevos en oleadas avanzadas.
+                    -- Patron vanilla: ISSpawnHordeUI:onRemoveBodies + sq:removeCorpse.
+                    local cuerpos = {}
+                    local ok_smo, smobjs = pcall(function() return sq:getStaticMovingObjects() end)
+                    if ok_smo and smobjs then
+                        local ok_ssz, ssz = pcall(function() return smobjs:size() end)
+                        if ok_ssz and ssz then
+                            for i = 0, ssz - 1 do
+                                local ok_sget, sobj = pcall(function() return smobjs:get(i) end)
+                                if ok_sget and sobj and instanceof(sobj, "IsoDeadBody") then
+                                    table.insert(cuerpos, sobj)
+                                end
+                            end
+                        end
+                    end
+                    for _, body in ipairs(cuerpos) do
+                        local ok_rc = pcall(function() sq:removeCorpse(body, false) end)
+                        if ok_rc then cadaveresRemovidos = cadaveresRemovidos + 1 end
                     end
                 end
             end
         end
+    end
+
+    if cadaveresRemovidos > 0 then
+        print("[Holdoor] Cadaveres removidos: " .. cadaveresRemovidos .. " (radio " .. radio .. ")")
     end
 
     if eliminados > 0 then
@@ -1524,18 +1820,45 @@ function HoldoorServer._oleadaCompletada()
         return
     end
 
-    -- Limpiar zombis vivos del radio antes de pausa
-    local eliminadosFinOleada = HoldoorServer._limpiarZona()
-    if eliminadosFinOleada > 0 then
-        print("[Holdoor] Fin de oleada: " .. eliminadosFinOleada .. " zombis residuales limpiados")
-    end
-
     -- v0.6: pausa de 30s default, override por modo (TEST usa 5s para testing rapido)
     local modoIdAct = (estado.config and estado.config.modoId) or "normal"
     local modoCfg   = (HoldoorConfig.modosV6 or {})[modoIdAct] or {}
     local pausaSeg  = modoCfg.pausaSeg or HoldoorConfig.pausaOleadasSegV6 or PAUSA_SEGS or 30
     estado.fase        = "pausa"
     estado.pausaFinSec = os.time() + pausaSeg
+
+    -- v0.7 #14: cierre de oleada con limpieza CONDICIONAL segun modo.
+    --   - Modos en HoldoorConfig.hordasMP (Facil) → setHealth(0) (deja cadaveres lootables
+    --     durante los 30s pausa + 30s prep). El bridge /removezombies se dispara
+    --     al inicio de la PROXIMA oleada (en _lanzarOleada hordasMPOleadaCfg branch).
+    --   - Otros modos (legacy/TEST) → 3 bridges espaciados (v0.7 #12b).
+    if HoldoorConfig.hordasMP and HoldoorConfig.hordasMP[modoIdAct] then
+        -- Cierre Facil: matar con setHealth(0). Los cadaveres quedan lootables 1 minuto
+        -- (30s pausa + 30s preparacion). Al inicio de la proxima oleada, el bridge
+        -- /removezombies (en _lanzarOleada) los limpia y arranca limpio.
+        local eliminadosFinOleada = HoldoorServer._limpiarZona() or 0
+        estado._bridgesPendientes = nil  -- este modo no usa los 3 bridges espaciados
+        estado._zombiesIgnorarHasta = os.time() + 2  -- ventana 2s OnZombieDead async
+        if eliminadosFinOleada > 0 then
+            print(string.format(
+                "[Holdoor FacilHordasMP] Cierre oleada %d: %d zombies eliminados con setHealth (cadaveres lootables ~1min)",
+                estado.oleadaActual or 0, eliminadosFinOleada
+            ))
+        end
+    else
+        -- Flow legacy: 3 bridges espaciados durante la pausa.
+        local radioBridge = HoldoorConfig.aggroRadio or 150
+        local ahoraBr = os.time()
+        local tMid = ahoraBr + math.max(2, math.floor(pausaSeg / 2))
+        local tPre = ahoraBr + math.max(3, pausaSeg - 1)
+        estado._bridgesPendientes = {
+            { ts = ahoraBr, x = estado.baseX, y = estado.baseY, z = estado.baseZ or 0, radio = radioBridge },
+            { ts = tMid,    x = estado.baseX, y = estado.baseY, z = estado.baseZ or 0, radio = radioBridge },
+            { ts = tPre,    x = estado.baseX, y = estado.baseY, z = estado.baseZ or 0, radio = radioBridge },
+        }
+        estado._zombiesIgnorarHasta = ahoraBr + 2
+        print("[Holdoor] Fin de oleada: 3 bridges /removezombies agendados (radio " .. radioBridge .. ", pausa " .. pausaSeg .. "s, T=0/" .. (tMid - ahoraBr) .. "/" .. (tPre - ahoraBr) .. ")")
+    end
 
     local killsStr = buildKillsStr(estado.killsOleada)
     HoldoorServer.notificarTodos("oleadaCompletada", {
@@ -1564,6 +1887,21 @@ end
 
 function HoldoorServer.onTick()
     local estado = HoldoorServer.estado
+
+    -- v0.7 #12b: procesar cola de bridges /removezombies pendientes.
+    -- 3 disparos espaciados se agendan al cierre de oleada (ver _oleadaCompletada).
+    -- Cada uno se dispara cuando os.time() supera su timestamp. Cola FIFO.
+    if estado._bridgesPendientes and #estado._bridgesPendientes > 0 then
+        local ahoraBr = os.time()
+        while estado._bridgesPendientes[1] and estado._bridgesPendientes[1].ts <= ahoraBr do
+            local b = table.remove(estado._bridgesPendientes, 1)
+            HoldoorServer.notificarTodos("ejecutarLimpiezaAdmin", {
+                x = b.x, y = b.y, z = b.z, radio = b.radio,
+            })
+            local nro = 3 - #estado._bridgesPendientes  -- 1, 2 o 3
+            print("[Holdoor] Bridge /removezombies #" .. nro .. "/3 disparado (radio " .. b.radio .. ")")
+        end
+    end
 
     -- Polling del HP del Trono + warnings + game over
     if estado.trono and estado.trono.piezas then
@@ -1624,9 +1962,34 @@ function HoldoorServer.onTick()
     elseif estado.fase == "activa" then
         -- v0.6 modelo C: spawn continuo + aggro sostenido + cierre por timer/target.
         -- Reemplaza la lógica vieja de _spawnTanda + _reAggroZombies + _asegurarColchon.
-        HoldoorServer._spawnTick()           -- spawn 1 zombi si toca según intervalo lerp
+        -- v0.7 #13/#14: branches de spawn segun modo.
+        --   - usarHordasContinuasMP (Facil): ciclos cada intervaloSeg via /createhorde2.
+        --   - usarHordasMPActivo    (TEST):  hordas agendadas con timestamps.
+        --   - Sino (legacy):                  _spawnTick (1 zombi/intervalo lerp).
+        if estado.usarHordasContinuasMP then
+            HoldoorServer._procesarHordasContinuas()    -- v0.7 #14 Facil flow continuo
+        elseif estado.usarHordasMPActivo then
+            HoldoorServer._procesarHordasMPPendientes() -- v0.7 #13 TEST hordas agendadas
+        else
+            HoldoorServer._spawnTick()                  -- legacy modelo C
+        end
         HoldoorServer._aggroSostenido()      -- addSound cada 4s desde base (radio 120)
         HoldoorServer._chequearCierreOleada() -- cierre por target kills o timer
+
+        -- v0.7 #14b: si flow continuo MP (Facil+) activo, NO limpiar cadaveres durante
+        -- la oleada (cuerpos lootables hasta el cierre). Solo aplicar en flow legacy
+        -- (TEST o modos sin hordasMP) donde el bug de tiles bloqueados sí pasaba con
+        -- addZombiesInOutfit. /createhorde2 no tiene ese bug.
+        if not estado.usarHordasContinuasMP then
+            -- v0.7: limpieza de cadaveres DURANTE oleada cada 30s. Libera tiles
+            -- bloqueados para que los nuevos spawns no fallen silently. Solo cadaveres,
+            -- no toca zombies vivos.
+            local ahoraLC = os.time()
+            if ahoraLC >= (estado.ultimoLimpiezaCadaveresSec or 0) + 30 then
+                estado.ultimoLimpiezaCadaveresSec = ahoraLC
+                HoldoorServer._limpiarCadaveres()
+            end
+        end
 
     elseif estado.fase == "pausa" then
         if os.time() >= estado.pausaFinSec then

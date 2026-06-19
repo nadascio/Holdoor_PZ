@@ -133,7 +133,12 @@ function HoldoorOverlay:render()
     self:drawRect(cx - 1, cy - 8, 2, 16, 0.9, 0.3, 0.8, 1.0)
     self:drawText("BASE", cx + 10, cy - 8, 0.9, 0.3, 0.8, 1.0, UIFont.Small)
 
-    -- Circulo del radio con puntos
+    -- v0.7 #14d: Circulo del radio con puntos VISIBLES.
+    -- Antes: 3x3 px / alpha 0.15 / amarillo-verde → invisibles sobre cesped.
+    -- Ahora: 8x8 px / alpha 1.0 / naranja brillante con borde negro para contraste.
+    -- worldToScreen ya escala con zoom (TW/TH = 32|16 / zoom). El radio en MUNDO
+    -- se mantiene fijo; al hacer zoom las pelotitas se separan mas en pantalla.
+    -- Tamano en pixeles es fijo (no se achica al alejar camara — siempre legible).
     local STEPS = 48
     for i = 0, STEPS - 1 do
         local angle = (i / STEPS) * math.pi * 2
@@ -141,14 +146,20 @@ function HoldoorOverlay:render()
         local wy = by + radio * math.sin(angle)
         local sx, sy = self:worldToScreen(wx, wy, bz)
         if sx and sy then
-            self:drawRect(sx - 1, sy - 1, 3, 3, 0.85, 1.0, 0.5, 0.15)
+            -- Borde negro 10x10 (contraste sobre cesped/calle/lo que sea)
+            self:drawRect(sx - 5, sy - 5, 10, 10, 1.0, 0.0, 0.0, 0.0)
+            -- Punto naranja brillante 8x8 sobre el borde
+            self:drawRect(sx - 4, sy - 4, 8, 8, 1.0, 1.0, 0.55, 0.10)
         end
     end
 
-    -- Label del radio
+    -- Label del radio (drawText args: text, x, y, r, g, b, a, font — alpha al final)
     local lx, ly = self:worldToScreen(bx + radio * 0.7, by - radio * 0.7, bz)
     if lx and ly then
-        self:drawText(tostring(radio) .. " celdas", lx, ly, 0.9, 1.0, 0.8, 0.2, UIFont.Small)
+        -- Sombra negra desplazada 1px (legibilidad sobre cualquier fondo)
+        self:drawText(tostring(radio) .. " celdas", lx + 1, ly + 1, 0.0, 0.0, 0.0, 1.0, UIFont.Small)
+        -- Texto naranja brillante encima
+        self:drawText(tostring(radio) .. " celdas", lx,     ly,     1.0, 0.55, 0.10, 1.0, UIFont.Small)
     end
 end
 

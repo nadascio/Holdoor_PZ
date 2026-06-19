@@ -703,6 +703,35 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
     elseif comando == "mensaje" then
         HoldoorClient.chat("[HOLDOOR] " .. (args.texto or ""), 1, 0.6, 0.2)
 
+    elseif comando == "ejecutarHordaAdmin" then
+        -- v0.7 #13: bridge para spawnear hordas via /createhorde2 admin.
+        -- Mismo patron que ejecutarLimpiezaAdmin: queue + procesamiento en onTick
+        -- (client-context garantizado). Solo el host hosted / SP / dedicated admin ejecuta.
+        HoldoorClient.estado._pendienteHordaAdmin = HoldoorClient.estado._pendienteHordaAdmin or {}
+        table.insert(HoldoorClient.estado._pendienteHordaAdmin, {
+            x = args.x or 0,
+            y = args.y or 0,
+            z = args.z or 0,
+            count  = args.count  or 15,
+            radius = args.radius or 3,
+            label  = args.label  or "?",
+        })
+
+    elseif comando == "ejecutarLimpiezaAdmin" then
+        -- v0.7 #12 POC: bridge para borrar zombies vivos (incluidos arrastradores en attack
+        -- state que setHealth(0) NO mata). El handler queda en queue: se procesa en onTick
+        -- (client-context garantizado, no server-context del call directo del gotcha #36).
+        -- Solo el host hosted / SP / dedicated admin va a ejecutarlo — los demas clientes
+        -- reciben el evento pero ignoran en el procesamiento (evita duplicacion 4x en COOPHOST).
+        HoldoorClient.estado._pendienteLimpiezaAdmin = {
+            x = args.x or 0,
+            y = args.y or 0,
+            z = args.z or 0,
+            radio = args.radio or 50,
+        }
+        -- Ventana 2s para que OnZombieDead async no se confunda con kills del player.
+        HoldoorClient.estado._killsIgnorarHasta = os.time() + 2
+
     elseif comando == "estado" then
         for k, v in pairs(args) do
             HoldoorClient.estado[k] = v
@@ -776,6 +805,45 @@ HoldoorClient._saldoTick = 0
 
 function HoldoorClient.onTick()
     local est = HoldoorClient.estado
+
+    -- v0.7 #13: procesar bridge de hordas admin pendiente (/createhorde2).
+    -- Mismo patron que limpiezaAdmin abajo: client-context + solo host ejecuta.
+    if est._pendienteHordaAdmin and #est._pendienteHordaAdmin > 0 then
+        local esHostH = false
+        if not isClient() then esHostH = true end
+        if not esHostH then local ok1, r1 = pcall(isCoopHost); if ok1 and r1 then esHostH = true end end
+        if not esHostH then local ok2, r2 = pcall(isServer);    if ok2 and r2 then esHostH = true end end
+        if esHostH then
+            while #est._pendienteHordaAdmin > 0 do
+                local h = table.remove(est._pendienteHordaAdmin, 1)
+                local cmd = string.format("/createhorde2 -x %d -y %d -z %d -count %d -radius %d", h.x or 0, h.y or 0, h.z or 0, h.count or 15, h.radius or 3)
+                pcall(function() SendCommandToServer(cmd) end)
+                print("[Holdoor] Bridge /createhorde2 horda=" .. (h.label or "?") .. " disparada: " .. cmd)
+            end
+        else
+            -- No soy host: limpiar queue para no acumular indefinidamente.
+            est._pendienteHordaAdmin = nil
+        end
+    end
+
+    -- v0.7 #12 POC: procesar bridge admin pendiente (garantiza client-context).
+    -- Solo el host hosted / SP / dedicated admin dispara /removezombies.
+    -- Los demas clientes reciben el evento pero ignoran (evita 4x duplicacion en COOPHOST).
+    -- Confirmado empiricamente 2026-06-18: en COOPHOST el host puede ejecutar comandos
+    -- admin via SendCommandToServer aunque getAccessLevel() reporte "user".
+    if est._pendienteLimpiezaAdmin then
+        local p = est._pendienteLimpiezaAdmin
+        est._pendienteLimpiezaAdmin = nil
+        local esHost = false
+        if not isClient() then esHost = true end                       -- SP puro
+        if not esHost then local ok1, r1 = pcall(isCoopHost); if ok1 and r1 then esHost = true end end  -- COOPHOST host
+        if not esHost then local ok2, r2 = pcall(isServer);    if ok2 and r2 then esHost = true end end  -- dedicated server
+        if esHost then
+            local cmd = string.format("/removezombies -x %d -y %d -z %d -radius %d", p.x or 0, p.y or 0, p.z or 0, p.radio or 50)
+            pcall(function() SendCommandToServer(cmd) end)
+            print("[Holdoor] Bridge /removezombies disparado: " .. cmd)
+        end
+    end
 
     -- v0.6: Refresh del HUD cada segundo durante fase ACTIVA (para que el Timer corra suave).
     -- Antes solo se refrescaba en eventos del server (cada 2s) → saltaba de a 2 segundos.

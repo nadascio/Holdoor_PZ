@@ -13,7 +13,7 @@ HoldoorConfig.modos = {
         tamanoOleada     = 15,
         escalaPorOleada  = 0.10,
         srPorOleada      = 0.05,
-        intervalSegundos = 75,
+        intervalSegundos = 60,
         radioSpawn       = 15,
         tamanoTanda      = 10,
         tandaIntervalSec = 10,
@@ -108,8 +108,8 @@ HoldoorConfig.dropMult = {
     normal    = { monedas = 1.0, materiales = 1.0, items = 1.0 },
     dificil   = { monedas = 1.5, materiales = 1.6, items = 1.5 },
     pesadilla = { monedas = 2.2, materiales = 2.5, items = 2.2 },
-    -- v0.6.1: TEST con recompensa generosa al cierre de oleada para testear flow completo.
-    test      = { monedas = 2.0, materiales = 2.0, items = 3.0 },
+    -- v0.7: TEST con drops Normal (era 2.0/2.0/3.0). Probar mecanicas, no farmear.
+    test      = { monedas = 1.0, materiales = 1.0, items = 1.0 },
 }
 
 -- ─── PERFORMANCE BONUS ──────────────────────────────────────
@@ -157,13 +157,13 @@ HoldoorConfig.rewardTable = {
         endGoldMin        = 2,
         endGoldMax        = 3,
     },
-    -- v0.6.1: TEST con bonus generoso para testear flow rapido (no esperar al RNG)
+    -- v0.7: TEST con bonus Normal (era 0.50/0.30/0.80/5/10).
     test = {
-        bonusSilverChance = 0.50,
-        bonusGoldChance   = 0.30,
-        endGoldChance     = 0.80,
-        endGoldMin        = 5,
-        endGoldMax        = 10,
+        bonusSilverChance = 0.18,
+        bonusGoldChance   = 0.03,
+        endGoldChance     = 0.75,
+        endGoldMin        = 1,
+        endGoldMax        = 1,
     },
 }
 
@@ -199,13 +199,13 @@ HoldoorConfig.materialDropTable = {
         valyrio   = { chance = 0.18, min = 1, max = 1 },
         obsidiana = { chance = 0.12, min = 1, max = 1 },
     },
-    -- v0.6.1: TEST con chances altas para que caigan materiales rapido (testing flow)
+    -- v0.7: TEST chances Normal (era 0.50/0.40/0.30/0.20/0.15).
     test = {
         cuero     = { chance = 0.50, min = 1, max = 3 },
-        hierro    = { chance = 0.40, min = 1, max = 2 },
-        acero     = { chance = 0.30, min = 1, max = 2 },
-        valyrio   = { chance = 0.20, min = 1, max = 1 },
-        obsidiana = { chance = 0.15, min = 1, max = 1 },
+        hierro    = { chance = 0.30, min = 1, max = 2 },
+        acero     = { chance = 0.12, min = 1, max = 1 },
+        valyrio   = { chance = 0.03, min = 1, max = 1 },
+        obsidiana = { chance = 0.01, min = 1, max = 1 },
     },
 }
 
@@ -383,10 +383,11 @@ HoldoorConfig.VERSION = "0.6-dev"
 HoldoorConfig.modosV6 = {
     facil = {
         maxOleadas      = 5,
-        multDuracion    = 0.8,   -- oleadas más cortas
+        multDuracion    = 2.0,   -- v0.7: 5 min por oleada (era 0.8 = 2 min)
         multSpawn       = 1.3,   -- intervalo MAYOR (más lento)
         multKills       = 0.7,   -- target menor
         multRecompensa  = 0.6,
+        pausaSeg        = 30,    -- v0.7: 30s pausa + 75s preparacion = 1:45 entre oleadas
     },
     normal = {
         maxOleadas      = 8,
@@ -441,6 +442,20 @@ HoldoorConfig.oleadasV6 = {
     { duracionSeg = 270, targetKills = 340, spawnInicio = 2.5, spawnFin = 1.4, pctCorredores = 0.40 },
 }
 
+-- ─── CURVA ESPECIFICA FACIL (v0.7) ──────────────────────────
+-- Duracion fija 5 min/oleada + targets/intervalos del plan v3.0.
+-- Intervalos constantes por oleada (spawnInicio == spawnFin, sin lerp).
+-- Si modoId=="facil" en _lanzarOleada, usa esta curva en vez de oleadasV6
+-- + multipliers. Valores absolutos, sin escalado por modo.
+HoldoorConfig.curvaFacilV7 = {
+    -- # | duración | target | cúmulo cada Xs (constante) | % corredores
+    { duracionSeg = 300, targetKills = 50,  spawnInicio = 15.0, spawnFin = 15.0, pctCorredores = 0.00 },
+    { duracionSeg = 300, targetKills = 65,  spawnInicio = 14.0, spawnFin = 14.0, pctCorredores = 0.00 },
+    { duracionSeg = 300, targetKills = 80,  spawnInicio = 13.0, spawnFin = 13.0, pctCorredores = 0.00 },
+    { duracionSeg = 300, targetKills = 95,  spawnInicio = 12.0, spawnFin = 12.0, pctCorredores = 0.05 },
+    { duracionSeg = 300, targetKills = 115, spawnInicio = 11.0, spawnFin = 11.0, pctCorredores = 0.10 },
+}
+
 -- ─── PAUSA ENTRE OLEADAS ─────────────────────────────────────
 HoldoorConfig.pausaOleadasSegV6 = 30   -- 30s para tienda/curación sin apurar
 
@@ -452,8 +467,62 @@ HoldoorConfig.cierreLimpioBonus = 0.25   -- +25%
 -- Disparar addSound desde la base cada N segundos durante oleada activa.
 -- Atrae todos los zombies del area hacia la base (evita comportamiento pasivo).
 HoldoorConfig.aggroIntervalSec = 4       -- cada 4s
-HoldoorConfig.aggroRadio       = 120     -- tiles
-HoldoorConfig.aggroVolumen     = 200
+HoldoorConfig.aggroRadio       = 150     -- v0.7: 120 -> 150 tiles
+HoldoorConfig.aggroVolumen     = 300     -- v0.7: 200 -> 300 (tope vanilla LastStand)
+
+-- ─── v0.7 #14: HORDAS MP CONTINUAS — flow definitivo por modo ──
+-- Spawn CONTINUO durante toda la oleada: cada intervaloSeg dispara
+-- N hordas (rotacion random de cardinales N/E/S/O) con zombiesPorPunto.
+-- Si modoId esta en esta tabla → usa este flow.
+-- Si NO esta → usa flow legacy (_spawnTick + curvaFacilV7/oleadasV6).
+-- TEST queda con testHordasMP separado (mas abajo) para no romper testing.
+HoldoorConfig.hordasMP = {
+    facil = {
+        -- v0.7 #14c: distanciaTrono ELIMINADO. Ahora usa estado.config.radioSpawn (panel).
+        -- El usuario controla la distancia de spawn con los botones - / + del panel HOLDOOR.
+        -- El circulo amarillo de pelotitas refleja EXACTAMENTE donde van a aparecer las hordas.
+        radiusSpawnInterno = 3,         -- dispersion interna de cada horda (-radius del comando)
+        pausaSeg           = 30,        -- pausa entre oleadas + 30s preparacion = 1 min total
+        oleadas = {
+            -- Opcion A "Facil comodo" — total 630 zombies / 270 target = 43%
+            -- # | cantPuntos | zomb/punto | cada | duracion | target
+            { cantPuntos = 2, zombiesPorPunto = 3, intervaloSeg = 30, duracionSeg = 300, targetKills = 25 },
+            { cantPuntos = 3, zombiesPorPunto = 3, intervaloSeg = 30, duracionSeg = 300, targetKills = 35 },
+            { cantPuntos = 4, zombiesPorPunto = 3, intervaloSeg = 30, duracionSeg = 300, targetKills = 45 },
+            { cantPuntos = 4, zombiesPorPunto = 4, intervaloSeg = 30, duracionSeg = 300, targetKills = 60 },
+            { cantPuntos = 4, zombiesPorPunto = 5, intervaloSeg = 30, duracionSeg = 300, targetKills = 75 },
+        },
+    },
+    -- normal, dificil, pesadilla: vacios hasta que migremos cada uno.
+}
+
+-- ─── v0.7 #13: TEST FLOW PARALELO con hordas MP ──────────────
+-- Solo aplica si modoId == "test" Y testHordasMP.activo == true.
+-- NO afecta otros modos. NO toca _spawnTick original.
+-- 3 primitivas vanilla MP-safe validadas empiricamente 2026-06-18:
+--   1) /createhorde2 admin via SendCommandToServer → spawn server-side
+--   2) addSound(nil, x, y, z, radio, vol) → aggro hacia base (ya en _aggroSostenido)
+--   3) /removezombies admin → limpieza al cierre (ya en v0.7 #12b)
+-- Patrones por oleada: simultaneo / escalonado / hibrido.
+HoldoorConfig.testHordasMP = {
+    activo            = true,
+    cantHordas        = 4,        -- 4 puntos cardinales (N/E/S/O)
+    zombiesPorHorda   = 15,       -- 4 x 15 = 60 zombies por oleada
+    distanciaTrono    = 22,       -- 20-25 tiles del Trono (dentro del chunk loaded)
+    radiusSpawnInterno = 3,       -- dispersion interna de cada horda (-radius del comando)
+    -- Patrones por oleada (string)
+    --   "simultaneo": las 4 al T=0
+    --   "escalonado": una cada N seg
+    --   "hibrido":    2 al T=0 + 2 al T=hibridoSegundaTandaSeg
+    patronPorOleada = {
+        [1] = "simultaneo",
+        [2] = "escalonado",
+        [3] = "hibrido",
+        -- Por default sigue siendo "simultaneo" para oleada 4+
+    },
+    escalonadoIntervaloSeg  = 30,   -- en oleada 2: una horda cada 30s
+    hibridoSegundaTandaSeg  = 60,   -- en oleada 3: segunda tanda al T=60s
+}
 
 -- ─── DROPS POR KILL ──────────────────────────────────────────
 -- Chances BASE (Normal). Se multiplican por dropMultPorModoV6 según dificultad.
@@ -472,9 +541,8 @@ HoldoorConfig.dropMultPorModoV6 = {
     normal    = { bronce = 1.0, plata = 1.0, oro = 1.0, item = 1.0 },
     dificil   = { bronce = 1.2, plata = 1.6, oro = 3.0, item = 1.7 },
     pesadilla = { bronce = 1.4, plata = 2.4, oro = 6.0, item = 2.8 },
-    -- v0.6.1: TEST con drops INFLADOS para testear el flow rapido (no esperar al RNG).
-    -- bronce 4.0 → 100% por kill | plata 10x → ~50% | oro 20x → 10% | item 20x → 14%
-    test      = { bronce = 4.0, plata = 10.0, oro = 20.0, item = 20.0 },
+    -- v0.7: TEST drops Normal (era 4.0/10.0/20.0/20.0).
+    test      = { bronce = 1.0, plata = 1.0, oro = 1.0, item = 1.0 },
 }
 -- Tabla resultante (chance final por modo en Normal x mult):
 --   Fácil:     bronce 20% | plata 2%  | oro 0.1%  | item 0.3%
