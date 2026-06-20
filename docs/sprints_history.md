@@ -711,3 +711,92 @@ La gotcha #21 vieja decía que `setWantMouseEvents(false)` era la API real. Esa 
 **Pendiente menor:** `HoldoorToast` cuando aparece (3s) bloquea inventario en esa zona. Si lo confirmamos como molesto en partida real, aplicar mismo approach que Trono (rect chico solo del cuadrito arriba, ~600×80 px en lugar de fullscreen).
 
 **Versión:** 0.6.1-dev (cerrado, mod.info pendiente bump).
+
+---
+
+## 2026-06-20 — Sprint v0.7 — Beso del Dios via admin trampoline + Seguro de Monedas + Whitelist Recompensables
+
+**Contexto:** Sesión maratónica continuada de v0.6.2 → v0.7. Tres bloques de trabajo encadenados con descubrimientos técnicos importantes y refactors de arquitectura completos.
+
+### Bloque 1 — v0.7 #33-#37: Beso del Dios pivot via admin trampoline
+
+**Contexto inicial:** Habíamos creado "Bendiciones del Cuerpo" (Pan del Maestre / Agua Bendita / Sueño del Cuervo / Calma Total / Bendición del Reino) que usaban `stats:set(HUNGER/THIRST/FATIGUE/etc, 0)` + `sendPlayerStat()`. **Funcionaban en SP pero rebotaban en MP**: en MP los stats se reseteaban al instante (0 → 0.033 en 1 segundo).
+
+**Iteraciones técnicas exploradas (varias horas):**
+
+1. **v0.7 #25-#27** — server-side `stats:set()` directo: NO funcionó (server cambia copia pero no propaga al cliente).
+2. **v0.7 #28** — server eleva temporal a admin con `setAccessLevel("admin")`: API NO existe en B42 (gotcha nuevo).
+3. **v0.7 #28b** — usar `setRole("admin")` (descubierto en `ISPlayerStatsUI.lua:611`): tampoco persistía empíricamente (DIAG mostró que el role seguía siendo 'user'). Pero el stats:set persistió igual → reveló que el fix real era OTRA cosa.
+4. **v0.7 #28c** — diagnóstico mostró que el fix real era **ASYNCificar la ejecución del set ~5 frames después de la compra** para evitar race condition con el flow del server (no la elevación de admin).
+5. **v0.7 #29-#31** — agregamos `SendCommandToServer("/setaccesslevel HouS admin")` que SÍ funcionó (el coop host puede correr comandos admin via slash). Pero PZ activa **GodMod + Invisible + NoClip por default** al pasar a admin — y GodMod CURA TODO en ~50-150ms. Agregamos watchdog cada frame que apaga estos flags.
+6. **DESCUBRIMIENTO CLAVE** (2026-06-20): Nahuel propuso usar el "bug" de admin auto-godmode como FEATURE → **reemplazar el Beso del Dios** (cura todo, 9 oro, uso único) por el truco del admin trampoline 5s. Funciona perfecto: cura mordeduras, hambre, sed, infección zombi, fatiga, escudo vs zombies, invulnerabilidad. Todo de raíz.
+7. **v0.7 #33** — Pivot: Beso del Dios usa `SendCommandToServer("/setaccesslevel admin")` → 150 frames después → `/setaccesslevel user`. Quitar Bendiciones del Cuerpo entera (consolida todo en el Beso premium). Watchdog NoClip selectivo (GhostMode queda intacto a pedido de Nahuel).
+8. **v0.7 #34** — Restaurar uso-único-por-vida: al renombrar `accion.tipo` de `reliquia_godmode_flash` a `reliquia_admin_5s` rompí 4 puntos de la infra que estaban "cableados" al nombre original (server moddata + validación re-compra + UI marca "consumido" + pre-check wounds). Volver a usar `reliquia_godmode_flash` reactivó todo.
+9. **v0.7 #35** — **Fase A botonera lateral**: Beso del Dios ya NO se activa al comprar. Va a una "bolsa" (`md.Holdoor_BesoDios_Bolsa = true`). Aparece botón "INVOCAR BESO DEL DIOS" amarillo/dorado en el HUD lateral, debajo del TIENDA. Click activa el efecto. Caso de uso: comprar tranquilo entre oleadas, activar en emergencia. Zona dedicada (`besoZone` separado de `btnZone`) para evitar gotcha #29 — cuando invisible no captura clicks.
+10. **v0.7 #36-#37** — Validaciones pre-uso:
+    - **Sanación del Septon**: no comprar si no tenés heridas físicas (sangrado/cortes/mordeduras/fracturas).
+    - **Beso del Dios**: no activar si estás 100% sano (HP body parts < 100, mordedura, infección, sangrado, ZOMBIE_INFECTION/FEVER, HUNGER/THIRST/FATIGUE > 30%). "No lo quemes en vano."
+
+### Bloque 2 — v0.7 #38-#39: Seguro de Monedas (anti-frustración por muerte)
+
+**Concepto:** Cuando un jugador muere durante una oleada desafiante pierde TODAS sus monedas — eso genera frustración severa y abandono. Solución: "banco" automático que preserva el saldo al morir.
+
+**Iteración del diseño:**
+
+1. **v0.7 #38** — Primer approach: snapshot al INICIAR + tracking de gastos + refund = `max(0, snapshot - gastado)`. Anti-exploit explícito. **Funcionó técnicamente pero era complejo**.
+2. **v0.7 #38b** — Bug de scope: `_persistirModData` está declarado `local function` en línea 375, mis funciones del seguro estaban en líneas 97-200 → fuera de scope → `nil reference` → crash al respawn. Fix: inline el `pcall(function() jugador:transmitModData() end)`.
+3. **v0.7 #39** — Nahuel propuso simplificar: **snapshot AL MORIR** (no al iniciar), sin tracking. Análisis matemático mostró que NO hay exploit (el item comprado descuenta el saldo, snapshot ya refleja el descuento). Refactor: eliminar `_snapshotSeguro`, `_acumularGasto`, `_calcularRefund`. Reescribir `_marcarMuerteEnOleada(jugador)` para snapshot del saldo actual. Mantener `_aplicarRefundAJugador` y `_limpiarSegurosPorFinOleada`. Mucho más simple y limpio.
+
+**Persistencia**: GlobalModData `Holdoor_Seguros` → sobrevive logout y restart del server.
+
+**Toast + chat al activarse + al revivir** (opción C que pidió el user).
+
+### Bloque 3 — v0.7 #40: Whitelist de Recompensables + Pagos Pendientes Offline
+
+**Bug identificado por Nahuel:** `_distribuirMonedas` daba monedas a TODOS los `getOnlinePlayers()` del servidor. En un MP con 20 jugadores donde solo 4 juegan Holdoor, los 20 recibían. Lo mismo en `_distribuirMateriales`.
+
+**Diseño:**
+
+- **`estado.recompensables[username] = true`** poblado AL INICIAR oleadas, filtrando online players por distancia ≤ 15 tiles a la base. Lista estática — si uno muere/revive sigue elegible. Si alguien se conecta después, NO es elegible.
+- **`HoldoorServer.pagosPendientes[username]`** persistido en GlobalModData `Holdoor_PagosPendientes`. Si un jugador whitelist está OFFLINE al momento de distribuir, acumula su pago aquí. Al reconectarse (`OnCreatePlayer`), recibe automáticamente con toast dorado.
+- **Fallback SP**: si no hay whitelist (modo TEST, sandbox sin iniciar formalmente), entrega al host local — preserva SP funcional.
+
+### Decisiones técnicas claves descubiertas en esta sesión
+
+1. **PZ B42 elevation a admin activa GodMod + Invisible + NoClip por default**. GodMod cura mordeduras, infección zombi, hambre, sed, fatiga, fracturas, sangrado — TODO. Usable como "feature premium".
+2. **`setAccessLevel(string)` NO existe en B42**. Reemplazado por `setRole(string)` (descubierto en `ISPlayerStatsUI.lua:611`). PERO `setRole` no es la API correcta tampoco — el verdadero set se hace via `/setaccesslevel` command (slash) que el host puede ejecutar via `SendCommandToServer` aunque su `getAccessLevel()` diga "user".
+3. **Race condition con `stats:set()` en MP**: ejecutar el set INLINE durante la compra hace que el server pisa el cambio. Esperar ~5 frames (vía `Events.OnTick`) evita la race.
+4. **`local function` en Lua tiene scope solo DESPUÉS de su línea de declaración**. Si llamás a una `local function` desde código que está ARRIBA en el archivo (aunque en runtime se ejecute después), el nombre es `nil`. Inline o forward-declare.
+5. **`Events.OnCreatePlayer`** dispara tanto al spawn inicial como al respawn post-muerte como a la reconexión del jugador. Punto de hookeo perfecto para aplicar seguros y pagos pendientes.
+6. **GlobalModData (`ModData.getOrCreate("Holdoor_X")`)** sobrevive logout y restart del server. Perfecto para estado per-username (vs ModData del IsoPlayer que muere con el personaje).
+
+### Gotchas nuevos documentados
+
+- **#52** — `setAccessLevel(string)` no existe en B42. Reemplazo: `setRole(string)` en ISPlayerStatsUI.lua:611, pero el set REAL se hace via slash `/setaccesslevel`.
+- **#53** — Admin auto-activa GodMod + Invisible + NoClip por default en B42 al elevar. Si querés evitarlo, watchdog cada frame con `setNoClip(false)` etc.
+- **#54** — `local function` en Lua: scope solo después de la línea de declaración. Llamar desde código anterior en el archivo → `nil reference`.
+- **#55** — Race condition con `stats:set()` en MP: server pisa el cambio si se ejecuta inline durante la compra. Async 5 frames evita el problema.
+
+### Archivos tocados (toda la sesión)
+
+- **`HoldoorServer.lua`** — ~500 líneas nuevas (3 sistemas: seguro de monedas, whitelist recompensables, pagos pendientes offline) + refactor de `_distribuirMonedas` y `_distribuirMateriales`
+- **`HoldoorClient.lua`** — handler nuevo `_activarBesoDelDios()`, handlers `ejecutar_stats_reset`/`seguroActivado`/`seguroRestaurado`/`pagoPendienteCobrado`, validaciones pre-uso del Beso y de Sanación del Septon
+- **`HoldoorUI.lua`** — botón nuevo `btnBeso` en `besoZone` independiente, lógica de visibilidad condicional, ajuste de altura HUD
+- **`HoldoorShopCatalog.lua`** — Beso del Dios redescripto (2 líneas: cura + escudo 5s), Sanación del Septon descripción acortada, Bendiciones del Cuerpo eliminada entera
+- **`HoldoorShop.lua`** — marca "consumido" si Beso está en bolsa
+- **`HoldoorConfig.lua`** — VERSION bump 0.6-dev → 0.7-dev
+
+### Estado al cierre
+
+✅ Beso del Dios via admin trampoline (cura todo + escudo + invulnerabilidad 5s, uso único por vida, persistido entre sesiones)
+✅ Botón "INVOCAR BESO DEL DIOS" en HUD lateral con zona dedicada anti-gotcha-#29
+✅ Validación pre-uso Beso + Sanación del Septon
+✅ Seguro de Monedas (snapshot al morir, refund al respawn, persistido)
+✅ Whitelist de Recompensables (15 tiles de base al iniciar)
+✅ Pagos pendientes offline (recibís al reconectarte)
+✅ Sistema de oleadas nuevo (5 oleadas × 5 min, curvas por modo, primitivas MP-safe)
+✅ Subtítulos épicos por oleada
+
+**Pending user-test post-merge**: sesiones MP reales con 3+ jugadores en distintas posiciones para validar whitelist + pagos offline.
+
+**Versión:** 0.7-dev (cerrado, listo para push a Workshop).

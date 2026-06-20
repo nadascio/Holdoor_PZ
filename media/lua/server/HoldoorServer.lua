@@ -60,10 +60,310 @@ function HoldoorServer.init()
     HoldoorServer.estado.killsTotal     = {}
     HoldoorServer.estado.baseDefinida   = false
     HoldoorServer.estado.encoladosTiers = {}
+
+    -- v0.7 #38: Seguro de Monedas — cargar seguros pendientes de GlobalModData (persistencia
+    -- entre sesiones). Formato: { [username] = { snapshot={B,P,O}, gastado={B,P,O}, beso_bolsa, refundPending={B,P,O} } }
+    HoldoorServer.seguros = {}
+    local ok, gm = pcall(ModData.getOrCreate, "Holdoor_Seguros")
+    if ok and gm and gm.seguros then
+        HoldoorServer.seguros = gm.seguros
+        local cnt = 0; for _ in pairs(HoldoorServer.seguros) do cnt = cnt + 1 end
+        if cnt > 0 then print("[Holdoor] Seguros cargados de GlobalModData: " .. cnt .. " jugador(es)") end
+    end
+
+    -- v0.7 #40: cargar pagos pendientes de GlobalModData (jugadores offline al momento
+    -- de distribuir recompensas — se les aplica al reconectarse).
+    _cargarPagosPendientes()
+
     print("[Holdoor] Servidor inicializado v" .. HoldoorConfig.VERSION .. " — estado reseteado")
     print("[Holdoor] addZombiesInOutfit disponible: " .. tostring(type(addZombiesInOutfit) == "function"))
     local sandboxOK = SandboxVars ~= nil and SandboxVars.ZombieConfig ~= nil
     print("[Holdoor] Control velocidad zombies: " .. (sandboxOK and ("DISPONIBLE (Speed=" .. tostring(SandboxVars.ZombieConfig.Speed) .. ")") or "NO DISPONIBLE"))
+end
+
+-- ─────────────────────────────────────────────
+--  v0.7 #39 — SEGURO DE MONEDAS (snapshot al morir, no al iniciar)
+-- ─────────────────────────────────────────────
+-- v0.7 #38 (deprecado): snapshot al iniciar + tracking de gastos + refund=max(0,S-G).
+-- v0.7 #39 (vigente): MUCHO mas simple — al iniciar oleadas, solo se avisa al jugador
+-- que "el seguro esta activo". NO snapshot. NO tracking. Al MORIR durante oleada,
+-- snapshot del saldo actual del jugador + flag de Beso del Dios en bolsa. Al respawn,
+-- esos valores se aplican al nuevo personaje.
+--
+-- Por que NO hay exploit: el item que comprate durante la oleada YA descontó las
+-- monedas que tenias. Al morir, snapshot = (saldo - costo_items). Refund recupera
+-- ese saldo reducido. El item te queda en inventario. NET total = igual que sin seguro
+-- (las monedas se gastaron, los items quedaron).
+--
+-- Persiste en GlobalModData "Holdoor_Seguros" → sobrevive logout y restart del server.
+
+local function _persistirSeguros()
+    local ok, gm = pcall(ModData.getOrCreate, "Holdoor_Seguros")
+    if ok and gm then
+        gm.seguros = HoldoorServer.seguros
+        pcall(function() ModData.transmit("Holdoor_Seguros") end)
+    end
+end
+
+function HoldoorServer._avisarSeguroActivo(jugador)
+    -- Llamado al iniciar oleadas para cada participante. Solo manda toast + chat al
+    -- cliente diciendole "si moris en la oleada, tus monedas estan aseguradas".
+    -- NO guarda snapshot — eso pasa al morir (ver _marcarMuerteEnOleada).
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    pcall(function()
+        sendServerCommand(jugador, HoldoorConfig.MODULE, "seguroActivado", {})
+    end)
+    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+        local lp; pcall(function() lp = getSpecificPlayer(0) end)
+        if lp and lp:getUsername() == username then
+            pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "seguroActivado", {})
+        end
+    end
+end
+
+function HoldoorServer._marcarMuerteEnOleada(jugador)
+    -- Llamado en OnPlayerDeath cuando el jugador estaba en oleada activa.
+    -- Snapshot del saldo ACTUAL del jugador + flag Beso del Dios en bolsa.
+    -- Se guarda en seguros[username].refundPending para aplicar al proximo spawn.
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    local md = jugador:getModData()
+    if not md then return end
+    local snap = {
+        bronze = md.Holdoor_Bronze or 0,
+        silver = md.Holdoor_Silver or 0,
+        gold   = md.Holdoor_Gold   or 0,
+    }
+    HoldoorServer.seguros[username] = {
+        refundPending = snap,
+        beso_bolsa    = md.Holdoor_BesoDios_Bolsa and true or false,
+    }
+    _persistirSeguros()
+    print(string.format("[Holdoor][Seguro] %s murio en oleada con %dB/%dP/%dO (beso_bolsa=%s) — sera restaurado al respawn",
+        username, snap.bronze, snap.silver, snap.gold,
+        tostring(HoldoorServer.seguros[username].beso_bolsa)))
+end
+
+function HoldoorServer._aplicarRefundAJugador(jugador)
+    -- Llamado en OnCreatePlayer cuando spawnea un personaje nuevo. Si hay refundPending
+    -- para ese username, lo aplica al ModData del nuevo char + restaura Beso en bolsa.
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    local seguro = HoldoorServer.seguros[username]
+    if not seguro or not seguro.refundPending then return end
+
+    local md = jugador:getModData()
+    if not md then return end
+
+    local rf = seguro.refundPending
+    md.Holdoor_Bronze = (md.Holdoor_Bronze or 0) + (rf.bronze or 0)
+    md.Holdoor_Silver = (md.Holdoor_Silver or 0) + (rf.silver or 0)
+    md.Holdoor_Gold   = (md.Holdoor_Gold   or 0) + (rf.gold   or 0)
+
+    -- Restaurar Beso del Dios en bolsa si lo tenia comprado pero no usado
+    if seguro.beso_bolsa then
+        md.Holdoor_BesoDios_Bolsa = true
+    end
+
+    -- v0.7 #38 fix: NO usar _persistirModData (es local, fuera de scope aca arriba).
+    -- Inline el transmitModData directamente.
+    pcall(function() jugador:transmitModData() end)
+
+    -- Limpiar el seguro entero — ya cumplio su rol
+    HoldoorServer.seguros[username] = nil
+    _persistirSeguros()
+
+    print(string.format("[Holdoor][Seguro] %s revivio — devuelto: %dB / %dP / %dO (beso_bolsa=%s)",
+        username, rf.bronze, rf.silver, rf.gold, tostring(seguro.beso_bolsa)))
+
+    -- Toast + chat al jugador
+    pcall(function()
+        sendServerCommand(jugador, HoldoorConfig.MODULE, "seguroRestaurado", {
+            bronze     = rf.bronze, silver = rf.silver, gold = rf.gold,
+            beso_bolsa = seguro.beso_bolsa,
+        })
+    end)
+    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+        local lp; pcall(function() lp = getSpecificPlayer(0) end)
+        if lp and lp:getUsername() == username then
+            pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "seguroRestaurado", {
+                bronze     = rf.bronze, silver = rf.silver, gold = rf.gold,
+                beso_bolsa = seguro.beso_bolsa,
+            })
+        end
+    end
+
+    -- Refrescar HUD del cliente
+    pcall(function() sendServerCommand(jugador, HoldoorConfig.MODULE, "monedasActualizadas", {}) end)
+end
+
+function HoldoorServer._limpiarSegurosPorFinOleada()
+    -- Llamado cuando las oleadas terminan exitosamente (completado o detenido).
+    -- Limpia todos los seguros activos: ya cumplieron su rol.
+    local cnt = 0
+    for u, _ in pairs(HoldoorServer.seguros or {}) do
+        HoldoorServer.seguros[u] = nil
+        cnt = cnt + 1
+    end
+    if cnt > 0 then
+        _persistirSeguros()
+        print("[Holdoor][Seguro] Oleadas terminaron — " .. cnt .. " seguro(s) limpiados")
+    end
+
+    -- v0.7 #40: tambien limpiar recompensables (la whitelist solo aplica a la sesion actual).
+    HoldoorServer.estado.recompensables = {}
+end
+
+-- ─────────────────────────────────────────────
+--  v0.7 #40 — WHITELIST DE RECOMPENSABLES + PAGOS PENDIENTES OFFLINE
+-- ─────────────────────────────────────────────
+-- Al iniciar oleadas, snapshot de quien esta DENTRO de 15 tiles de la base. Solo
+-- esos usernames son elegibles para recompensas de monedas/materiales. La lista
+-- es estatica — si uno muere y revive sigue elegible. Si alguien se conecta
+-- DESPUES de iniciar la oleada, NO es elegible.
+--
+-- Para jugadores offline al momento de distribuir: acumulamos su pago en
+-- HoldoorServer.pagosPendientes[username] (persistido GlobalModData "Holdoor_PagosPendientes")
+-- y se le aplica cuando se reconecta (via OnCreatePlayer).
+
+HoldoorServer.pagosPendientes = {}
+
+local function _persistirPagosPendientes()
+    local ok, gm = pcall(ModData.getOrCreate, "Holdoor_PagosPendientes")
+    if ok and gm then
+        gm.pagos = HoldoorServer.pagosPendientes
+        pcall(function() ModData.transmit("Holdoor_PagosPendientes") end)
+    end
+end
+
+local function _cargarPagosPendientes()
+    local ok, gm = pcall(ModData.getOrCreate, "Holdoor_PagosPendientes")
+    if ok and gm and gm.pagos then
+        HoldoorServer.pagosPendientes = gm.pagos
+        local cnt = 0; for _ in pairs(HoldoorServer.pagosPendientes) do cnt = cnt + 1 end
+        if cnt > 0 then print("[Holdoor] Pagos pendientes cargados: " .. cnt .. " jugador(es)") end
+    end
+end
+
+-- Llamado al iniciar oleadas. Snapshot de quienes estan en base + RADIO tiles.
+-- Esa lista es la unica que recibe recompensas en esta sesion de oleadas.
+local RADIO_RECOMPENSABLES = 15
+
+function HoldoorServer._snapshotRecompensables()
+    local estado = HoldoorServer.estado
+    estado.recompensables = {}
+
+    if not estado.baseDefinida or not estado.baseX or not estado.baseY then
+        print("[Holdoor][Recompensables] Sin base definida — no se puede snapshot. Aborto.")
+        return
+    end
+
+    local bx, by = estado.baseX, estado.baseY
+    local lista = {}
+    pcall(function()
+        local ok, ps = pcall(getOnlinePlayers)
+        if ok and ps then
+            local oks, np = pcall(function() return ps:size() end)
+            if oks and np then
+                for i = 0, np - 1 do
+                    local okp, p = pcall(function() return ps:get(i) end)
+                    if okp and p then
+                        local px, py, u
+                        pcall(function() px = p:getX() end)
+                        pcall(function() py = p:getY() end)
+                        pcall(function() u  = p:getUsername() end)
+                        if px and py and u then
+                            local dx = px - bx
+                            local dy = py - by
+                            local dist = math.sqrt(dx*dx + dy*dy)
+                            if dist <= RADIO_RECOMPENSABLES then
+                                estado.recompensables[u] = true
+                                table.insert(lista, u .. " (" .. math.floor(dist) .. "t)")
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    print("[Holdoor][Recompensables] Snapshot " .. #lista .. " jugador(es): " ..
+        (#lista > 0 and table.concat(lista, ", ") or "ninguno"))
+end
+
+-- Helper: acumular pago para un username offline en GlobalModData.
+function HoldoorServer._acumularPagoPendiente(username, bronze, silver, gold, materiales)
+    if not username then return end
+    if not HoldoorServer.pagosPendientes[username] then
+        HoldoorServer.pagosPendientes[username] = {
+            bronze=0, silver=0, gold=0,
+            materiales = { cuero=0, hierro=0, acero=0, valyrio=0, obsidiana=0 },
+        }
+    end
+    local p = HoldoorServer.pagosPendientes[username]
+    p.bronze = (p.bronze or 0) + (bronze or 0)
+    p.silver = (p.silver or 0) + (silver or 0)
+    p.gold   = (p.gold   or 0) + (gold   or 0)
+    if materiales then
+        p.materiales = p.materiales or { cuero=0, hierro=0, acero=0, valyrio=0, obsidiana=0 }
+        for k, v in pairs(materiales) do
+            p.materiales[k] = (p.materiales[k] or 0) + (v or 0)
+        end
+    end
+    _persistirPagosPendientes()
+end
+
+-- Helper: cuando un jugador se conecta o spawnea, aplica pagos pendientes a su ModData.
+function HoldoorServer._aplicarPagosPendientesAJugador(jugador)
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    local pago = HoldoorServer.pagosPendientes[username]
+    if not pago then return end
+
+    local md = jugador:getModData()
+    if not md then return end
+
+    md.Holdoor_Bronze = (md.Holdoor_Bronze or 0) + (pago.bronze or 0)
+    md.Holdoor_Silver = (md.Holdoor_Silver or 0) + (pago.silver or 0)
+    md.Holdoor_Gold   = (md.Holdoor_Gold   or 0) + (pago.gold   or 0)
+    if pago.materiales then
+        md.Holdoor_Cuero     = (md.Holdoor_Cuero     or 0) + (pago.materiales.cuero     or 0)
+        md.Holdoor_Hierro    = (md.Holdoor_Hierro    or 0) + (pago.materiales.hierro    or 0)
+        md.Holdoor_Acero     = (md.Holdoor_Acero     or 0) + (pago.materiales.acero     or 0)
+        md.Holdoor_Valyrio   = (md.Holdoor_Valyrio   or 0) + (pago.materiales.valyrio   or 0)
+        md.Holdoor_Obsidiana = (md.Holdoor_Obsidiana or 0) + (pago.materiales.obsidiana or 0)
+    end
+    pcall(function() jugador:transmitModData() end)
+
+    -- Limpiar pago
+    HoldoorServer.pagosPendientes[username] = nil
+    _persistirPagosPendientes()
+
+    print(string.format("[Holdoor][PagoPendiente] %s recibio: %dB/%dP/%dO + mats",
+        username, pago.bronze or 0, pago.silver or 0, pago.gold or 0))
+
+    -- Avisar al cliente para chat
+    pcall(function()
+        sendServerCommand(jugador, HoldoorConfig.MODULE, "pagoPendienteCobrado", {
+            bronze = pago.bronze or 0, silver = pago.silver or 0, gold = pago.gold or 0,
+            materiales = pago.materiales or {},
+        })
+    end)
+    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+        local lp; pcall(function() lp = getSpecificPlayer(0) end)
+        if lp and lp:getUsername() == username then
+            pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "pagoPendienteCobrado", {
+                bronze = pago.bronze or 0, silver = pago.silver or 0, gold = pago.gold or 0,
+                materiales = pago.materiales or {},
+            })
+        end
+    end
+    pcall(function() sendServerCommand(jugador, HoldoorConfig.MODULE, "monedasActualizadas", {}) end)
 end
 
 -- ─────────────────────────────────────────────
@@ -151,6 +451,26 @@ function HoldoorServer.iniciar(jugador, config)
         numPlayers = numPlayers,
         multiplier = mult,
     })
+
+    -- v0.7 #39: aviso de seguro activo a cada participante. NO snapshot (eso es al morir).
+    pcall(function()
+        local ok, ps = pcall(getOnlinePlayers)
+        if ok and ps then
+            local oks, np = pcall(function() return ps:size() end)
+            if oks and np then
+                for i = 0, np - 1 do
+                    local okp, p = pcall(function() return ps:get(i) end)
+                    if okp and p then
+                        HoldoorServer._avisarSeguroActivo(p)
+                    end
+                end
+            end
+        end
+    end)
+
+    -- v0.7 #40: snapshot de recompensables (jugadores dentro de 15 tiles de la base).
+    -- Solo ellos recibiran monedas/materiales al terminar oleadas. La lista es estatica.
+    HoldoorServer._snapshotRecompensables()
 
     -- v0.7: limpieza ANTES del countdown de preparacion. Los async OnZombieDead
     -- se procesan durante los 5s de preparacion (fase != "activa") = no cuentan
@@ -323,9 +643,12 @@ local function ejecutarAccion(jugador, accion)
         return true
 
     elseif accion.tipo == "reliquia_godmode_flash" then
-        -- Beso del Dios: cliente ejecuta el flow de curacion. Marca ModData unico-por-vida.
+        -- v0.7 #35: Beso del Dios va a BOLSA (no se activa al comprar).
+        -- El jugador activa despues con el boton del HUD lateral.
+        -- Holdoor_BesoDios_Bolsa = true → tiene el item listo, no se puede recomprar
+        -- Holdoor_BesoDios       = true → ya lo activo en esta vida, no se puede recomprar
         local md = jugador:getModData()
-        if md then md.Holdoor_BesoDios = true end
+        if md then md.Holdoor_BesoDios_Bolsa = true end
         _persistirModData(jugador)
         return true
 
@@ -337,6 +660,38 @@ local function ejecutarAccion(jugador, accion)
         -- Bendiciones: cliente ejecuta sendClientCommand("onHealthCheatCurrentPlayer")
         -- con action="healthFull" para los body parts que tienen la condicion.
         return true
+
+    elseif accion.tipo == "reliquia_cura_completa" then
+        -- v0.7 #21: Sanacion del Septon — cliente ejecuta 17 healthFull individuales
+        -- (uno por body part). Cura heridas fisicas pero NO toca el flag global de
+        -- infeccion zombi (eso es exclusivo del Beso del Dios via godmode flash).
+        -- NO uso unico — consumible repetible.
+        return true
+
+    -- v0.7 #33: COMENTADO — rama stats_reset (Bendiciones del Cuerpo).
+    -- La categoria del shop se elimino porque la elevacion a admin/moderator/gm/overseer
+    -- activaba godmode auto que curaba TODO (no solo el stat pedido). Se deja comentado
+    -- por si en el futuro encontramos forma de stats:set sin disparar godmode.
+    --[[
+    elseif accion.tipo == "stats_reset" then
+        local username = tostring(jugador:getUsername())
+        local sendFrames = 5
+        local sendHandler
+        sendHandler = function()
+            sendFrames = sendFrames - 1
+            if sendFrames <= 0 then
+                HoldoorServer.notificarTodos("ejecutar_stats_reset", {
+                    target  = username,
+                    stats   = accion.stats,
+                    valores = accion.valores,
+                })
+                print("[Holdoor][Server] stats_reset: orden enviada a " .. username .. " (" .. table.concat(accion.stats or {}, ",") .. ")")
+                Events.OnTick.Remove(sendHandler)
+            end
+        end
+        Events.OnTick.Add(sendHandler)
+        return true
+    ]]--
 
     elseif accion.tipo == "restore" then
         -- En B42 los stats se setean via getStats():set(CharacterStat.X, value).
@@ -487,10 +842,14 @@ function HoldoorServer._comprar(jugador, args)
               { motivo = "Ya usaste tu Milagro del Maestre. Solo uno por personaje." })
         return
     end
-    -- Reliquia Beso del Dios: 1 por vida del personaje
-    if item.accion and item.accion.tipo == "reliquia_godmode_flash" and md and md.Holdoor_BesoDios then
+    -- Reliquia Beso del Dios: 1 por vida del personaje.
+    -- v0.7 #35: bloquear si ya lo activo (Holdoor_BesoDios) O si ya esta en bolsa (Holdoor_BesoDios_Bolsa).
+    if item.accion and item.accion.tipo == "reliquia_godmode_flash" and md and (md.Holdoor_BesoDios or md.Holdoor_BesoDios_Bolsa) then
+        local motivo = md.Holdoor_BesoDios
+            and "Ya invocaste el Beso del Dios de Muchos Rostros en esta vida."
+            or "Ya tenes un Beso del Dios en la bolsa. Activalo desde el HUD primero."
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
-              { motivo = "Ya invocaste el Beso del Dios de Muchos Rostros en esta vida." })
+              { motivo = motivo })
         return
     end
     -- Para cura_trait: la validacion "tiene el trait?" se hace EN EL CLIENTE
@@ -558,6 +917,9 @@ function HoldoorServer._comprar(jugador, args)
     end
     _persistirModData(jugador)
 
+    -- v0.7 #39: ya NO acumulamos gastos (el snapshot es al morir, sobre el saldo
+    -- ya descontado). Se quita la llamada a _acumularGasto.
+
     print("[Holdoor] Compra: " .. jugador:getUsername() .. " -> " .. catId .. "/" .. itemId ..
           " | " .. HoldoorShopCatalog.precioStr(precioEfectivo))
 
@@ -624,25 +986,57 @@ end
 function HoldoorServer._distribuirMonedas(bronze, silver, gold)
     if (bronze or 0) <= 0 and (silver or 0) <= 0 and (gold or 0) <= 0 then return end
 
-    local entregado = false
-    local ok, players = pcall(getOnlinePlayers)
-    if ok and players then
-        local ok2, n = pcall(function() return players:size() end)
-        if ok2 and n and n > 0 then
-            for i = 0, n - 1 do
-                local ok3, p = pcall(function() return players:get(i) end)
-                if ok3 and p then darMonedasA(p, bronze, silver, gold); entregado = true end
-            end
-        end
-    end
-    if not entregado then
+    -- v0.7 #40: solo los que estan en la whitelist (snapshot al iniciar oleadas:
+    -- jugadores dentro de 15 tiles de la base) reciben recompensa. Los demas (otros
+    -- usuarios del servidor que NO participaron) no reciben nada. Los que estan en
+    -- la whitelist pero OFFLINE acumulan pago pendiente en GlobalModData.
+    local estado = HoldoorServer.estado
+    local recompensables = estado.recompensables or {}
+
+    -- Fallback SP: si no hay whitelist (oleada nunca iniciada formalmente o sandbox),
+    -- comportamiento legacy — dar al host local. Esto preserva SP.
+    local hayWhitelist = false; for _ in pairs(recompensables) do hayWhitelist = true; break end
+    if not hayWhitelist then
         local ok2, p = pcall(getSpecificPlayer, 0)
         if ok2 and p then darMonedasA(p, bronze, silver, gold) end
+        HoldoorServer.notificarTodos("monedasActualizadas", {})
+        print("[Holdoor] Monedas entregadas (fallback SP): " .. (bronze or 0) .. "B " .. (silver or 0) .. "S " .. (gold or 0) .. "G")
+        return
     end
 
-    -- Notificar a clientes para refrescar el HUD del saldo
+    -- Indexar online por username para lookup rapido
+    local onlineByUser = {}
+    pcall(function()
+        local ok, ps = pcall(getOnlinePlayers)
+        if ok and ps then
+            local oks, np = pcall(function() return ps:size() end)
+            if oks and np then
+                for i = 0, np - 1 do
+                    local okp, p = pcall(function() return ps:get(i) end)
+                    if okp and p then
+                        local u; pcall(function() u = p:getUsername() end)
+                        if u then onlineByUser[u] = p end
+                    end
+                end
+            end
+        end
+    end)
+
+    local enviados, pendientes = 0, 0
+    for username, _ in pairs(recompensables) do
+        local p = onlineByUser[username]
+        if p then
+            darMonedasA(p, bronze, silver, gold)
+            enviados = enviados + 1
+        else
+            HoldoorServer._acumularPagoPendiente(username, bronze, silver, gold, nil)
+            pendientes = pendientes + 1
+        end
+    end
+
     HoldoorServer.notificarTodos("monedasActualizadas", {})
-    print("[Holdoor] Monedas entregadas: " .. (bronze or 0) .. "B " .. (silver or 0) .. "S " .. (gold or 0) .. "G")
+    print(string.format("[Holdoor] Monedas distribuidas: %dB/%dS/%dG | online=%d offline=%d",
+        bronze or 0, silver or 0, gold or 0, enviados, pendientes))
 end
 
 function HoldoorServer.detener(jugador)
@@ -681,6 +1075,9 @@ function HoldoorServer.detener(jugador)
     else
         print("[Holdoor] Sistema detenido")
     end
+
+    -- v0.7 #38: oleadas detenidas → limpiar todos los seguros activos (sobrevivieron)
+    HoldoorServer._limpiarSegurosPorFinOleada()
 end
 
 -- Args opcionales: bronce/plata/oro de la ULTIMA oleada (ya distribuidos).
@@ -735,6 +1132,9 @@ function HoldoorServer.detenerPorLimite(ultBonusSilver, ultBonusGold)
     estado.ownerUsername = nil
     print("[Holdoor] Modo completado. Premio final: " .. silver .. "S + " .. gold .. "G (chance " ..
           math.floor(rewardTbl.endGoldChance * 100) .. "%) | " .. (killsStr ~= "" and killsStr or "sin datos"))
+
+    -- v0.7 #38: oleadas completadas exitosamente → limpiar todos los seguros
+    HoldoorServer._limpiarSegurosPorFinOleada()
 end
 
 -- ─────────────────────────────────────────────
@@ -1099,6 +1499,23 @@ function HoldoorServer._lanzarOleada()
     local frase    = HoldoorConfig.frases[ZombRand(#HoldoorConfig.frases) + 1]
     local esUltima = (oleada >= (modoCfg.maxOleadas or 8))
 
+    -- v0.7 #17: en hordasMP, NO hay corredores (createhorde2 no acepta -speed).
+    -- pctCorredores=0 explicito (evita texto "Mixto + Rapidos" falso del HUD).
+    if hordasMPOleadaCfg then
+        pctCorredores = 0
+    end
+
+    -- v0.7 #17: subtitulo epico random por oleada (solo modos en hordasMP).
+    -- Reemplaza "Amenaza: Muertos + corredores -- Aguanta la puerta" en el anuncio.
+    local subtituloEpico = nil
+    if hordasMPOleadaCfg then
+        local subts = (HoldoorConfig.subtitulosOleada or {})[modoId]
+        if subts and subts[oleada] and #subts[oleada] > 0 then
+            local opciones = subts[oleada]
+            subtituloEpico = opciones[ZombRand(#opciones) + 1]
+        end
+    end
+
     print(string.format(
         "[Holdoor] OLEADA %d %s — modo=%s duracion=%ds target=%d kills | spawn %.1fs->%.1fs | %.0f%% corredores",
         oleada, esUltima and "[ULTIMA]" or "", modoId,
@@ -1107,16 +1524,17 @@ function HoldoorServer._lanzarOleada()
 
     -- Notificar al cliente (formato modelo C)
     HoldoorServer.notificarTodos("oleada", {
-        numero        = oleada,
-        duracion      = duracion,
-        target        = target,
-        spawnInicio   = spawnInicio,
-        spawnFin      = spawnFin,
-        pctCorredores = pctCorredores,
-        frase         = frase.texto,
-        autor         = frase.autor,
-        amenaza       = pctCorredores > 0 and "Muertos + corredores" or "Muertos vivientes",
-        esUltima      = esUltima,
+        numero         = oleada,
+        duracion       = duracion,
+        target         = target,
+        spawnInicio    = spawnInicio,
+        spawnFin       = spawnFin,
+        pctCorredores  = pctCorredores,
+        frase          = frase.texto,
+        autor          = frase.autor,
+        amenaza        = pctCorredores > 0 and "Muertos + corredores" or "Muertos vivientes",
+        subtituloEpico = subtituloEpico,   -- v0.7 #17: si presente, el cliente lo usa en vez de "Amenaza:"
+        esUltima       = esUltima,
     })
 
     -- Estado "activa" para el HUD del cliente
@@ -1168,6 +1586,37 @@ end
 -- en lugar de _spawnTick. Cada intervaloSeg dispara cantPuntos hordas
 -- en cardinales N/E/S/O elegidos al azar (rotacion random por ciclo).
 -- ─────────────────────────────────────────────
+-- v0.7 #15: helper para contar zombies vivos en radio circular alrededor de (cx,cy,cz).
+-- Usado para verificacion empirica pre/post spawn en flow continuo MP.
+function HoldoorServer._contarZombiesEnRadio(cx, cy, cz, radio)
+    local ok_cell, cell = pcall(getCell)
+    if not ok_cell or not cell then return 0 end
+    local n = 0
+    local r = math.floor(radio or 50)
+    for dx = -r, r do
+        for dy = -r, r do
+            if dx * dx + dy * dy <= r * r then
+                local ok_sq, sq = pcall(function() return cell:getGridSquare(cx + dx, cy + dy, cz) end)
+                if ok_sq and sq then
+                    local ok_mo, objs = pcall(function() return sq:getMovingObjects() end)
+                    if ok_mo and objs then
+                        local ok_sz, sz = pcall(function() return objs:size() end)
+                        if ok_sz and sz then
+                            for i = 0, sz - 1 do
+                                local ok_g, obj = pcall(function() return objs:get(i) end)
+                                if ok_g and obj and instanceof(obj, "IsoZombie") then
+                                    n = n + 1
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return n
+end
+
 function HoldoorServer._procesarHordasContinuas()
     local estado = HoldoorServer.estado
     if not estado.usarHordasContinuasMP then return end
@@ -1201,7 +1650,10 @@ function HoldoorServer._procesarHordasContinuas()
     end
     local n = math.min(cfg.cantPuntos or 2, #cardinales)
     local cnt = cfg.zombiesPorPunto or 3
+    -- v0.7 #15: pre-count para verificacion empirica post-spawn (radio 50).
+    local preCount = HoldoorServer._contarZombiesEnRadio(bx, by, bz, 50)
     local labels = {}
+    local puntosElegidos = {}
     for i = 1, n do
         local p = cardinales[i]
         HoldoorServer.notificarTodos("ejecutarHordaAdmin", {
@@ -1209,14 +1661,85 @@ function HoldoorServer._procesarHordasContinuas()
             count = cnt, radius = rad, label = p.label,
         })
         table.insert(labels, p.label)
+        table.insert(puntosElegidos, p)
     end
     print(string.format(
-        "[Holdoor FacilHordasMP] Ciclo: %s x %d zombies (proximo ciclo en %ds)",
-        table.concat(labels, "/"), cnt, cfg.intervaloSeg or 30
+        "[Holdoor FacilHordasMP] Ciclo: %s x %d zombies (proximo ciclo en %ds, pre=%d)",
+        table.concat(labels, "/"), cnt, cfg.intervaloSeg or 30, preCount
     ))
+
+    -- v0.7 #15: programar verificacion empirica en 3s. Si delta < esperado*0.75 → retry.
+    estado._verificacionHordasPendiente = {
+        ts                 = ahora + 3,
+        esperado           = n * cnt,
+        preCount           = preCount,
+        puntosElegidos     = puntosElegidos,
+        radiusSpawnInterno = rad,
+        intento            = 1,
+    }
 
     -- Reschedule proximo ciclo
     estado.proximoSpawnCicloSec = ahora + (cfg.intervaloSeg or 30)
+end
+
+-- ─────────────────────────────────────────────
+-- v0.7 #15: VERIFICACION POST-SPAWN + RETRY (flow continuo MP)
+-- 3 segundos despues de cada ciclo, contar zombies vivos en radio 50.
+-- Si delta (post - pre) < esperado*0.75 → re-spawn los faltantes en los mismos
+-- puntos elegidos. Maximo 3 intentos por ciclo. Si falla 3 veces → log + seguir.
+-- ─────────────────────────────────────────────
+function HoldoorServer._procesarVerificacionHordas()
+    local estado = HoldoorServer.estado
+    local v = estado._verificacionHordasPendiente
+    if not v then return end
+    local ahora = os.time()
+    if ahora < (v.ts or 0) then return end
+
+    local bz = estado.baseZ or 0
+    local postCount = HoldoorServer._contarZombiesEnRadio(estado.baseX, estado.baseY, bz, 50)
+    local delta = postCount - (v.preCount or 0)
+    local esperado = v.esperado or 0
+    local intento = v.intento or 1
+    local umbralOK = math.floor(esperado * 0.75)
+
+    if delta >= umbralOK then
+        print(string.format(
+            "[Holdoor FacilHordasMP] Verificacion OK intento=%d/3: delta=%d >= umbral=%d (pedidos=%d)",
+            intento, delta, umbralOK, esperado
+        ))
+        estado._verificacionHordasPendiente = nil
+        return
+    end
+
+    if intento >= 3 then
+        print(string.format(
+            "[Holdoor FacilHordasMP] Verificacion FAIL despues de 3 intentos: delta=%d esperado=%d (no se reintenta mas)",
+            delta, esperado
+        ))
+        estado._verificacionHordasPendiente = nil
+        return
+    end
+
+    -- Retry: calcular faltante y distribuir entre los puntos elegidos.
+    local faltante = math.max(1, esperado - delta)
+    local nPuntos = math.max(1, #(v.puntosElegidos or {}))
+    local porPunto = math.max(1, math.ceil(faltante / nPuntos))
+    local rad = v.radiusSpawnInterno or 3
+    print(string.format(
+        "[Holdoor FacilHordasMP] Verificacion RETRY intento=%d/3: delta=%d < umbral=%d → re-spawn %d zombies/punto x %d puntos",
+        intento, delta, umbralOK, porPunto, nPuntos
+    ))
+    for _, p in ipairs(v.puntosElegidos or {}) do
+        HoldoorServer.notificarTodos("ejecutarHordaAdmin", {
+            x = p.x, y = p.y, z = bz,
+            count = porPunto, radius = rad, label = (p.label or "?") .. "*",
+        })
+    end
+
+    -- Reprogramar verificacion: chequear de nuevo en 3s. preCount queda IGUAL (comparamos
+    -- siempre contra el original, asi el delta acumula los reintentos).
+    v.ts = ahora + 3
+    v.intento = intento + 1
 end
 
 -- ─────────────────────────────────────────────
@@ -1741,23 +2264,53 @@ function HoldoorServer._distribuirMateriales(materiales)
         _persistirModData(p)
     end
 
-    local entregado = false
-    local ok, players = pcall(getOnlinePlayers)
-    if ok and players then
-        local ok2, n = pcall(function() return players:size() end)
-        if ok2 and n and n > 0 then
-            for i = 0, n - 1 do
-                local ok3, p = pcall(function() return players:get(i) end)
-                if ok3 and p then darMatsA(p); entregado = true end
-            end
-        end
-    end
-    if not entregado then
+    -- v0.7 #40: igual que _distribuirMonedas — solo a la whitelist de recompensables,
+    -- offline acumula pago pendiente.
+    local estado = HoldoorServer.estado
+    local recompensables = estado.recompensables or {}
+    local hayWhitelist = false; for _ in pairs(recompensables) do hayWhitelist = true; break end
+
+    if not hayWhitelist then
+        -- Fallback SP
         local ok2, p = pcall(getSpecificPlayer, 0)
         if ok2 and p then darMatsA(p) end
+        HoldoorServer.notificarTodos("materialesActualizados", {})
+        return
+    end
+
+    -- Indexar online
+    local onlineByUser = {}
+    pcall(function()
+        local ok, ps = pcall(getOnlinePlayers)
+        if ok and ps then
+            local oks, np = pcall(function() return ps:size() end)
+            if oks and np then
+                for i = 0, np - 1 do
+                    local okp, p = pcall(function() return ps:get(i) end)
+                    if okp and p then
+                        local u; pcall(function() u = p:getUsername() end)
+                        if u then onlineByUser[u] = p end
+                    end
+                end
+            end
+        end
+    end)
+
+    local enviados, pendientes = 0, 0
+    for username, _ in pairs(recompensables) do
+        local p = onlineByUser[username]
+        if p then
+            darMatsA(p)
+            enviados = enviados + 1
+        else
+            -- Acumular materiales pendientes (mismo helper, materiales como segundo arg)
+            HoldoorServer._acumularPagoPendiente(username, 0, 0, 0, materiales)
+            pendientes = pendientes + 1
+        end
     end
 
     HoldoorServer.notificarTodos("materialesActualizados", {})
+    print(string.format("[Holdoor] Materiales distribuidos | online=%d offline=%d", enviados, pendientes))
 end
 
 -- Distribuye items reales al inventario del player.
@@ -1968,6 +2521,7 @@ function HoldoorServer.onTick()
         --   - Sino (legacy):                  _spawnTick (1 zombi/intervalo lerp).
         if estado.usarHordasContinuasMP then
             HoldoorServer._procesarHordasContinuas()    -- v0.7 #14 Facil flow continuo
+            HoldoorServer._procesarVerificacionHordas() -- v0.7 #15 verificacion pre/post + retry
         elseif estado.usarHordasMPActivo then
             HoldoorServer._procesarHordasMPPendientes() -- v0.7 #13 TEST hordas agendadas
         else
@@ -3785,6 +4339,20 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
     elseif comando == "comprar" then
         HoldoorServer._comprar(jugador, args)
 
+    elseif comando == "activarBeso" then
+        -- v0.7 #35: el jugador apreto el boton del HUD lateral para activar Beso del Dios.
+        -- Server marca el item como usado (Holdoor_BesoDios=true) y limpia la bolsa.
+        -- El trampoline admin 5s lo ejecuta el cliente localmente (no es server-side).
+        local md = jugador:getModData()
+        if md and md.Holdoor_BesoDios_Bolsa then
+            md.Holdoor_BesoDios       = true
+            md.Holdoor_BesoDios_Bolsa = nil
+            _persistirModData(jugador)
+            print("[Holdoor][Server] Beso del Dios ACTIVADO por " .. tostring(jugador:getUsername()) .. " (Bolsa→Usado)")
+        else
+            print("[Holdoor][Server] activarBeso: " .. tostring(jugador:getUsername()) .. " no tiene Beso en bolsa (ignorado)")
+        end
+
     elseif comando == "delegarAddXp" or comando == "delegarAddItem" then
         -- v0.6.1: cliente NO admin pidio entregar XP/items. Delegamos al host admin.
         local hostAdmin = HoldoorServer._buscarHostAdmin()
@@ -3835,6 +4403,10 @@ function HoldoorServer._onPlayerMuerto(jugador)
     print("[Holdoor] Player muerto: " .. tostring(username))
     estado.participantes[username] = nil  -- removerlo del registro
 
+    -- v0.7 #39: snapshot del saldo ACTUAL del jugador al morir. Cuando el nuevo
+    -- personaje spawnee (OnCreatePlayer abajo), se le aplica al ModData fresh.
+    pcall(function() HoldoorServer._marcarMuerteEnOleada(jugador) end)
+
     -- Chequear si quedan participantes vivos y conectados
     local quedanVivos = 0
     pcall(function()
@@ -3879,6 +4451,20 @@ Events.OnTick.Add(HoldoorServer.onTick)
 Events.OnZombieDead.Add(HoldoorServer.onZombieMuerto)
 Events.OnClientCommand.Add(HoldoorServer.onComandoCliente)
 Events.OnPlayerDeath.Add(HoldoorServer._onPlayerMuerto)
+
+-- v0.7 #38 + #40: OnCreatePlayer dispara al spawnear un personaje (incluye respawn post-muerte
+-- y reconexion del jugador). Aplica DOS cosas si corresponde:
+--   1) Seguro de monedas (refundPending del char muerto en oleada activa)
+--   2) Pagos pendientes (recompensas de oleadas terminadas mientras estaba offline)
+Events.OnCreatePlayer.Add(function(_, jugador)
+    if not jugador then return end
+    if HoldoorServer._aplicarRefundAJugador then
+        pcall(function() HoldoorServer._aplicarRefundAJugador(jugador) end)
+    end
+    if HoldoorServer._aplicarPagosPendientesAJugador then
+        pcall(function() HoldoorServer._aplicarPagosPendientesAJugador(jugador) end)
+    end
+end)
 
 -- ─────────────────────────────────────────────
 -- GALERIA DE TRONOS (modo diagnóstico visual)

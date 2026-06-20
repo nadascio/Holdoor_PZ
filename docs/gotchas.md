@@ -1712,3 +1712,132 @@ _persistirModData(p)
 ---
 
 **Última actualización:** 2026-06-16 — Sprint v0.6.2 cerrado (gotchas #48-#51 lockeados — el #51 es el fix CRÍTICO de persistencia MP)
+
+---
+
+## #52 — B42: `setAccessLevel(string)` NO existe en IsoPlayer
+
+**Síntoma:** llamar `jugador:setAccessLevel("admin")` en B42 server-side tira NullPointerException Java que `pcall` agarra (silently fails).
+
+**Descubrimiento:** búsqueda en source vanilla. La API correcta para SETEAR rol/nivel es:
+```lua
+jugador:setRole("admin")             -- en ISPlayerStatsUI.lua:611
+sendPlayerStatsChange(jugador)       -- propagar al cliente
+```
+
+**PERO en práctica empírica**: `setRole(string)` tampoco se aplica correctamente desde server-side (DIAG mostró que el role del jugador seguía siendo "user" tras la llamada). El método REAL que funciona es:
+
+```lua
+SendCommandToServer('/setaccesslevel "' .. username .. '" admin')
+```
+
+Esto funciona desde CLIENTE → server (incluido CoopHost). El coop host puede correr comandos admin via slash aunque su `getAccessLevel()` reporte "user" — la autoridad implícita del host.
+
+**Notar:** `getAccessLevel()` SÍ funciona para LEER. La asimetría es solo en el setter.
+
+**Cuándo aplica:** elevar temporalmente a jugador para que stats:set + sendPlayerStat sean aceptados por el server. Usado en el Beso del Dios v0.7 #33.
+
+---
+
+## #53 — Admin elevation auto-activa GodMod + Invisible + NoClip
+
+**Síntoma:** después de `/setaccesslevel X admin`, el jugador entra automáticamente en GodMod (invulnerable), Invisible (zombies no lo ven) y NoClip (atraviesa paredes).
+
+**Mecánica vanilla B42:** PZ guarda "admin privileges" por usuario. Al elevarse a admin, reaplica los flags del perfil (por default tienen GodMod + Invisible + NoClip activados). Probado empíricamente que esto ocurre incluso con perfiles aparentemente vacíos.
+
+**Implicancias:**
+
+1. **Como bug**: si elevamos a admin para hacer una operación puntual, el jugador queda invulnerable + invisible + atraviesa paredes durante TODO el tiempo que dure el rol elevado.
+2. **Como feature**: GodMod cura ABSOLUTAMENTE TODO en ~50-150ms (mordeduras, hambre, sed, infección zombi, fatiga, fracturas, sangrado). Si lo querés usar como item premium ("Beso del Dios"), es perfecto.
+3. **Mitigación selectiva**: si querés admin pero NO los flags, watchdog cada frame que apaga `setGodMod(false) + setInvisible(false) + setNoClip(false)`. Cuidado con `setGhostMode` (NoClip y GhostMode son diferentes — Ghost permite walk-through-walls también pero por mecánica distinta).
+
+**Cuándo aplica:** v0.7 #33 (Beso del Dios), cualquier feature futuro que elevación a admin para forzar autoridad.
+
+---
+
+## #54 — Lua `local function` scope: solo visible DESPUÉS de la línea de declaración
+
+**Síntoma:** llamada a función helper devuelve `nil reference` exception. La función está declarada en el archivo pero NO está en scope donde se llama.
+
+**Causa raíz:** en Lua, `local function _foo(p)` es visible solo a partir de su línea de declaración hacia abajo. Si una función `HoldoorServer.bar()` declarada en línea 100 intenta llamar a `local function _foo` declarada en línea 375, en runtime `_foo` es `nil` desde el closure de `bar`.
+
+**Ejemplo concreto (v0.7 #38b):**
+```lua
+-- Línea 97
+function HoldoorServer._aplicarRefundAJugador(jugador)
+    ...
+    _persistirModData(jugador)   -- ❌ _persistirModData NO está en scope aún
+end
+
+-- Línea 375
+local function _persistirModData(p)
+    pcall(function() p:transmitModData() end)
+end
+```
+
+**Fixes:**
+- **Inline** la función helper: `pcall(function() jugador:transmitModData() end)` directamente.
+- **Forward declare**: `local _persistirModData` antes de todo, luego asignar más adelante.
+- **Mover** las funciones que la usan después de su declaración.
+- **Exponer como miembro**: `function HoldoorServer._persistirModData(p)` global del namespace (no `local`).
+
+**Cuándo aplica:** cualquier refactor donde agregás funciones helpers nuevas. Verificar el ORDEN del archivo, no solo que la función exista.
+
+---
+
+## #55 — Race condition con `stats:set()` + `sendPlayerStat()` en MP
+
+**Síntoma:** cliente setea `stats:set(HUNGER, 0)` + `sendPlayerStat()` durante una compra en oleada activa. El server "rebota" el valor a ~0.033 en 1 segundo (en vez de quedarse en 0).
+
+**Causa:** ejecutar el `stats:set()` INLINE durante el flow de compra crea race condition con el procesamiento server-side. El server tiene su propia copia del jugador y la sincroniza al cliente, pisando el cambio local.
+
+**Fix probado empíricamente (v0.7 #28c):**
+
+```lua
+-- Server-side (HoldoorServer.lua) ramo de _aplicarAccion:
+local sendFrames = 5
+local sendHandler
+sendHandler = function()
+    sendFrames = sendFrames - 1
+    if sendFrames <= 0 then
+        HoldoorServer.notificarTodos("ejecutar_stats_reset", { target=username, stats=..., valores=... })
+        Events.OnTick.Remove(sendHandler)
+    end
+end
+Events.OnTick.Add(sendHandler)
+```
+
+Cliente recibe la notificación ~5 frames después de la compra (~80ms), ya pasó la ventana de race. Hace `stats:set + sendPlayerStat` y persiste.
+
+**Cuándo aplica:** cualquier operación que modifique stats del player desde un flow disparado por sendClientCommand → onComandoCliente. Siempre demorar la ejecución del lado cliente.
+
+---
+
+## #56 — `Events.OnCreatePlayer` dispara en 3 escenarios
+
+**Confirmado empíricamente:** el evento dispara cuando:
+1. **Spawn inicial** — el jugador crea un personaje por primera vez en este server
+2. **Respawn post-muerte** — el jugador muere y crea nuevo personaje
+3. **Reconexión** — el jugador se desconecta y vuelve a entrar al server con su personaje existente
+
+**Punto de hookeo perfecto** para aplicar estado per-username que tiene que persistir entre personajes (no en ModData del IsoPlayer, que muere con el char).
+
+**Patrón usado en v0.7 #38 + #40:**
+
+```lua
+Events.OnCreatePlayer.Add(function(_, jugador)
+    if not jugador then return end
+    -- Aplicar seguro de muerte (refund pendiente)
+    HoldoorServer._aplicarRefundAJugador(jugador)
+    -- Aplicar pagos offline acumulados (recompensas de oleadas ganadas mientras estaba offline)
+    HoldoorServer._aplicarPagosPendientesAJugador(jugador)
+end)
+```
+
+Ambos handlers leen de tablas indexadas por username, aplican al IsoPlayer fresh, y limpian el entry.
+
+**Persistencia:** estado per-username debe estar en GlobalModData (`ModData.getOrCreate("Holdoor_X")`) para sobrevivir restart del server.
+
+---
+
+**Última actualización:** 2026-06-20 — Sprint v0.7 cerrado (gotchas #52-#56 lockeados, ver sprints_history.md "2026-06-20 — Sprint v0.7")

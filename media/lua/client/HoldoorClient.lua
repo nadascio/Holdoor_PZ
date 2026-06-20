@@ -169,6 +169,120 @@ function HoldoorClient.esAdmin()
     return false
 end
 
+-- v0.7 #35: ACTIVAR Beso del Dios (admin trampoline 5s).
+-- Llamada desde el boton del HUD lateral cuando el jugador tiene Beso en bolsa.
+-- - SendCommandToServer "/setaccesslevel admin" → PZ activa godmode auto (cura todo)
+-- - Watchdog cada frame por 30 frames: setNoClip(false) selectivo (GhostMode se queda ON)
+-- - 150 frames despues (~5s): apaga GodMod/Invisible/NoClip + revert a "user"
+-- - sendClientCommand "activarBeso" → server marca usado-por-vida + limpia bolsa
+function HoldoorClient._activarBesoDelDios()
+    local me = getSpecificPlayer(0)
+    if not me then
+        print("[Holdoor] Beso del Dios: ERROR - getSpecificPlayer(0) devolvio nil")
+        return
+    end
+    local username = me:getUsername()
+    if not username then return end
+
+    -- v0.7 #37: validar que el jugador tenga ALGO que curar antes de quemar el uso unico.
+    -- Cubre todo lo que el Beso cura: heridas fisicas (sangrado/cortes/mordeduras/fracturas/scratch),
+    -- HP de body parts, zombificacion (ZOMBIE_INFECTION/FEVER) y stats vitales (hunger/thirst/fatigue).
+    local necesitaCura = false
+    pcall(function()
+        local bd = me:getBodyDamage()
+        if bd then
+            local parts = bd:getBodyParts()
+            if parts then
+                for i = 0, parts:size() - 1 do
+                    local bP = parts:get(i)
+                    if bP then
+                        local hp = 100; pcall(function() hp = bP:getHealth() end)
+                        if hp < 100 then necesitaCura = true; return end
+                        local b = false; pcall(function() b = bP:bitten() end)
+                        if b then necesitaCura = true; return end
+                        local inf = false; pcall(function() inf = bP:isInfectedWound() end)
+                        if inf then necesitaCura = true; return end
+                        local bld = false; pcall(function() bld = bP:bleeding() end)
+                        if bld then necesitaCura = true; return end
+                        local cut = false; pcall(function() cut = bP:isCut() end)
+                        if cut then necesitaCura = true; return end
+                        local dw = false; pcall(function() dw = bP:isDeepWounded() end)
+                        if dw then necesitaCura = true; return end
+                        local sc = false; pcall(function() sc = bP:scratched() end)
+                        if sc then necesitaCura = true; return end
+                        local frac = 0; pcall(function() frac = bP:getFractureTime() end)
+                        if frac > 0 then necesitaCura = true; return end
+                    end
+                end
+            end
+        end
+    end)
+    -- Tambien zombificacion y stats vitales (umbral 0.15 para evitar disparo por minima sed)
+    if not necesitaCura and CharacterStat then
+        pcall(function()
+            local s = me:getStats()
+            if s then
+                if s:get(CharacterStat.ZOMBIE_INFECTION) > 0 then necesitaCura = true end
+                if s:get(CharacterStat.ZOMBIE_FEVER) > 0 then necesitaCura = true end
+                if s:get(CharacterStat.HUNGER)  > 0.30 then necesitaCura = true end
+                if s:get(CharacterStat.THIRST)  > 0.30 then necesitaCura = true end
+                if s:get(CharacterStat.FATIGUE) > 0.30 then necesitaCura = true end
+            end
+        end)
+    end
+    if not necesitaCura then
+        HoldoorClient.chat("[HOLDOOR] Estas sano. El Beso del Dios no tiene a quien curar — no lo quemes en vano.", 1, 0.6, 0.2)
+        return
+    end
+
+    -- 1) Notificar al server que active el flag usado-por-vida + limpie la bolsa
+    pcall(function() sendClientCommand(HoldoorConfig.MODULE, "activarBeso", {}) end)
+
+    -- 2) Elevar a admin (godmode auto activa → cura todo + escudo + invulnerabilidad)
+    pcall(function() SendCommandToServer('/setaccesslevel "' .. username .. '" admin') end)
+    HoldoorClient.chat("[HOLDOOR] Beso del Dios INVOCADO. 5 segundos de proteccion divina.", 0.85, 0.55, 0.95)
+    print("[Holdoor] Beso del Dios ACTIVADO: /setaccesslevel admin enviado (5s)")
+
+    -- 3) Watchdog: apagar SOLO NoClip cada frame por 150 frames (toda la duracion del Beso).
+    -- Antes era 30 frames pero el admin dura 5s = 150 frames; entre frame 30 y 150 PZ podia
+    -- reactivar NoClip y trabarte entre objetos. Ahora cubre los 5s completos.
+    -- No tocamos GhostMode (preferencia explicita de Nahuel).
+    local watchdogFrames = 150
+    local watchdogHandler
+    watchdogHandler = function()
+        if me then
+            pcall(function() me:setNoClip(false) end)
+        end
+        watchdogFrames = watchdogFrames - 1
+        if watchdogFrames <= 0 then
+            Events.OnTick.Remove(watchdogHandler)
+        end
+    end
+    Events.OnTick.Add(watchdogHandler)
+
+    -- 4) 150 frames despues (~5s): apagar flags + revert a user
+    local frames = 150
+    local revertHandler
+    revertHandler = function()
+        frames = frames - 1
+        if frames <= 0 then
+            pcall(function() me:setGodMod(false) end)
+            pcall(function() me:setInvisible(false) end)
+            pcall(function() me:setNoClip(false) end)
+            -- GhostMode NO se toca (preferencia explicita de Nahuel 2026-06-20)
+            pcall(function() SendCommandToServer('/setaccesslevel "' .. username .. '" user') end)
+            print("[Holdoor] Beso del Dios: 5s terminados, /setaccesslevel user enviado")
+            Events.OnTick.Remove(revertHandler)
+        end
+    end
+    Events.OnTick.Add(revertHandler)
+
+    -- 5) Refrescar HUD para que desaparezca el boton (ya consumimos el Beso)
+    if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+        HoldoorHUD.instance:actualizarHUD()
+    end
+end
+
 -- Records: mejor oleada alcanzada por modo (persistido en ModData)
 function HoldoorClient.guardarRecord(modoId, oleada)
     local ok, md = pcall(ModData.getOrCreate, "Holdoor")
@@ -293,6 +407,104 @@ end
 
 function HoldoorClient.onComandoServidor(modulo, comando, args)
     if modulo ~= HoldoorConfig.MODULE then return end
+
+    -- v0.7 #39: SEGURO DE MONEDAS — server avisa que el seguro esta activo al iniciar oleada.
+    -- Snapshot del saldo se hace AL MORIR (no aca), asi que aca solo es un aviso generico.
+    if comando == "seguroActivado" then
+        local msg = "SEGURO DE MONEDAS ACTIVADO"
+        if HoldoorToast and HoldoorToast.mostrar then
+            pcall(function() HoldoorToast.mostrar(msg, 0.4, 0.9, 1.0) end)
+        end
+        HoldoorClient.chat("[HOLDOOR] Seguro de monedas activado. Si moris en la oleada, tu saldo se conserva.", 0.4, 0.9, 1.0)
+        return
+    end
+
+    -- v0.7 #38: SEGURO DE MONEDAS — server avisa al respawn que se restauraron monedas.
+    if comando == "seguroRestaurado" then
+        local b = args.bronze or 0
+        local s = args.silver or 0
+        local g = args.gold   or 0
+        local besoStr = args.beso_bolsa and " + Beso del Dios preservado" or ""
+        local msg = "EL BANCO TE DEVUELVE: " .. b .. "B / " .. s .. "P / " .. g .. "O" .. besoStr
+        if HoldoorToast and HoldoorToast.mostrar then
+            pcall(function() HoldoorToast.mostrar(msg, 1.0, 0.85, 0.3) end)
+        end
+        HoldoorClient.chat("[HOLDOOR] El banco te devuelve " .. b .. "B / " .. s .. "P / " .. g .. "O" .. besoStr .. ".", 1.0, 0.85, 0.3)
+        return
+    end
+
+    -- v0.7 #40: PAGO PENDIENTE COBRADO — al reconectarse, el jugador recibe recompensas
+    -- acumuladas mientras estaba offline (oleadas terminadas en su ausencia).
+    if comando == "pagoPendienteCobrado" then
+        local b = args.bronze or 0
+        local s = args.silver or 0
+        local g = args.gold   or 0
+        local mats = args.materiales or {}
+        local hayMats = false
+        local matStr = {}
+        for k, v in pairs(mats) do
+            if v and v > 0 then
+                hayMats = true
+                table.insert(matStr, v .. " " .. k)
+            end
+        end
+        local msg = "RECOMPENSAS PENDIENTES: " .. b .. "B / " .. s .. "P / " .. g .. "O"
+        if hayMats then msg = msg .. " + materiales" end
+        if HoldoorToast and HoldoorToast.mostrar then
+            pcall(function() HoldoorToast.mostrar(msg, 1.0, 0.85, 0.3) end)
+        end
+        local matsTxt = hayMats and (" + " .. table.concat(matStr, ", ")) or ""
+        HoldoorClient.chat("[HOLDOOR] Recibis recompensas de oleadas pasadas (estabas offline): " .. b .. "B / " .. s .. "P / " .. g .. "O" .. matsTxt .. ".", 1.0, 0.85, 0.3)
+        return
+    end
+
+    -- v0.7 #33: COMENTADO — la categoria "Bendiciones del Cuerpo" se elimino porque
+    -- la elevacion a admin/moderator/gm/overseer activaba godmode auto que curaba TODO
+    -- (no solo el stat especifico). El Beso del Dios consolido toda esta logica.
+    -- Se deja comentado por si en el futuro encontramos forma de bypass del godmode auto.
+    --[[
+    if comando == "ejecutar_stats_reset" then
+        local me = getSpecificPlayer(0)
+        if me and args and args.target == me:getUsername() then
+            local stats = me:getStats()
+            local nutr; pcall(function() nutr = me:getNutrition() end)
+            local nombres = args.stats or {}
+            local valores = args.valores or {}
+            local applied = 0
+            for i, statName in ipairs(nombres) do
+                local enum = CharacterStat and CharacterStat[statName]
+                if enum then
+                    local val = valores[i] or 0
+                    pcall(function() stats:set(enum, val) end)
+                    if isClient() then
+                        pcall(function() sendPlayerStat(me, enum) end)
+                    end
+                    if statName == "HUNGER" and nutr then
+                        pcall(function() nutr:setCalories(2200) end)
+                    end
+                    applied = applied + 1
+                else
+                    print("[Holdoor] ejecutar_stats_reset: enum CharacterStat." .. tostring(statName) .. " no existe (ignorado)")
+                end
+            end
+            print("[Holdoor] Bendicion del Cuerpo aplicada: " .. applied .. " stats reseteadas (" .. table.concat(nombres, ",") .. ")")
+
+            local username = me:getUsername()
+            local frames = 30
+            local revertHandler
+            revertHandler = function()
+                frames = frames - 1
+                if frames <= 0 then
+                    pcall(function() SendCommandToServer('/setaccesslevel "' .. username .. '" user') end)
+                    print("[Holdoor] Bendiciones: /setaccesslevel \"" .. username .. "\" user enviado (revert)")
+                    Events.OnTick.Remove(revertHandler)
+                end
+            end
+            Events.OnTick.Add(revertHandler)
+        end
+        return
+    end
+    ]]--
 
     if comando == "oleada" then
         HoldoorClient.mostrarOleada(args)
@@ -553,11 +765,17 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.estado.baseZ        = args.z
         HoldoorClient.estado.baseDefinida = true
         if HoldoorUI then HoldoorUI.actualizarTodo() end
+        -- v0.7 #16: activar overlay del radio si el panel esta abierto (MP flow).
+        if HoldoorUI and HoldoorUI.overlay and HoldoorUI.instancia and HoldoorUI.instancia:isVisible() then
+            HoldoorUI.overlay:setVisible(true)
+        end
 
     elseif comando == "baseQuitada" then
         HoldoorClient.estado.baseX, HoldoorClient.estado.baseY, HoldoorClient.estado.baseZ = 0, 0, 0
         HoldoorClient.estado.baseDefinida = false
         HoldoorClient.estado.tronoHP, HoldoorClient.estado.tronoMaxHP = nil, nil
+        -- v0.7 #16: esconder overlay al quitar base (no hay nada que mostrar).
+        if HoldoorUI and HoldoorUI.overlay then HoldoorUI.overlay:setVisible(false) end
         -- Tambien borrar de ModData del propio jugador (persistencia)
         pcall(function()
             local md = ModData.getOrCreate("Holdoor")
@@ -772,17 +990,29 @@ function HoldoorClient.mostrarOleada(args)
     HoldoorClient.chat("=================================", 0.6, 0.3, 0.1)
 
     -- Anuncio épico centrado
+    -- v0.7 #17: si el server mando subtituloEpico (flow hordasMP), usarlo tal cual.
+    -- Sino caer al texto viejo "Amenaza: X -- Aguanta la puerta" (flow legacy).
     if HoldoorAnnounce then
         if esUltima then
-            local subText = args.amenaza and ("Amenaza: " .. args.amenaza) or ""
+            local subText
+            if args.subtituloEpico and args.subtituloEpico ~= "" then
+                subText = args.subtituloEpico
+            else
+                subText = (args.amenaza and ("Amenaza: " .. args.amenaza) or "") .. "  -- Aguanta la puerta."
+            end
             HoldoorAnnounce.mostrar(
                 "!!! ULTIMA OLEADA !!!",
-                subText .. "  -- Aguanta la puerta.",
+                subText,
                 1.0, 0.08, 0.05,
                 360
             )
         else
-            local subText = args.amenaza and ("Amenaza: " .. args.amenaza) or ""
+            local subText
+            if args.subtituloEpico and args.subtituloEpico ~= "" then
+                subText = args.subtituloEpico
+            else
+                subText = args.amenaza and ("Amenaza: " .. args.amenaza) or ""
+            end
             HoldoorAnnounce.mostrar(
                 "-- OLEADA " .. args.numero .. " --",
                 subText,
@@ -805,6 +1035,19 @@ HoldoorClient._saldoTick = 0
 
 function HoldoorClient.onTick()
     local est = HoldoorClient.estado
+
+    -- v0.7 #26: Beso del Dios — apagar godmode al pasar 5s del activado.
+    -- Item uso unico (9 oro): la curacion en si la hacen las capas 2/3/4 (SetBitten/Infected,
+    -- healthFull, stats ZOMBIE_INFECTION=0 server-auth). Godmode 5s da MARGEN para que el
+    -- player escape del peligro inmediato que lo iba a matar (ej. rodeado por zombies).
+    if est._besoDiosApagarEn and os.time() >= est._besoDiosApagarEn then
+        est._besoDiosApagarEn = nil
+        local me = getSpecificPlayer(0)
+        if me then
+            pcall(function() me:setGodMod(false) end)
+            print("[Holdoor] Beso del Dios: godmode OFF (5s) — curacion total completada")
+        end
+    end
 
     -- v0.7 #13: procesar bridge de hordas admin pendiente (/createhorde2).
     -- Mismo patron que limpiezaAdmin abajo: client-context + solo host ejecuta.
@@ -930,6 +1173,12 @@ function HoldoorClient.setBase()
 
     if HoldoorUI and HoldoorUI.instancia then
         HoldoorUI.instancia:actualizarEstado()
+    end
+    -- v0.7 #16: activar overlay del radio inmediatamente al marcar base.
+    -- Antes el overlay solo se hacia visible al RE-abrir el panel (bug: pelotitas invisibles
+    -- hasta cerrar+abrir F10 de nuevo).
+    if HoldoorUI and HoldoorUI.overlay and HoldoorUI.instancia and HoldoorUI.instancia:isVisible() then
+        HoldoorUI.overlay:setVisible(true)
     end
     HoldoorClient.chat("[HOLDOOR] Base marcada en " .. x .. ", " .. y, 0.4, 0.8, 1)
 
@@ -1170,7 +1419,46 @@ function HoldoorClient.comprar(categoriaId, itemId)
                 return
             end
         end
-        -- Beso del Dios: NO comprar si el player no esta lastimado (no hay nada que curar).
+        -- v0.7 #36: Sanacion del Septon — NO comprar si el player no tiene heridas fisicas
+        -- (sangrado / cortes / mordeduras / fracturas). El item cura esas 4 condiciones,
+        -- no tiene sentido comprarlo healthy.
+        if itemDef.accion.tipo == "reliquia_cura_completa" then
+            local player = getSpecificPlayer(0)
+            local necesitaCura = false
+            if player then
+                pcall(function()
+                    local bd = player:getBodyDamage()
+                    if not bd then return end
+                    local parts = bd:getBodyParts()
+                    if not parts then return end
+                    for i = 0, parts:size() - 1 do
+                        local bP = parts:get(i)
+                        if bP then
+                            local b = false; pcall(function() b = bP:bleeding() end)
+                            if b then necesitaCura = true; return end
+                            local cut = false; pcall(function() cut = bP:isCut() end)
+                            if cut then necesitaCura = true; return end
+                            local dw = false; pcall(function() dw = bP:isDeepWounded() end)
+                            if dw then necesitaCura = true; return end
+                            local mord = false; pcall(function() mord = bP:bitten() end)
+                            if mord then necesitaCura = true; return end
+                            local frac = 0; pcall(function() frac = bP:getFractureTime() end)
+                            if frac > 0 then necesitaCura = true; return end
+                        end
+                    end
+                end)
+            end
+            if not necesitaCura then
+                HoldoorClient.chat("[HOLDOOR] No tenes heridas fisicas. La Sanacion del Septon no tiene a quien curar.", 1, 0.6, 0.2)
+                return
+            end
+        end
+
+        -- v0.7 #35: Beso del Dios — ya NO bloqueamos por "no estas lastimado".
+        -- Ahora el item va a una bolsa (HUD lateral) y el jugador decide cuando activarlo.
+        -- Caso de uso del HUD: comprar tranquilo entre oleadas, activar en emergencia.
+        -- Pre-check de wounds desactivado intencionalmente (comentado abajo).
+        --[[
         if itemDef.accion.tipo == "reliquia_godmode_flash" then
             local player = getSpecificPlayer(0)
             local necesitaCura = false
@@ -1211,6 +1499,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
                 return
             end
         end
+        ]]--
         -- Bendiciones especificas: NO comprar si el player no tiene la condicion concreta.
         local validCura = {
             reliquia_cura_sangrado   = { fn = function(bP) return bP:bleeding() end,                msg = "sangrado" },
@@ -1294,32 +1583,149 @@ function HoldoorClient.comprar(categoriaId, itemId)
             end
         end
 
-        -- Reliquias: API Lua directa vanilla (descubierto 2026-06-16 noche tras debug profundo).
-        -- NO usamos /godmode admin comando porque su parser B42 esta roto y comportamiento toggle.
-        -- En su lugar usamos la misma API que el panel admin "Health Full (Body)" del juego.
+        -- v0.7 #35: Beso del Dios — COMPRA va a BOLSA, NO activa inmediato.
+        -- La activacion real la hace el jugador click en el boton del HUD lateral,
+        -- via HoldoorClient._activarBesoDelDios() (definida abajo).
+        -- El server ya marco md.Holdoor_BesoDios_Bolsa = true al cobrar.
+        -- Aca solo confirmamos visualmente que la compra entro a la bolsa.
         if accion.tipo == "reliquia_godmode_flash" and targetUser then
-            -- Beso del Dios: enviar 17 comandos "healthFull" individuales (uno por body part)
-            -- al server-side via sendClientCommand("player", "onHealthCheatCurrentPlayer").
-            -- Server maneja el comando authoritative y aplica RestoreToFullHealth() sobre
-            -- el otherPlayer body part correcto. Cambio persiste, no se revierte.
-            --
-            -- BUG vanilla: "healthFullBody" en server-side (ClientCommands.lua:557) usa "player"
-            -- en vez de "otherPlayer" — capaz tiene inconsistencia. "healthFull" individual SI
-            -- usa el bodyPart correcto de otherPlayer (linea 549).
-            print("[Holdoor] Reliquia Beso del Dios: INICIO curacion total via server cheat (17 commands)")
+            HoldoorClient.chat("[HOLDOOR] Beso del Dios guardado. Activalo desde el HUD lateral cuando lo necesites.", 0.85, 0.55, 0.95)
+            -- Refrescar HUD para que aparezca el boton nuevo
+            if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+                HoldoorHUD.instance:actualizarHUD()
+            end
+        end
+
+        --[[
+        -- v0.7 #33 (DEPRECADO en v0.7 #35): activacion inmediata al comprar.
+        -- Reemplazado por el flow de bolsa. Codigo viejo abajo por si hace falta.
+        if accion.tipo == "reliquia_godmode_flash" and targetUser then
             local me = getSpecificPlayer(0)
             if not me then
-                print("[Holdoor] Reliquia Beso del Dios: ERROR - getSpecificPlayer(0) devolvio nil")
+                print("[Holdoor] Beso del Dios: ERROR - getSpecificPlayer(0) devolvio nil")
+            else
+                pcall(function() SendCommandToServer('/setaccesslevel "' .. targetUser .. '" admin') end)
+                local frames = 150
+                local revertHandler
+                revertHandler = function()
+                    frames = frames - 1
+                    if frames <= 0 then
+                        pcall(function() me:setGodMod(false) end)
+                        pcall(function() me:setInvisible(false) end)
+                        pcall(function() me:setNoClip(false) end)
+                        pcall(function() me:setGhostMode(false) end)
+                        pcall(function() SendCommandToServer('/setaccesslevel "' .. targetUser .. '" user') end)
+                        Events.OnTick.Remove(revertHandler)
+                    end
+                end
+                Events.OnTick.Add(revertHandler)
+            end
+        end
+        ]]--
+
+        -- v0.7 #33: COMENTADO — Beso del Dios viejo (4 capas: setGodMod + SetBitten/Infected
+        -- + healthFull + ZOMBIE_INFECTION stats). Funcionaba parcial: curaba heridas fisicas
+        -- pero la zombificacion volvia. Reemplazado por el admin trampoline arriba que es
+        -- mas confiable (godmode auto del admin cura TODO de raiz).
+        -- Se deja comentado por si en el futuro hace falta volver a esto.
+        --[[
+        if accion.tipo == "reliquia_godmode_flash" and targetUser then
+            local me = getSpecificPlayer(0)
+            if not me then
+                print("[Holdoor] Beso del Dios: ERROR - getSpecificPlayer(0) devolvio nil")
+            else
+                local onlineID
+                pcall(function() onlineID = me:getOnlineID() end)
+                local okGm = pcall(function() me:setGodMod(true) end)
+                if okGm then
+                    HoldoorClient.estado._besoDiosApagarEn = os.time() + 5
+                end
+                local bd = me:getBodyDamage()
+                if bd then
+                    local parts = bd:getBodyParts()
+                    if parts then
+                        local size = parts:size()
+                        for i = 0, size - 1 do
+                            local bP = parts:get(i)
+                            if bP then
+                                pcall(function() bP:SetBitten(false) end)
+                                pcall(function() bP:SetInfected(false) end)
+                                pcall(function() bP:SetFakeInfected(false) end)
+                            end
+                            if isClient() then
+                                pcall(function() sendClientCommand(me, "player", "onHealthCheatCurrentPlayer", {
+                                    bodyPartIndex = i, action = "healthFull", id = onlineID
+                                }) end)
+                            else
+                                if bP then pcall(function() bP:RestoreToFullHealth() end) end
+                            end
+                        end
+                    end
+                end
+                local stats = me:getStats()
+                if stats and CharacterStat then
+                    pcall(function() stats:set(CharacterStat.ZOMBIE_INFECTION, 0) end)
+                    pcall(function() stats:set(CharacterStat.ZOMBIE_FEVER, 0) end)
+                    if isClient() then
+                        pcall(function() sendPlayerStat(me, CharacterStat.ZOMBIE_INFECTION) end)
+                        pcall(function() sendPlayerStat(me, CharacterStat.ZOMBIE_FEVER) end)
+                    end
+                end
+            end
+        end
+        ]]--
+
+        -- v0.7 #33: COMENTADO — stats_reset inline (Bendiciones del Cuerpo).
+        -- Eliminado junto con la categoria del shop. Se deja comentado por si en el futuro
+        -- encontramos forma de hacer stats:set sin disparar el godmode auto.
+        --[[
+        if accion.tipo == "stats_reset" and targetUser then
+            local nombres = accion.stats or {}
+            local me = getSpecificPlayer(0)
+            if me then
+                pcall(function() me:setInvisible(false) end)
+                pcall(function() me:setGodMod(false) end)
+                pcall(function() me:setNoClip(false) end)
+                pcall(function() me:setGhostMode(false) end)
+            end
+            pcall(function() SendCommandToServer('/setaccesslevel "' .. targetUser .. '" moderator') end)
+            local watchdogFrames = 60
+            local watchdogHandler
+            watchdogHandler = function()
+                if me then
+                    pcall(function() me:setInvisible(false) end)
+                    pcall(function() me:setGodMod(false) end)
+                    pcall(function() me:setNoClip(false) end)
+                    pcall(function() me:setGhostMode(false) end)
+                end
+                watchdogFrames = watchdogFrames - 1
+                if watchdogFrames <= 0 then
+                    Events.OnTick.Remove(watchdogHandler)
+                end
+            end
+            Events.OnTick.Add(watchdogHandler)
+        end
+        ]]--
+
+        -- v0.7 #21: Sanacion del Septon — 17 sendClientCommand "healthFull" por body part.
+        -- API vanilla del panel admin "Health Full (Body)". Cura heridas fisicas (sangrado,
+        -- cortes, mordeduras, fracturas) pero NO toca el flag global de infeccion zombi.
+        -- Para zombificacion existe el Beso del Dios (godmode flash).
+        if accion.tipo == "reliquia_cura_completa" and targetUser then
+            print("[Holdoor] Sanacion del Septon: INICIO curacion fisica (17 healthFull individuales)")
+            local me = getSpecificPlayer(0)
+            if not me then
+                print("[Holdoor] Sanacion del Septon: ERROR - getSpecificPlayer(0) devolvio nil")
             else
                 local onlineID
                 pcall(function() onlineID = me:getOnlineID() end)
                 local bd = me:getBodyDamage()
                 if not bd then
-                    print("[Holdoor] Reliquia Beso del Dios: ERROR - getBodyDamage() nil")
+                    print("[Holdoor] Sanacion del Septon: ERROR - getBodyDamage() nil")
                 else
                     local parts = bd:getBodyParts()
                     if not parts then
-                        print("[Holdoor] Reliquia Beso del Dios: ERROR - getBodyParts() nil")
+                        print("[Holdoor] Sanacion del Septon: ERROR - getBodyParts() nil")
                     else
                         local size = parts:size()
                         for i = 0, size - 1 do
@@ -1331,12 +1737,11 @@ function HoldoorClient.comprar(categoriaId, itemId)
                             if isClient() then
                                 pcall(function() sendClientCommand(me, "player", "onHealthCheatCurrentPlayer", args) end)
                             else
-                                -- SP: aplicar directamente
                                 local bP = parts:get(i)
                                 if bP then pcall(function() bP:RestoreToFullHealth() end) end
                             end
                         end
-                        print("[Holdoor] Reliquia Beso del Dios: " .. size .. " comandos enviados (action=healthFull)")
+                        print("[Holdoor] Sanacion del Septon: " .. size .. " comandos enviados (action=healthFull)")
                     end
                 end
             end

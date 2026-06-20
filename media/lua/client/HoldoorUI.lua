@@ -494,21 +494,27 @@ end
 function HoldoorPanel:onRadioMenos(button)
     local v = math.max(10, (self.radioSpawnVal or 20) - 2)
     self.radioSpawnVal = v
+    -- v0.7 #18: el user ajusto manualmente → NO sobrescribir en refresh siguientes.
+    self.radioAjustadoManual = true
     if self.lblRadioVal then self.lblRadioVal:setTitle(tostring(v)) end
 end
 
 function HoldoorPanel:onRadioMas(button)
     local v = math.min(80, (self.radioSpawnVal or 20) + 2)
     self.radioSpawnVal = v
+    -- v0.7 #18: el user ajusto manualmente → NO sobrescribir en refresh siguientes.
+    self.radioAjustadoManual = true
     if self.lblRadioVal then self.lblRadioVal:setTitle(tostring(v)) end
 end
 
 function HoldoorPanel:onSeleccionarModo(button)
     self.modoSeleccionado = button.holdoorModoIdx
-    self:_actualizarInfoModo(self.modoSeleccionado)
+    -- v0.7 #18: al cambiar de modo, resetear el ajuste manual (cada modo tiene su default).
+    self.radioAjustadoManual = false
+    self:_actualizarInfoModo(self.modoSeleccionado, true)  -- forzar = true
 end
 
-function HoldoorPanel:_actualizarInfoModo(idx)
+function HoldoorPanel:_actualizarInfoModo(idx, forzarRadio)
     local modo = HoldoorConfig.modos[idx]
     if not modo then return end
 
@@ -526,8 +532,12 @@ function HoldoorPanel:_actualizarInfoModo(idx)
     self.lblModoNombre:setColor(modo.cr, modo.cg, modo.cb, 1)
     self.lblModoDesc:setName(modo.descripcion or "")
 
-    -- Sincronizar radioSpawn con el default del modo (si no fue tocado manualmente)
-    if self.lblRadioVal and modo.radioSpawn then
+    -- v0.7 #18: Sincronizar radioSpawn con el default del modo SOLO si:
+    --   a) forzarRadio=true (llamada explicita: cambio de modo o init), o
+    --   b) el user nunca toco + / - manualmente (radioAjustadoManual != true).
+    -- Antes esto sobrescribia SIEMPRE → al hacer un refresh del panel post-iniciar,
+    -- borraba el ajuste manual y mostraba el default (mientras el server SI usaba 19).
+    if self.lblRadioVal and modo.radioSpawn and (forzarRadio or not self.radioAjustadoManual) then
         self.radioSpawnVal = modo.radioSpawn
         self.lblRadioVal:setTitle(tostring(modo.radioSpawn))
     end
@@ -711,6 +721,10 @@ function HoldoorPanel:onCerrar()
     self:setVisible(false)
     self:removeFromUIManager()
     HoldoorUI.instancia = nil  -- clear ref para que el overlay sepa que el panel se cerro
+    -- v0.7 #23 / gotcha #29 LOCKEADO: el overlay con rect fullscreen + setVisible(true)
+    -- BLOQUEA el scroll del inventario y los tooltips de items. Hay que esconderlo
+    -- explicitamente al cerrar el panel (botón Cerrar o ESC, no solo el F10 toggle).
+    if HoldoorUI.overlay then HoldoorUI.overlay:setVisible(false) end
 end
 
 function HoldoorPanel:onKeyPressed(key)
@@ -739,8 +753,8 @@ HoldoorHUD.instance = nil
 
 local HUD_W          = 265   -- +10 para que entren los simbolos de materiales
 local HUD_H_HEAD     = 28
-local HUD_H_BODY     = 326   -- +22 por nueva linea de materiales
-local HUD_H_BODY_EXT = 446   -- +22 igual con radar
+local HUD_H_BODY     = 386   -- v0.7 #35 +60 por besoZone + margen (botonera Fase A)
+local HUD_H_BODY_EXT = 506   -- v0.7 #35 +60 igual con radar
 
 -- Paleta de colores por moneda/material (símbolos + colores temáticos)
 local COL_BRONCE    = { r=0.72, g=0.45, b=0.20, a=1 }
@@ -960,6 +974,22 @@ function HoldoorHUD:_crearContenido()
 
     y = y + btnZoneH + 4
 
+    -- v0.7 #35: ZONA SEPARADA para el boton "INVOCAR BESO DEL DIOS" (botonera Fase A).
+    -- Es una input zone INDEPENDIENTE: se muestra/oculta entera. Cuando setVisible(false)
+    -- NO captura clicks (cf. gotcha #29 del overlay del Trono). Asi evitamos que un
+    -- rectangulo invisible bloquee el inventario o cualquier otra UI cuando el jugador
+    -- no tiene Beso en bolsa.
+    self.besoZone = HoldoorHUDInputZone:new(0, y, HUD_W, 26)
+    self.besoZone:initialise()
+    self:addChild(self.besoZone)
+    self.btnBeso = ISButton:new(pad, 0, HUD_W - pad * 2, 26, "INVOCAR BESO DEL DIOS", self, HoldoorHUD.onBesoDelDios)
+    self.btnBeso.backgroundColor = { r=0.55, g=0.45, b=0.10, a=1 }
+    self.btnBeso.borderColor     = { r=0.95, g=0.85, b=0.30, a=1 }
+    self.besoZone:addChild(self.btnBeso)
+    self.besoZone:setVisible(false)  -- oculto por default; actualizarHUD lo muestra si hay bolsa
+
+    y = y + 26 + 4
+
     -- Radar — visible solo cuando quedan <= 5 zombies en oleada activa
     self.lblRadarTit = ISLabel:new(pad, y, 16, "RADAR  -- zombis restantes", 1.0, 0.30, 0.18, 1, UIFont.Small, true)
     self:addChild(self.lblRadarTit)
@@ -990,6 +1020,22 @@ function HoldoorHUD:onTienda()
     if HoldoorShop and HoldoorShop.abrir then HoldoorShop.abrir() end
 end
 
+-- v0.7 #35: click en "INVOCAR BESO DEL DIOS" en el HUD lateral. Solo dispara el efecto si
+-- el jugador realmente tiene el item en bolsa (chequeo defensivo — el boton no deberia
+-- estar visible sin ello, pero por las dudas).
+function HoldoorHUD:onBesoDelDios()
+    local me = getSpecificPlayer(0)
+    if not me then return end
+    local md = me:getModData()
+    if not (md and md.Holdoor_BesoDios_Bolsa) then
+        HoldoorClient.chat("[HOLDOOR] No tenes Beso del Dios en la bolsa.", 1, 0.6, 0.2)
+        return
+    end
+    if HoldoorClient and HoldoorClient._activarBesoDelDios then
+        HoldoorClient._activarBesoDelDios()
+    end
+end
+
 function HoldoorHUD:onToggle()
     self:_setExpandido(not self.expandido)
 end
@@ -1007,6 +1053,12 @@ function HoldoorHUD:_setExpandido(v)
         self.btnZone,
     }
     for _, c in ipairs(hijos) do if c then c:setVisible(v) end end
+    -- v0.7 #35: besoZone es independiente: si HUD colapsa, ocultar SIEMPRE (no captura
+    -- clicks asi). Si HUD expande, actualizarHUD decide si mostrarla segun bolsa.
+    if self.besoZone then
+        if not v then self.besoZone:setVisible(false) end
+        -- al expandir lo deja en false hasta que actualizarHUD lo prenda si hay bolsa
+    end
     -- Radar: visible solo si expandido Y radarVisible
     local showRadar = v and (self.radarVisible or false)
     if self.lblRadarTit   then self.lblRadarTit:setVisible(showRadar)   end
@@ -1031,6 +1083,19 @@ function HoldoorHUD:actualizarHUD()
     if self.lblNotifHUD and self.notifExpireSec and os.time() >= self.notifExpireSec and self.notifExpireSec > 0 then
         self.lblNotifHUD:setName("")
         self.notifExpireSec = 0
+    end
+
+    -- v0.7 #35: visibilidad del boton "INVOCAR BESO DEL DIOS" — solo si esta en bolsa.
+    -- Toggle de la ZONA ENTERA (besoZone) para que cuando este oculta NO capture clicks
+    -- (cf. gotcha #29 — sino bloquearia el inventario u otra UI). El boton vive dentro.
+    if self.besoZone then
+        local me = getSpecificPlayer(0)
+        local enBolsa = false
+        if me then
+            local md = me:getModData()
+            if md and md.Holdoor_BesoDios_Bolsa then enBolsa = true end
+        end
+        self.besoZone:setVisible(enBolsa and self.expandido)
     end
 
     local est    = HoldoorClient.estado

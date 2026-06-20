@@ -57,22 +57,26 @@ HoldoorShopCatalog.categorias = {
                     { id="bandage",       nombre="Vendaje del Maestre",     desc="Detiene el sangrado.",
                       contenido="Vendaje x1",
                       precio={bronze=3},                    accion={tipo="item", item="Base.Bandage"} },
-                    { id="venda_steril",  nombre="Venda Esterilizada",       desc="Cura mas rapido.",
-                      contenido="Venda Esteril x1",
-                      precio={bronze=6},                    accion={tipo="item", item="Base.AlcoholBandage"} },
+                    -- v0.7 #22: venda_steril REEMPLAZADA por Vino del Norte (antidepresivos).
+                    { id="vino_norte",    nombre="Vino del Norte",           desc="Reduce la tristeza y depresion.",
+                      contenido="Antidepresivos x1",
+                      precio={bronze=5},                    accion={tipo="item", item="Base.PillsAntiDep"} },
                     { id="painkillers",   nombre="Polvo del Sueno",          desc="Reduce el dolor.",
                       contenido="Pastillas x1",
                       precio={bronze=4},                    accion={tipo="item", item="Base.Pills"} },
-                    { id="antibiotics",   nombre="Hierba del Maestre",       desc="Combate infecciones (no zombi).",
-                      contenido="Antibiotico x1",
-                      precio={bronze=8},                    accion={tipo="item", item="Base.Antibiotics"} },
+                    -- v0.7 #22: antibiotics REEMPLAZADO por Calmante del Septon (tranquilizantes).
+                    { id="calmante_septon", nombre="Calmante del Septon",    desc="Reduce el panico y la ansiedad.",
+                      contenido="Tranquilizantes x1",
+                      precio={bronze=7},                    accion={tipo="item", item="Base.PillsBeta"} },
                     { id="algodon",       nombre="Algodon con Alcohol",      desc="Desinfecta heridas.",
                       contenido="Algodon con Alcohol x1",
                       precio={bronze=5},                    accion={tipo="item", item="Base.AlcoholedCottonBalls"} },
                     -- Tier 3: kit grande (unico pack premium)
+                    -- v0.7 #22: Combo reajustado SIN antibioticos ni venda esteril.
+                    -- Ahora incluye: 3 Vendaje + 2 AntiDep + 2 Beta + 2 Pastillas + 1 Algodon = 10 items.
                     { id="botiquin",      nombre="Botiquin del Septon",      desc="Kit completo.",
-                      contenido="Venda Esteril x3 + Antibiotico x3 + Pastillas x3 + Algodon x2",
-                      precio={silver=1, hierro=1},          accion={tipo="package", items={"Base.AlcoholBandage","Base.AlcoholBandage","Base.AlcoholBandage","Base.Antibiotics","Base.Antibiotics","Base.Antibiotics","Base.Pills","Base.Pills","Base.Pills","Base.AlcoholedCottonBalls","Base.AlcoholedCottonBalls"}} },
+                      contenido="Vendaje x3 + Antidepresivos x2 + Tranquilizantes x2 + Pastillas x2 + Algodon x1",
+                      precio={silver=1},                    accion={tipo="package", items={"Base.AlcoholBandage","Base.AlcoholBandage","Base.AlcoholBandage","Base.PillsAntiDep","Base.PillsAntiDep","Base.PillsBeta","Base.PillsBeta","Base.Pills","Base.Pills","Base.AlcoholedCottonBalls"}} },
                 },
             },
             {
@@ -363,17 +367,33 @@ HoldoorShopCatalog.categorias = {
             { id="astillas_sagradas", nombre="Astillas Sagradas",             desc="Cierra cortes profundos del cuerpo.",
               contenido="Cura Cortes Profundos",
               precio={silver=5},                           accion={tipo="reliquia_cura_corte"} },
-            { id="tablilla_maestre", nombre="Tablilla del Maestre",          desc="Cura todas las fracturas.",
-              contenido="Cura Fracturas",
-              precio={gold=1},                             accion={tipo="reliquia_cura_fractura"} },
+            -- v0.7 #21b: Tablilla del Maestre removida del catalogo para que las 6 reliquias
+            -- restantes entren en una sola pagina (paginacion de 6 items). Handler server-side
+            -- (reliquia_cura_fractura) queda activo por compatibilidad con saves previos.
             { id="vidriagon_bendito", nombre="Vidriagon Bendito",             desc="Cura mordeduras (sin infeccion zombi - eso solo el Beso del Dios).",
               contenido="Cura Mordedura",
               precio={gold=2},                             accion={tipo="reliquia_cura_mordedura"} },
-            { id="beso_dios",        nombre="Beso del Dios de Muchos Rostros", desc="Cura TODA dolencia (mordedura, hambre, sed, fatiga, infeccion). Uso unico por vida.",
-              contenido="Curacion Total",
+            { id="sanacion_septon",  nombre="Sanacion del Septon",            desc="Cura sangrado, cortes, mordeduras y fracturas. NO cura infeccion zombi.",
+              contenido="Cura Heridas Fisicas",
+              precio={gold=5},                             accion={tipo="reliquia_cura_completa"} },
+            -- v0.7 #33: Beso del Dios pivot — usa el bug-feature de admin auto-godmode.
+            -- Al elevar a admin via /setaccesslevel, PZ activa GodMod + Invisible + NoClip
+            -- por default. GodMod cura TODO: mordeduras, hambre, sed, infeccion zombi, fatiga.
+            -- Aprovechamos eso: damos admin por 5 segundos, despues volvemos a user.
+            -- Descripcion en 2 lineas (separadas con \n).
+            -- v0.7 #34: tipo sigue siendo "reliquia_godmode_flash" para mantener la
+            -- infraestructura de uso-unico (server _aplicarAccion + validacion compra +
+            -- UI marca "ya invocado" + pre-check wounds). El handler interno cambio (ahora
+            -- es admin trampoline 5s), pero la "etiqueta" del action es la misma.
+            { id="beso_dios",        nombre="Beso del Dios de Muchos Rostros", desc="Cura TODO + escudo anti-zombies + invulnerabilidad 5 seg. Uso unico por vida.",
+              contenido="Curacion Total + Escudo 5s",
               precio={gold=9},                             accion={tipo="reliquia_godmode_flash"} },
         },
     },
+    -- v0.7 #33: categoria "Bendiciones del Cuerpo" REMOVIDA. Los items individuales
+    -- (Pan del Maestre / Agua Bendita / Sueno del Cuervo / Calma Total / Bendicion del Reino)
+    -- causaban el mismo problema que el Beso (godmode auto curaba todo, no solo el stat
+    -- pedido). En vez de pelearlo, consolidamos todo en el Beso del Dios premium.
     {
         id     = "materiales",
         nombre = "Materiales",

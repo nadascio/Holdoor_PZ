@@ -25,7 +25,7 @@ HoldoorConfig.modos = {
     {
         id               = "normal",
         nombre           = "NORMAL",
-        maxOleadas       = 8,
+        maxOleadas       = 5,
         tamanoOleada     = 25,
         escalaPorOleada  = 0.12,
         srPorOleada      = 0.10,
@@ -33,15 +33,15 @@ HoldoorConfig.modos = {
         radioSpawn       = 15,
         tamanoTanda      = 12,
         tandaIntervalSec = 8,
-        descripcion      = "La horda crece. Los corredores llegan primero.",
+        descripcion      = "La horda crece. La presion se duplica.",
         lore             = "Aqui comienza el verdadero desafio. Los que sobreviven la primera noche descubren que la segunda es peor.",
-        detalle          = "25 base | +12%/oleada | 10% SR | 60s | 8 oleadas",
+        detalle          = "3-4 puntos | 4-7 z/punto | cada 20-30s | 5 oleadas",
         cr = 0.90, cg = 0.80, cb = 0.20,
     },
     {
         id               = "dificil",
         nombre           = "DIFICIL",
-        maxOleadas       = 10,
+        maxOleadas       = 5,
         tamanoOleada     = 35,
         escalaPorOleada  = 0.15,
         srPorOleada      = 0.12,
@@ -50,14 +50,14 @@ HoldoorConfig.modos = {
         tamanoTanda      = 12,
         tandaIntervalSec = 6,
         descripcion      = "El Rey de la Noche avanza. No hay misericordia.",
-        lore             = "Solo los mejores llegan a la decima oleada. Aqui no hay lugar para la duda.",
-        detalle          = "35 base | +15%/oleada | 12% SR | 45s | 10 oleadas",
+        lore             = "Solo los mejores llegan a la quinta oleada. Aqui no hay lugar para la duda.",
+        detalle          = "4 puntos | 5-10 z/punto | cada 18-25s | 5 oleadas",
         cr = 1.00, cg = 0.50, cb = 0.10,
     },
     {
         id               = "pesadilla",
         nombre           = "PESADILLA",
-        maxOleadas       = 12,
+        maxOleadas       = 5,
         tamanoOleada     = 50,
         escalaPorOleada  = 0.20,
         srPorOleada      = 0.15,
@@ -66,8 +66,8 @@ HoldoorConfig.modos = {
         tamanoTanda      = 15,
         tandaIntervalSec = 5,
         descripcion      = "No existe misericordia mas alla del Muro.",
-        lore             = "La mitad de tus enemigos corren. Completar esto es un titulo que pocos ostentan.",
-        detalle          = "50 base | +20%/oleada | 15% SR | 25s | 12 oleadas",
+        lore             = "Cascada constante de muertos. Completar esto es un titulo que pocos ostentan.",
+        detalle          = "4 puntos | 6-12 z/punto | cada 15-22s | 5 oleadas",
         cr = 1.00, cg = 0.15, cb = 0.15,
     },
     {
@@ -367,7 +367,7 @@ HoldoorConfig.frases = {
 }
 
 HoldoorConfig.MODULE  = "Holdoor"
-HoldoorConfig.VERSION = "0.6-dev"
+HoldoorConfig.VERSION = "0.7-dev"
 
 -- ════════════════════════════════════════════════════════════════════
 -- SPRINT v0.6 — MODELO C HÍBRIDO (timer + target kills)
@@ -476,6 +476,162 @@ HoldoorConfig.aggroVolumen     = 300     -- v0.7: 200 -> 300 (tope vanilla LastS
 -- Si modoId esta en esta tabla → usa este flow.
 -- Si NO esta → usa flow legacy (_spawnTick + curvaFacilV7/oleadasV6).
 -- TEST queda con testHordasMP separado (mas abajo) para no romper testing.
+-- ─── v0.7 #17: SUBTITULOS EPICOS POR OLEADA (ASCII puro — gotcha tildes/ñ B42) ──
+-- Reemplaza el "Amenaza: X -- Aguanta la puerta" del flow legacy por una linea
+-- tematica por oleada. El server elige random y la manda al cliente como
+-- subtituloEpico. Solo aplica a modos que usan hordasMP (Facil, futuros).
+-- Se eligen 5 variantes por oleada para que no se repita siempre lo mismo.
+HoldoorConfig.subtitulosOleada = {
+    facil = {
+        [1] = {
+            "La marea empieza a moverse",
+            "Los primeros muertos huelen el Trono",
+            "El bosque despierta",
+            "Un susurro del Norte llega",
+            "Manchas en el horizonte",
+        },
+        [2] = {
+            "El sonido los atrae desde el bosque",
+            "Tres direcciones, mismo destino",
+            "El Cuervo trae malas noticias",
+            "La oscuridad se mueve",
+            "Mas voces sin alma",
+        },
+        [3] = {
+            "Vienen de todas direcciones",
+            "Cuatro vientos, cuatro hordas",
+            "El cerco se cierra",
+            "Rodeados, pero firmes",
+            "Norte, Sur, Este, Oeste",
+        },
+        [4] = {
+            "El muro se sacude",
+            "La presion crece como las olas",
+            "El bosque entero se mueve",
+            "Mas ojos sin alma en la oscuridad",
+            "El Trono escucha sus golpes",
+        },
+        [5] = {
+            "El invierno mas largo se acerca",
+            "Resistir o caer",
+            "El ultimo canto del Cuervo",
+            "Hold the door",
+            "La oscuridad final",
+        },
+    },
+    normal = {
+        [1] = {
+            "El mundo se sacude",
+            "Las primeras lineas avanzan",
+            "El silencio se rompe",
+            "El Norte envia mas",
+            "Caminantes en el horizonte",
+        },
+        [2] = {
+            "La marea no para",
+            "Los caidos se levantan",
+            "Mas voces sin alma",
+            "El frio trae mas muertos",
+            "Hordas dispersas convergen",
+        },
+        [3] = {
+            "El bosque entero se mueve",
+            "Cuatro vientos, cuatro frentes",
+            "El cerco se cierra rapido",
+            "Los muertos huelen sangre",
+            "El Trono escucha sus golpes",
+        },
+        [4] = {
+            "La muralla cruje",
+            "Mas muertos que vivos",
+            "El terreno se vuelve negro",
+            "La presion se duplica",
+            "Un mar de cuerpos avanza",
+        },
+        [5] = {
+            "La noche mas oscura",
+            "El ultimo aliento",
+            "Resistir, por la Guardia",
+            "Hold the door, por el Reino",
+            "La sentencia final",
+        },
+    },
+    dificil = {
+        [1] = {
+            "La oscuridad despierta",
+            "El Otro Lado se abre",
+            "Mas que muertos, una marea",
+            "El bosque entero ruge",
+            "Los Caminantes Blancos llegan",
+        },
+        [2] = {
+            "La tierra tiembla bajo sus pies",
+            "Cada arbol los oculta",
+            "El cielo se vuelve gris",
+            "Los muertos se multiplican",
+            "El asedio ha comenzado",
+        },
+        [3] = {
+            "Mas alla del muro",
+            "Las hordas no descansan",
+            "El miedo invade el bosque",
+            "Cuatro hordas, cuatro infiernos",
+            "El Trono tiembla",
+        },
+        [4] = {
+            "El infierno se desata",
+            "El acero se rompe",
+            "Mas voces, menos esperanza",
+            "El bosque entero esta muerto",
+            "La furia del Norte",
+        },
+        [5] = {
+            "El final de la Guardia",
+            "La oscuridad infinita",
+            "Por los Caidos",
+            "El precio de la fortaleza",
+            "Hold the door, hasta el final",
+        },
+    },
+    pesadilla = {
+        [1] = {
+            "El mundo termina",
+            "Los Dioses olvidaron este lugar",
+            "Mas alla de toda esperanza",
+            "El abismo se abre",
+            "Apocalipsis",
+        },
+        [2] = {
+            "Cuatro vientos, cuatro tormentas",
+            "El cielo se cae",
+            "Los Dioses Antiguos despiertan",
+            "Sangre, fuego y oscuridad",
+            "El precio de la fe",
+        },
+        [3] = {
+            "La hora mas oscura",
+            "La fortaleza tiembla",
+            "Mas alla del Trono",
+            "El bosque entero se muere",
+            "Cuervos sin cantar",
+        },
+        [4] = {
+            "El acero se quiebra",
+            "El Trono llora sangre",
+            "El Reino esta perdido",
+            "La furia del invierno eterno",
+            "Mas muertos que estrellas",
+        },
+        [5] = {
+            "El final de todo",
+            "La gran extincion",
+            "Valar Morghulis",
+            "Que el Cuervo cante el final",
+            "Hold the door, hasta el fin del mundo",
+        },
+    },
+}
+
 HoldoorConfig.hordasMP = {
     facil = {
         -- v0.7 #14c: distanciaTrono ELIMINADO. Ahora usa estado.config.radioSpawn (panel).
@@ -493,7 +649,43 @@ HoldoorConfig.hordasMP = {
             { cantPuntos = 4, zombiesPorPunto = 5, intervaloSeg = 30, duracionSeg = 300, targetKills = 75 },
         },
     },
-    -- normal, dificil, pesadilla: vacios hasta que migremos cada uno.
+    normal = {
+        -- Mismo flow que Facil. 5 oleadas x 5 min cada una.
+        radiusSpawnInterno = 3,
+        pausaSeg           = 30,
+        oleadas = {
+            -- # | puntos | z/punto | cada | duracion | target
+            { cantPuntos = 3, zombiesPorPunto = 4, intervaloSeg = 30, duracionSeg = 300, targetKills = 35 },
+            { cantPuntos = 4, zombiesPorPunto = 4, intervaloSeg = 30, duracionSeg = 300, targetKills = 50 },
+            { cantPuntos = 4, zombiesPorPunto = 5, intervaloSeg = 25, duracionSeg = 300, targetKills = 70 },
+            { cantPuntos = 4, zombiesPorPunto = 6, intervaloSeg = 25, duracionSeg = 300, targetKills = 90 },
+            { cantPuntos = 4, zombiesPorPunto = 7, intervaloSeg = 20, duracionSeg = 300, targetKills = 110 },
+        },
+    },
+    dificil = {
+        -- Mismo flow. 5 oleadas x 5 min. Mas zombies + intervalos cortos.
+        radiusSpawnInterno = 3,
+        pausaSeg           = 30,
+        oleadas = {
+            { cantPuntos = 4, zombiesPorPunto = 5,  intervaloSeg = 25, duracionSeg = 300, targetKills = 50  },
+            { cantPuntos = 4, zombiesPorPunto = 6,  intervaloSeg = 25, duracionSeg = 300, targetKills = 70  },
+            { cantPuntos = 4, zombiesPorPunto = 7,  intervaloSeg = 22, duracionSeg = 300, targetKills = 95  },
+            { cantPuntos = 4, zombiesPorPunto = 8,  intervaloSeg = 20, duracionSeg = 300, targetKills = 120 },
+            { cantPuntos = 4, zombiesPorPunto = 10, intervaloSeg = 18, duracionSeg = 300, targetKills = 150 },
+        },
+    },
+    pesadilla = {
+        -- Mismo flow. 5 oleadas x 5 min. Brutal — cascada constante.
+        radiusSpawnInterno = 3,
+        pausaSeg           = 30,
+        oleadas = {
+            { cantPuntos = 4, zombiesPorPunto = 6,  intervaloSeg = 22, duracionSeg = 300, targetKills = 70  },
+            { cantPuntos = 4, zombiesPorPunto = 8,  intervaloSeg = 20, duracionSeg = 300, targetKills = 100 },
+            { cantPuntos = 4, zombiesPorPunto = 9,  intervaloSeg = 18, duracionSeg = 300, targetKills = 130 },
+            { cantPuntos = 4, zombiesPorPunto = 11, intervaloSeg = 16, duracionSeg = 300, targetKills = 170 },
+            { cantPuntos = 4, zombiesPorPunto = 12, intervaloSeg = 15, duracionSeg = 300, targetKills = 220 },
+        },
+    },
 }
 
 -- ─── v0.7 #13: TEST FLOW PARALELO con hordas MP ──────────────

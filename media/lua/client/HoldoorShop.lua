@@ -454,9 +454,11 @@ function HoldoorShopPanel:_renderCategoria()
                         else
                             consumidoTxt = "Limite 1 por vida alcanzado"
                         end
-                    elseif item.accion.tipo == "reliquia_godmode_flash" and md.Holdoor_BesoDios then
+                    elseif item.accion.tipo == "reliquia_godmode_flash" and (md.Holdoor_BesoDios or md.Holdoor_BesoDios_Bolsa) then
                         consumido    = true
-                        consumidoTxt = "Ya invocado por este personaje"
+                        consumidoTxt = md.Holdoor_BesoDios
+                            and "Ya invocado por este personaje"
+                            or  "En tu bolsa — activalo desde el HUD"
                     end
                 end
             end
