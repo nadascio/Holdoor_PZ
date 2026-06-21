@@ -936,6 +936,78 @@ self:setX(rx); self:setY(ry); self:setWidth(rw); self:setHeight(rh)
 
 ---
 
+## 🔥 63. Steam Workshop `result=8 (k_EResultInvalidParam)` — causas confirmadas (em-dashes, descripción larga, archivos basura)
+
+**Síntoma:** PZ "Update Mod" tira:
+```
+start update of existing item ID=3743052644
+success requesting Steam to update the item
+there is no way to stop the update once it has started
+failed to update workshop item, result=8
+finished
+```
+
+**`result=8`** corresponde a `k_EResultInvalidParam` de Steam Workshop API. Steam rechaza el upload por algún parámetro inválido. Las **3 causas confirmadas empíricamente** en este mod:
+
+### Causa 1: caracteres no-ASCII en `workshop.txt`
+
+Steam rechaza la mayoría de tipográficos Unicode. **Confirmado problemático:**
+- `—` (em-dash, U+2014)
+- `–` (en-dash, U+2013)
+- Emojis (⚔️ 🆕 ⚡ 📍 💾 ━) — ya documentado en gotcha #35.
+- Otros que pueden romper: `'` `'` `"` `"` `…`
+
+**Verificación**: `LC_ALL=C grep '[^ -~	]' workshop.txt` debe devolver vacío. Si encuentra match → ese byte es el problema.
+
+**Fix**: reemplazar con ASCII equivalente (`—` → `-`, `…` → `...`, etc).
+
+### Causa 2: descripción del workshop.txt demasiado larga
+
+**Confirmado 2026-06-21**: Steam rechaza si el largo total de las líneas `description=...` supera ~8000 caracteres.
+
+**Cómo medir:**
+```bash
+grep "^description" workshop.txt | wc -c
+```
+
+**Fix**: acortar la descripción. Eliminar bloques de novedades de versiones antiguas (ej: cuando saques v0.9, podés borrar el bloque "NUEVO EN v0.7" porque ya no aporta a usuarios nuevos). Bloques de "NUEVO EN vX" deben ser breves: 1 párrafo o lista corta, no narrativas extensas.
+
+**Histórico**: bloque que metí en v0.8.7 con 7 párrafos técnicos rompió el límite. Lo recorté a 1 párrafo + eliminé bloque "NOVEDADES v0.7" → bajó de 9662 → 7847 chars → Steam aceptó.
+
+### Causa 3: archivos basura en el folder Workshop
+
+**Confirmado 2026-06-16**: Steam parsea **todo** lo que vea en `C:/Users/nahue/Zomboid/Workshop/Holdoor/`. Si hay archivos que no espera, falla.
+
+**Confirmados problemáticos:**
+- `HoldoorServer.lua.tmp` (gotcha #35)
+- `docs/` subfolder (gotcha #35)
+- `workshop.txt.bak` (confirmado 2026-06-21)
+- Cualquier otro `.bak`, `.swp`, `.swo` de editores
+
+**Verificación pre-publish:**
+```bash
+ls "C:/Users/nahue/Zomboid/Workshop/Holdoor/"
+```
+
+Debe contener SOLO:
+- `workshop.txt`
+- `preview.png`
+- `Contents/` (folder con mods/Holdoor/...)
+
+**Fix**: borrar lo que no esté en esa lista.
+
+### Protocolo pre-publish (checklist anti-result=8)
+
+1. `LC_ALL=C grep '[^ -~	]' "C:/Users/nahue/Zomboid/Workshop/Holdoor/workshop.txt"` → debe devolver vacío.
+2. `grep "^description" workshop.txt | wc -c` → debe ser **< 8000 caracteres**.
+3. `ls C:/Users/nahue/Zomboid/Workshop/Holdoor/` → solo 3 entradas (workshop.txt, preview.png, Contents/).
+4. `ls C:/Users/nahue/Zomboid/Workshop/Holdoor/Contents/mods/Holdoor/` → media/, mod.info, poster.png, 42/.
+5. Si todos pasan → Update Mod en PZ debería aceptar (result=1).
+
+Si después de los 5 checks sigue fallando → causa nueva, investigar más profundo (puede ser tags inválidos, preview.png corrupto, mod.info malformado, etc).
+
+---
+
 ## 🔥 35. **PROTOCOLO RELEASE — Subir un update al Steam Workshop (paso a paso)**
 
 **Síntoma (la cagada que casi paso 2026-06-16):** preparé todo (mod.info bumpeado, descripción nueva, código sincronizado) pero el Workshop seguía mostrando v0.5.1 después de "Update Mod" en PZ. Razón: actualicé el `workshop.txt` equivocado.
@@ -2058,3 +2130,7 @@ end
 **Anti-pattern muerto (NO usar):** forzar `sendClientCommand` siempre "porque garantiza activar server context". Eso es exactamente lo que rompe.
 
 **Relacionado:** gotcha #36 (`sendServerCommand` 3-args broken en CoopHost — sí, eso es real, los clientes remotos sí necesitan `sendClientCommand`). Esta gotcha #62 es el complemento: el host NO debe usar `sendClientCommand` para sus propias acciones.
+
+---
+
+**Última actualización:** 2026-06-21 — Sprint v0.8.7 cerrado + Workshop publicado (gotchas #62 y #63 lockeados).
