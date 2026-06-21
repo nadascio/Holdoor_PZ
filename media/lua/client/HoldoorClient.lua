@@ -239,9 +239,9 @@ function HoldoorClient._activarBesoDelDios()
     pcall(function() sendClientCommand(HoldoorConfig.MODULE, "activarBeso", {}) end)
 
     -- 2) Elevar a admin (godmode auto activa → cura todo + escudo + invulnerabilidad)
-    pcall(function() SendCommandToServer('/setaccesslevel "' .. username .. '" admin') end)
+    -- v0.8 #23: si soy cliente remoto, delegar al host admin.
+    HoldoorClient._setAccessLevelDelegado(username, "admin")
     HoldoorClient.chat("[HOLDOOR] Beso del Dios INVOCADO. 5 segundos de proteccion divina.", 0.85, 0.55, 0.95)
-    print("[Holdoor] Beso del Dios ACTIVADO: /setaccesslevel admin enviado (5s)")
 
     -- 3) Watchdog: apagar SOLO NoClip cada frame por 150 frames (toda la duracion del Beso).
     -- Antes era 30 frames pero el admin dura 5s = 150 frames; entre frame 30 y 150 PZ podia
@@ -270,8 +270,9 @@ function HoldoorClient._activarBesoDelDios()
             pcall(function() me:setInvisible(false) end)
             pcall(function() me:setNoClip(false) end)
             -- GhostMode NO se toca (preferencia explicita de Nahuel 2026-06-20)
-            pcall(function() SendCommandToServer('/setaccesslevel "' .. username .. '" user') end)
-            print("[Holdoor] Beso del Dios: 5s terminados, /setaccesslevel user enviado")
+            -- v0.8 #23: delegar al host admin si soy cliente remoto
+            HoldoorClient._setAccessLevelDelegado(username, "user")
+            print("[Holdoor] Beso del Dios: 5s terminados")
             Events.OnTick.Remove(revertHandler)
         end
     end
@@ -281,6 +282,291 @@ function HoldoorClient._activarBesoDelDios()
     if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
         HoldoorHUD.instance:actualizarHUD()
     end
+end
+
+-- v0.8 #4: RAISE UP JOHN SNOW (seguro de vida) — disparado automaticamente desde el server
+-- cuando el HP del player llega a <15 Y tiene md.Holdoor_RaiseUp_Activo = true.
+-- A diferencia del Beso (manual, click), este se dispara solo. Flow:
+-- 1) Pantalla negra fade epica con texto "Levanten a John Snow" (5s)
+-- 2) SendCommandToServer "/setaccesslevel admin" → godmode auto cura TODO de raiz
+-- 3) Buscar tile seguro cerca del Trono (radio 3→15) o 20-25 tiles del lugar actual
+-- 4) Teleport al tile encontrado
+-- 5) Watchdog NoClip OFF durante todo el admin (igual que Beso del Dios)
+-- 6) 5s post-revive con admin activo (invulnerabilidad para reposicionarse)
+-- 7) Apagar GodMod/Invisible/NoClip + /setaccesslevel user
+-- v0.8 #22: PUNTO DE RETORNO — teleport personal con countdown 5s sobre la cabeza.
+-- CLAVE: NO se le da admin hasta el ultimo instante. Durante los 5s el player es vulnerable
+-- (zombies pueden atacarlo, puede morir → pierde el item). Esto evita "beso mejorado".
+-- Solo cuando el countdown llega a 0: admin trampoline + teleport + 3s post-teleport admin.
+function HoldoorClient._ejecutarPuntoRetorno(coordsObjetivo)
+    if not coordsObjetivo or not coordsObjetivo.x then return end
+    local me = getSpecificPlayer(0)
+    if not me then return end
+    local username = me:getUsername()
+    if not username then return end
+
+    print(string.format("[Holdoor][PuntoRetorno] Iniciando countdown 5s -> (%d,%d,%d)",
+        coordsObjetivo.x, coordsObjetivo.y, coordsObjetivo.z))
+    HoldoorClient.chat("[HOLDOOR] Teletransporte iniciado. Mantente vivo 5 segundos...", 0.95, 0.75, 0.20)
+
+    -- Countdown 5s visible sobre la cabeza (setHaloNote validado en B42)
+    local segundosRestantes = 5
+    pcall(function() me:setHaloNote("Teletransporte: " .. segundosRestantes .. "s", 255, 200, 80, 1200) end)
+
+    local FRAMES_POR_SEG = 30
+    local frameCounter = 0
+    local countdownHandler
+    countdownHandler = function()
+        frameCounter = frameCounter + 1
+        if frameCounter < FRAMES_POR_SEG then return end
+        frameCounter = 0
+        segundosRestantes = segundosRestantes - 1
+        if segundosRestantes > 0 then
+            pcall(function() me:setHaloNote("Teletransporte: " .. segundosRestantes .. "s", 255, 200, 80, 1200) end)
+        else
+            -- ===== FIN COUNTDOWN: admin + teleport + 3s post-teleport admin =====
+            Events.OnTick.Remove(countdownHandler)
+            pcall(function() me:setHaloNote("Teletransportado!", 100, 255, 150, 1500) end)
+
+            -- v0.8 #23: si soy cliente remoto, delegar al host admin. Si soy host, ejecutar directo.
+            HoldoorClient._setAccessLevelDelegado(username, "admin")
+            pcall(function() me:setZombiesDontAttack(true) end)
+
+            -- v0.8 #23: 30 frames (~1s) en lugar de 5 — el delegate de setaccesslevel
+            -- hace roundtrip amigo→server→host en MP. Necesita tiempo extra.
+            local tpFrames = 30
+            local tpHandler
+            tpHandler = function()
+                tpFrames = tpFrames - 1
+                if tpFrames <= 0 then
+                    Events.OnTick.Remove(tpHandler)
+                    local tpCmd = string.format("/teleportto %d,%d,%d",
+                        coordsObjetivo.x, coordsObjetivo.y, coordsObjetivo.z)
+                    pcall(function() SendCommandToServer(tpCmd) end)
+                    print("[Holdoor][PuntoRetorno] " .. tpCmd)
+                end
+            end
+            Events.OnTick.Add(tpHandler)
+
+            local watchdogFrames = 90
+            local watchdogHandler
+            watchdogHandler = function()
+                if me then pcall(function() me:setNoClip(false) end) end
+                watchdogFrames = watchdogFrames - 1
+                if watchdogFrames <= 0 then Events.OnTick.Remove(watchdogHandler) end
+            end
+            Events.OnTick.Add(watchdogHandler)
+
+            local revertFrames = 90
+            local revertHandler
+            revertHandler = function()
+                revertFrames = revertFrames - 1
+                if revertFrames <= 0 then
+                    pcall(function() me:setGodMod(false) end)
+                    pcall(function() me:setInvisible(false) end)
+                    pcall(function() me:setNoClip(false) end)
+                    pcall(function() me:setZombiesDontAttack(false) end)
+                    -- v0.8 #23: delegar al host admin si soy cliente remoto
+                    HoldoorClient._setAccessLevelDelegado(username, "user")
+                    print("[Holdoor][PuntoRetorno] 3s terminados")
+                    Events.OnTick.Remove(revertHandler)
+                end
+            end
+            Events.OnTick.Add(revertHandler)
+        end
+    end
+    Events.OnTick.Add(countdownHandler)
+end
+
+function HoldoorClient._activarRaiseUpJohnSnow(coordsObjetivo)
+    -- v0.8 #21: flujo de REVIVE post-muerte. Si coordsObjetivo viene, el char nuevo se
+    -- teletransporta al lugar donde murio el viejo + matamos zombies 15 tiles alrededor
+    -- (sin limpiar cadaveres → el cuerpo del muerto queda intacto para lootear).
+    -- Si coordsObjetivo NO viene (legacy), busca tile seguro generico.
+    local me = getSpecificPlayer(0)
+    if not me then
+        print("[Holdoor] RaiseUp: ERROR - getSpecificPlayer(0) devolvio nil")
+        return
+    end
+    local username = me:getUsername()
+    if not username then return end
+
+    local esRevive = coordsObjetivo and coordsObjetivo.x and true or false
+    print(string.format("[Holdoor] RaiseUp ACTIVADO para %s — esRevive=%s coords=%s",
+        username, tostring(esRevive),
+        esRevive and string.format("(%d,%d,%d)", coordsObjetivo.x, coordsObjetivo.y, coordsObjetivo.z) or "lugar-seguro"))
+
+    -- 1) Pantalla negra fade epica
+    if HoldoorRaiseUpFade and HoldoorRaiseUpFade.mostrar then
+        pcall(function() HoldoorRaiseUpFade.mostrar() end)
+    end
+    if esRevive then
+        HoldoorClient.chat("[HOLDOOR] John Snow ha sido levantado por el R'hllor! Recupera tus pertenencias del cadaver.", 0.95, 0.75, 0.20)
+    else
+        HoldoorClient.chat("[HOLDOOR] John Snow ha sido levantado por el R'hllor!", 0.95, 0.75, 0.20)
+    end
+
+    -- 2) Elevar a admin (godmode auto activa → cura todo + escudo + invulnerabilidad)
+    -- v0.8 #23: si soy cliente remoto, delegar al host admin
+    HoldoorClient._setAccessLevelDelegado(username, "admin")
+    print("[Holdoor] RaiseUp: admin enviado (20s)")
+
+    -- ZombiesDontAttack: refuerza proteccion durante los 20s
+    pcall(function() me:setZombiesDontAttack(true) end)
+
+    -- 3) TELEPORT a 5 frames (~80ms — admin ya se aplico).
+    -- NOTA v0.8 #21: el matar-zombies NO se hace aca, lo hizo el server ANTES del dispatch
+    -- (via HoldoorServer._matarZombiesEnArea que usa setHealth(0) sin tocar cadaveres).
+    -- /removezombies en cliente era contraproducente: borra cuerpos incluido el del player.
+    -- v0.8 #23: 30 frames (~1s) — necesario para que el delegate setaccesslevel roundtrip en MP
+    local teleportFrames = 30
+    local teleportHandler
+    teleportHandler = function()
+        teleportFrames = teleportFrames - 1
+        if teleportFrames <= 0 then
+            if esRevive then
+                local tpCmd = string.format("/teleportto %d,%d,%d",
+                    coordsObjetivo.x, coordsObjetivo.y, coordsObjetivo.z)
+                pcall(function() SendCommandToServer(tpCmd) end)
+                print("[Holdoor] RaiseUp Revive: " .. tpCmd .. " enviado")
+            else
+                HoldoorClient._teleportLugarSeguro(me)
+            end
+            Events.OnTick.Remove(teleportHandler)
+        end
+    end
+    Events.OnTick.Add(teleportHandler)
+
+    -- 4) Watchdog NoClip OFF cada frame durante 600 frames (~20s total admin, v0.8 #20)
+    local watchdogFrames = 600
+    local watchdogHandler
+    watchdogHandler = function()
+        if me then pcall(function() me:setNoClip(false) end) end
+        watchdogFrames = watchdogFrames - 1
+        if watchdogFrames <= 0 then Events.OnTick.Remove(watchdogHandler) end
+    end
+    Events.OnTick.Add(watchdogHandler)
+
+    -- 5) 600 frames (~20s = 10s animacion + 10s reacomodarse post-teleport) → apagar flags + revert (v0.8 #20)
+    local frames = 600
+    local revertHandler
+    revertHandler = function()
+        frames = frames - 1
+        if frames <= 0 then
+            pcall(function() me:setGodMod(false) end)
+            pcall(function() me:setInvisible(false) end)
+            pcall(function() me:setNoClip(false) end)
+            pcall(function() me:setZombiesDontAttack(false) end)  -- v0.8 #12: tambien apagar
+            -- GhostMode NO se toca (preferencia de Nahuel — igual que Beso del Dios)
+            -- v0.8 #23: delegar al host admin si soy cliente remoto
+            HoldoorClient._setAccessLevelDelegado(username, "user")
+            print("[Holdoor] RaiseUp: 20s terminados")
+            Events.OnTick.Remove(revertHandler)
+        end
+    end
+    Events.OnTick.Add(revertHandler)
+
+    -- 6) Refrescar HUD para que desaparezca el boton del Raise
+    if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+        HoldoorHUD.instance:actualizarHUD()
+    end
+end
+
+-- Helper: buscar tile sin zombies cerca del Trono o del lugar de muerte.
+-- Approach C hibrido (decidido en next_steps.md):
+-- 1) Buscar cerca del Trono primero (radio 3→15)
+-- 2) Si no encuentra, buscar 20-25 tiles del lugar actual del jugador
+-- 3) Fallback: posicion original (no teleportar)
+function HoldoorClient._teleportLugarSeguro(jugador)
+    if not jugador then return end
+
+    -- Posicion del Trono via estado.baseX/baseY del cliente (si esta marcada)
+    local baseX, baseY, baseZ
+    pcall(function()
+        if HoldoorClient.estado and HoldoorClient.estado.baseDefinida then
+            baseX = HoldoorClient.estado.baseX
+            baseY = HoldoorClient.estado.baseY
+            baseZ = HoldoorClient.estado.baseZ
+        end
+    end)
+
+    local destX, destY, destZ
+
+    -- 1) Intentar cerca del Trono (radio 3, 6, 10, 15)
+    if baseX and baseY then
+        for _, radio in ipairs({3, 6, 10, 15}) do
+            for _, angulo in ipairs({0, math.pi*0.5, math.pi, math.pi*1.5, math.pi*0.25, math.pi*0.75}) do
+                local tx = math.floor(baseX + radio * math.cos(angulo))
+                local ty = math.floor(baseY + radio * math.sin(angulo))
+                if HoldoorClient._tileEsSeguro(tx, ty, baseZ or 0) then
+                    destX, destY, destZ = tx, ty, baseZ or 0
+                    print(string.format("[Holdoor] RaiseUp: tile seguro cerca del Trono (%d,%d) radio=%d", destX, destY, radio))
+                    break
+                end
+            end
+            if destX then break end
+        end
+    end
+
+    -- 2) Si no encontro, buscar 20-25 tiles del lugar actual del jugador
+    if not destX then
+        local px = jugador:getX()
+        local py = jugador:getY()
+        local pz = jugador:getZ()
+        for _, radio in ipairs({20, 22, 25}) do
+            for _, angulo in ipairs({0, math.pi*0.5, math.pi, math.pi*1.5}) do
+                local tx = math.floor(px + radio * math.cos(angulo))
+                local ty = math.floor(py + radio * math.sin(angulo))
+                if HoldoorClient._tileEsSeguro(tx, ty, pz) then
+                    destX, destY, destZ = tx, ty, pz
+                    print(string.format("[Holdoor] RaiseUp: tile seguro lejos del lugar (%d,%d) radio=%d", destX, destY, radio))
+                    break
+                end
+            end
+            if destX then break end
+        end
+    end
+
+    -- 3) v0.8 #13: ejecutar teleport via /teleportto comando vanilla.
+    -- El setX/setY/setZ directo no funciona bien en MP (sync issues). El comando admin
+    -- /teleportto x,y,z funciona 100% porque el jugador es admin temporal en este momento.
+    if destX and destY then
+        local cmd = string.format("/teleportto %d,%d,%d", destX, destY, destZ or 0)
+        pcall(function() SendCommandToServer(cmd) end)
+        print(string.format("[Holdoor] RaiseUp: %s enviado", cmd))
+    else
+        print("[Holdoor] RaiseUp: no se encontro tile seguro — quedando en lugar original con invulnerabilidad")
+    end
+end
+
+-- Helper: chequea si un tile esta "seguro" (sin zombies cercanos).
+function HoldoorClient._tileEsSeguro(x, y, z)
+    if not x or not y then return false end
+    -- Chequeo basico: pedir al world un IsoGridSquare valido
+    local sq
+    pcall(function() sq = getCell():getGridSquare(x, y, z or 0) end)
+    if not sq then return false end
+    -- Chequear que no haya zombies en el tile ni en los 8 adyacentes
+    for dx = -1, 1 do
+        for dy = -1, 1 do
+            local nsq
+            pcall(function() nsq = getCell():getGridSquare(x+dx, y+dy, z or 0) end)
+            if nsq then
+                local movingObjs
+                pcall(function() movingObjs = nsq:getMovingObjects() end)
+                if movingObjs then
+                    local size = 0; pcall(function() size = movingObjs:size() end)
+                    for i = 0, size - 1 do
+                        local mo; pcall(function() mo = movingObjs:get(i) end)
+                        if mo and instanceof(mo, "IsoZombie") then
+                            return false  -- zombie cerca, descartar este tile
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return true
 end
 
 -- Records: mejor oleada alcanzada por modo (persistido en ModData)
@@ -310,8 +596,41 @@ HoldoorClient.ultimoSegsHUD = -1
 --  por eso HoldoorServer es accesible desde acá.
 -- ─────────────────────────────────────────────
 
+-- v0.8 #23: detectar si SOY el host (SP, CoopHost host, dedicated server).
+-- En B42 el codigo del server se carga en TODOS los clientes, asi que el check viejo
+-- (type(HoldoorServer)) siempre devolvia true → todos los clientes ejecutaban codigo
+-- del server LOCAL y nunca enviaban sendServerCommand al server real → broadcast roto.
+-- Patron validado en este mismo archivo lineas 1438-1465 (bridges admin).
 local function tieneServidorLocal()
-    return type(HoldoorServer) == "table" and type(HoldoorServer.iniciar) == "function"
+    -- SP puro: isClient() devuelve false (no soy cliente, soy "todo en uno")
+    if not isClient() then return true end
+    -- CoopHost host: isCoopHost() == true
+    local r1; pcall(function() r1 = isCoopHost() end); if r1 then return true end
+    -- Dedicated server (no aplica en cliente pero defensivo)
+    local r2; pcall(function() r2 = isServer() end); if r2 then return true end
+    -- Cliente remoto: no tengo acceso al server real, debo usar sendServerCommand
+    return false
+end
+
+-- v0.8 #23: helper para ejecutar /setaccesslevel via delegate al host admin si soy cliente remoto.
+-- En MP los clientes NO admin no pueden ejecutar /setaccesslevel a si mismos. El amigo manda
+-- una solicitud al server, el server le pide al host admin que ejecute el comando.
+-- Mismo patron que delegarAddXp / delegarAddItem ya validado en el mod.
+function HoldoorClient._setAccessLevelDelegado(targetUsername, level)
+    if not targetUsername or not level then return end
+    if tieneServidorLocal() then
+        -- Soy host: ejecuto directo (como hasta ahora)
+        pcall(function() SendCommandToServer('/setaccesslevel "' .. targetUsername .. '" ' .. level) end)
+        print("[Holdoor] /setaccesslevel " .. targetUsername .. " " .. level .. " — ejecutado local (host)")
+    else
+        -- Soy cliente remoto: delego al host admin
+        pcall(function()
+            sendClientCommand(HoldoorConfig.MODULE, "delegarSetAccessLevel", {
+                target = targetUsername, level = level,
+            })
+        end)
+        print("[Holdoor] /setaccesslevel " .. targetUsername .. " " .. level .. " — DELEGADO al host admin")
+    end
 end
 
 -- ─────────────────────────────────────────────
@@ -455,6 +774,76 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         end
         local matsTxt = hayMats and (" + " .. table.concat(matStr, ", ")) or ""
         HoldoorClient.chat("[HOLDOOR] Recibis recompensas de oleadas pasadas (estabas offline): " .. b .. "B / " .. s .. "P / " .. g .. "O" .. matsTxt .. ".", 1.0, 0.85, 0.3)
+        return
+    end
+
+    -- v0.8 #22: Punto de Retorno — checkpoint personal por player.
+    -- Flow: 1) Player apreta "Marcar" → server guarda coords actuales → confirma con "puntoRetornoMarcado"
+    --       2) Player apreta "Teletransportar" → server consume bolsa + dispatch "puntoRetornoDisparado"
+    --          → cliente ejecuta countdown 5s + admin trampoline + teleport al final.
+    if comando == "puntoRetornoMarcado" then
+        if args and args.esReemplazo then
+            HoldoorClient.chat("[HOLDOOR] Punto de Retorno REEMPLAZADO. Marca nueva: ahora aqui.", 0.40, 0.85, 0.95)
+        else
+            HoldoorClient.chat("[HOLDOOR] Punto de Retorno marcado. Usa Teletransportar para volver.", 0.40, 0.85, 0.95)
+        end
+        if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+            pcall(function() HoldoorHUD.instance:actualizarHUD() end)
+        end
+        return
+    end
+    if comando == "puntoRetornoDisparado" then
+        if not (args and args.x and args.y) then return end
+        local coords = { x = args.x, y = args.y, z = args.z or 0 }
+        if HoldoorClient._ejecutarPuntoRetorno then
+            HoldoorClient._ejecutarPuntoRetorno(coords)
+        end
+        if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+            pcall(function() HoldoorHUD.instance:actualizarHUD() end)
+        end
+        return
+    end
+
+    -- v0.8 #21: RAISE UP REVIVE — el char nuevo spawnea con needsRevive en el server.
+    -- Server ya restauro skills/recetas/monedas/materiales. Cliente hace el flow visual:
+    -- pantalla negra → admin → matar zombies en 15 tiles → teleport a coords muerte.
+    if comando == "raiseUpRevive" then
+        local coords = nil
+        if args and args.x and args.y and args.z then
+            coords = { x = args.x, y = args.y, z = args.z }
+        end
+        -- v0.8 #21 fix: limpiar md flags LOCAL inmediatamente (el server tambien lo hace pero
+        -- transmitModData puede llegar tarde → bug visual "RAISE: ACTIVO (Xm)" post-revive).
+        local me = getSpecificPlayer(0)
+        if me then
+            local md = me:getModData()
+            if md then
+                md.Holdoor_RaiseUp_Bolsa   = nil
+                md.Holdoor_RaiseUp_Activo  = nil
+                md.Holdoor_RaiseSnapshotTs = nil
+            end
+        end
+        if HoldoorClient._activarRaiseUpJohnSnow then
+            HoldoorClient._activarRaiseUpJohnSnow(coords)
+        end
+        -- Refrescar HUD inmediatamente para que el boton vuelva a "no comprado"
+        if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+            pcall(function() HoldoorHUD.instance:actualizarHUD() end)
+        end
+        return
+    end
+
+    -- v0.8 #4: server confirmó el toggle del Raise up (activo/desactivado). Refrescar HUD.
+    if comando == "raiseUpToggleConfirmado" then
+        local activo = args.activo and true or false
+        if activo then
+            HoldoorClient.chat("[HOLDOOR] Raise up John Snow ACTIVO. Si moris, el R'hllor te resucita.", 0.30, 1.00, 0.40)
+        else
+            HoldoorClient.chat("[HOLDOOR] ⚠️ Raise up John Snow DESACTIVADO. Moriras sin revive automatico.", 1.00, 0.55, 0.20)
+        end
+        if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+            HoldoorHUD.instance:actualizarHUD()
+        end
         return
     end
 
@@ -769,6 +1158,12 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         if HoldoorUI and HoldoorUI.overlay and HoldoorUI.instancia and HoldoorUI.instancia:isVisible() then
             HoldoorUI.overlay:setVisible(true)
         end
+        -- v0.8.4: SOLO el HOST planta el Trono fisico. _plantarTrono usa IsoThumpable + addToWorld
+        -- que requieren CLIENT context. Antes corria server-side y no se renderizaba. Ahora
+        -- el cliente del HOST lo planta local (el objeto se sincroniza al amigo via PZ world sync).
+        if tieneServidorLocal() and HoldoorServer and HoldoorServer._plantarTrono then
+            pcall(function() HoldoorServer._plantarTrono(args.x, args.y, args.z) end)
+        end
 
     elseif comando == "baseQuitada" then
         HoldoorClient.estado.baseX, HoldoorClient.estado.baseY, HoldoorClient.estado.baseZ = 0, 0, 0
@@ -776,6 +1171,10 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.estado.tronoHP, HoldoorClient.estado.tronoMaxHP = nil, nil
         -- v0.7 #16: esconder overlay al quitar base (no hay nada que mostrar).
         if HoldoorUI and HoldoorUI.overlay then HoldoorUI.overlay:setVisible(false) end
+        -- v0.8.4: SOLO el HOST destruye el Trono fisico (mismo razonamiento que baseActualizada)
+        if tieneServidorLocal() and HoldoorServer and HoldoorServer._quitarTrono then
+            pcall(function() HoldoorServer._quitarTrono() end)
+        end
         -- Tambien borrar de ModData del propio jugador (persistencia)
         pcall(function()
             local md = ModData.getOrCreate("Holdoor")
@@ -893,6 +1292,48 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             pcall(function() SendCommandToServer(cmd) end)
             print("[Holdoor] ejecutarAddXp: " .. cmd)
         end
+
+    elseif comando == "ejecutarSetAccessLevel" then
+        -- v0.8 #23: el host admin recibe la solicitud de un cliente NO admin para que
+        -- ejecute /setaccesslevel <target> <level>. Solo el host con permisos admin puede.
+        if args.target and args.level then
+            local cmd = string.format('/setaccesslevel "%s" %s', args.target, tostring(args.level))
+            pcall(function() SendCommandToServer(cmd) end)
+            print("[Holdoor] ejecutarSetAccessLevel: " .. cmd)
+        end
+
+    elseif comando == "ejecutarRestoreProgresoBatch" then
+        -- v0.8 #21: lista de XP-deltas para restaurar en el char nuevo via /addxp admin.
+        -- El player ya es admin durante los 20s del revive. Itera con 2 frames entre cada uno
+        -- para no flood el server.
+        if not args.xpDeltas then return end
+        local me = getSpecificPlayer(0)
+        if not me then return end
+        local username = me:getUsername()
+        if not username then return end
+        print("[Holdoor][Restore] ejecutando " .. #args.xpDeltas .. " comandos /addxp...")
+        local i = 1
+        local framesEntre = 2
+        local frameCounter = 0
+        local restoreHandler
+        restoreHandler = function()
+            frameCounter = frameCounter + 1
+            if frameCounter < framesEntre then return end
+            frameCounter = 0
+            if i > #args.xpDeltas then
+                print("[Holdoor][Restore] " .. #args.xpDeltas .. " skills restauradas via /addxp")
+                Events.OnTick.Remove(restoreHandler)
+                return
+            end
+            local d = args.xpDeltas[i]
+            if d and d.perk and d.amount and d.amount > 0 then
+                local cmd = string.format('/addxp "%s" %s=%d', username, tostring(d.perk), d.amount)
+                pcall(function() SendCommandToServer(cmd) end)
+                print("[Holdoor][Restore] /addxp: " .. cmd)
+            end
+            i = i + 1
+        end
+        Events.OnTick.Add(restoreHandler)
 
     elseif comando == "ejecutarAddItem" then
         if args.target and args.items then
@@ -1124,34 +1565,33 @@ end
 
 function HoldoorClient.iniciar(config, modoId)
     HoldoorClient.estado.modoId = modoId or "normal"
+    -- v0.8.7: host local (SP / CoopHost host) llama HoldoorServer directo → corre en client
+    -- context, donde setHealth(0) y addSound impactan los IsoZombie visibles. Solo cliente
+    -- remoto usa sendClientCommand (correcto MP). Patron v0.7 restaurado.
     if tieneServidorLocal() then
-        print("[Holdoor] SP: llamando HoldoorServer.iniciar directamente")
         local player = getSpecificPlayer(0)
         if player then
             local ok, err = pcall(HoldoorServer.iniciar, player, config)
             if not ok then
-                print("[Holdoor] SP iniciar ERROR: " .. tostring(err))
+                print("[Holdoor] iniciar ERROR: " .. tostring(err))
                 HoldoorClient.chat("[HOLDOOR] Error al iniciar: " .. tostring(err), 1, 0.2, 0.2)
             end
         end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "iniciar", { config = config })
+        sendClientCommand(HoldoorConfig.MODULE, "iniciar", { config = config })
     end
 end
 
 function HoldoorClient.detener()
+    -- v0.8.7: ver iniciar.
     if tieneServidorLocal() then
-        -- SP: llamamos HoldoorServer.detener (que incluye limpieza de zombies cercanos).
-        -- Antes mutabamos el estado directo → la limpieza nunca corria. Bug 2026-06-15.
         local player = getSpecificPlayer(0)
         if player then
             local ok, err = pcall(HoldoorServer.detener, player)
-            if not ok then
-                print("[Holdoor] SP detener ERROR: " .. tostring(err))
-            end
+            if not ok then print("[Holdoor] detener ERROR: " .. tostring(err)) end
         end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "detener", {})
+        sendClientCommand(HoldoorConfig.MODULE, "detener", {})
     end
 end
 
@@ -1182,19 +1622,18 @@ function HoldoorClient.setBase()
     end
     HoldoorClient.chat("[HOLDOOR] Base marcada en " .. x .. ", " .. y, 0.4, 0.8, 1)
 
+    -- v0.8.7: ver iniciar.
     if tieneServidorLocal() then
-        -- Llamar HoldoorServer.setBase (incluye plantar bandera + side effects)
         local ok, err = pcall(HoldoorServer.setBase, player, x, y, z)
         if not ok then
-            print("[Holdoor] SP setBase ERROR: " .. tostring(err))
-            -- Fallback: mutacion directa minima
+            print("[Holdoor] setBase ERROR: " .. tostring(err))
             HoldoorServer.estado.baseX        = x
             HoldoorServer.estado.baseY        = y
             HoldoorServer.estado.baseZ        = z
             HoldoorServer.estado.baseDefinida = true
         end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "setBase", { x=x, y=y, z=z })
+        sendClientCommand(HoldoorConfig.MODULE, "setBase", { x=x, y=y, z=z })
     end
 end
 
@@ -1202,18 +1641,17 @@ function HoldoorClient.quitarBase()
     local player = getSpecificPlayer(0)
     if not player then return end
 
+    -- v0.8.7: ver iniciar.
     if tieneServidorLocal() then
         local ok, err = pcall(HoldoorServer.quitarBase, player)
-        if not ok then
-            print("[Holdoor] SP quitarBase ERROR: " .. tostring(err))
-            HoldoorClient.chat("[HOLDOOR] Error al quitar base: " .. tostring(err), 1, 0.3, 0.2)
-        end
+        if not ok then print("[Holdoor] quitarBase ERROR: " .. tostring(err)) end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "quitarBase", {})
+        sendClientCommand(HoldoorConfig.MODULE, "quitarBase", {})
     end
 end
 
 function HoldoorClient.oleadaManual()
+    -- v0.8.7: ver iniciar. Validaciones v0.7.
     if tieneServidorLocal() then
         if not HoldoorServer.estado.activo then
             HoldoorClient.chat("[HOLDOOR] El sistema de oleadas no esta activo.", 1, 0.3, 0.2)
@@ -1229,11 +1667,11 @@ function HoldoorClient.oleadaManual()
         end
         local ok, err = pcall(HoldoorServer._lanzarOleada)
         if not ok then
-            print("[Holdoor] SP oleadaManual ERROR: " .. tostring(err))
+            print("[Holdoor] oleadaManual ERROR: " .. tostring(err))
             HoldoorClient.chat("[HOLDOOR] Error al forzar oleada: " .. tostring(err), 1, 0.2, 0.2)
         end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "oleadaManual", {})
+        sendClientCommand(HoldoorConfig.MODULE, "oleadaManual", {})
     end
 end
 
@@ -1552,11 +1990,15 @@ function HoldoorClient.comprar(categoriaId, itemId)
 
     local args = { categoria=categoriaId, item=itemId }
     if infoNivel then args.precioOverride = infoNivel.precio end
+    -- v0.8.7: host local directo, remoto via sendClientCommand (ver iniciar).
     if tieneServidorLocal() then
         local p = getSpecificPlayer(0)
-        if p then pcall(HoldoorServer._comprar, p, args) end
+        if p then
+            local ok, err = pcall(HoldoorServer._comprar, p, args)
+            if not ok then print("[Holdoor] comprar ERROR: " .. tostring(err)) end
+        end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "comprar", args)
+        sendClientCommand(HoldoorConfig.MODULE, "comprar", args)
     end
 
     -- v0.6.1 fix MP DEFINITIVO (2026-06-16): comprar via comandos admin vanilla.
@@ -1591,6 +2033,15 @@ function HoldoorClient.comprar(categoriaId, itemId)
         if accion.tipo == "reliquia_godmode_flash" and targetUser then
             HoldoorClient.chat("[HOLDOOR] Beso del Dios guardado. Activalo desde el HUD lateral cuando lo necesites.", 0.85, 0.55, 0.95)
             -- Refrescar HUD para que aparezca el boton nuevo
+            if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
+                HoldoorHUD.instance:actualizarHUD()
+            end
+        end
+
+        -- v0.8 #4: Raise up John Snow — guardado en bolsa con seguro ACTIVO por default.
+        -- El jugador puede togglearlo desde el HUD lateral (boton verde/rojo).
+        if accion.tipo == "raise_up" and targetUser then
+            HoldoorClient.chat("[HOLDOOR] Levanten a John Snow guardado. Si tu HP llega a 0 con el seguro activo, el R'hllor te revive.", 0.95, 0.75, 0.20)
             if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
                 HoldoorHUD.instance:actualizarHUD()
             end
@@ -1818,20 +2269,19 @@ end
 
 function HoldoorClient.transferir(toUser, tipo, cantidad)
     local args = { to=toUser, tipo=tipo, cantidad=cantidad }
+    -- v0.8.7: host local directo, remoto via sendClientCommand.
     if tieneServidorLocal() then
         local p = getSpecificPlayer(0)
-        if p then
-            pcall(HoldoorServer._transferirMonedas, p, args)
-        end
+        if p then pcall(HoldoorServer._transferirMonedas, p, args) end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "transferir", args)
+        sendClientCommand(HoldoorConfig.MODULE, "transferir", args)
     end
 end
 
 function HoldoorClient.pedirEstado()
+    -- v0.8.7: host local lee estado directo (v0.7), remoto via sendClientCommand.
     if tieneServidorLocal() then
         local est = HoldoorServer.estado
-        local ahora = os.time()
         HoldoorClient.estado.activo           = est.activo
         HoldoorClient.estado.fase             = est.fase
         HoldoorClient.estado.oleadaActual     = est.oleadaActual
@@ -1841,17 +2291,8 @@ function HoldoorClient.pedirEstado()
         HoldoorClient.estado.baseY            = est.baseY
         HoldoorClient.estado.baseZ            = est.baseZ
         HoldoorClient.estado.baseDefinida     = est.baseDefinida
-        HoldoorClient.estado.config           = est.config or {}
-        -- Reconstruir countdown local
-        if est.fase == "preparacion" then
-            HoldoorClient.estado.countdownFinLocal = ahora + math.max(0, est.countdownFinSec - ahora)
-            HoldoorClient.ultimoSegsHUD = -1
-        elseif est.fase == "pausa" then
-            HoldoorClient.estado.countdownFinLocal = ahora + math.max(0, est.pausaFinSec - ahora)
-            HoldoorClient.ultimoSegsHUD = -1
-        end
     else
-        sendServerCommand(HoldoorConfig.MODULE, "pedirEstado", {})
+        sendClientCommand(HoldoorConfig.MODULE, "pedirEstado", {})
     end
 end
 
@@ -1965,6 +2406,7 @@ function HoldoorClient.init()
     end)
 
     print("[Holdoor] Cliente inicializado v" .. HoldoorConfig.VERSION .. " -- usa /holdoor en el chat para abrir el panel")
+    print("[Holdoor v0.8.7 MARKER] revert 8 acciones del panel: host local llama HoldoorServer directo (client context), remoto via sendClientCommand.")
     if tieneServidorLocal() then
         print("[Holdoor] Modo: SINGLE PLAYER (acceso directo al servidor)")
     else

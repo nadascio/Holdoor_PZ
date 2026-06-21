@@ -459,6 +459,14 @@ function HoldoorShopPanel:_renderCategoria()
                         consumidoTxt = md.Holdoor_BesoDios
                             and "Ya invocado por este personaje"
                             or  "En tu bolsa — activalo desde el HUD"
+                    elseif item.accion.tipo == "raise_up" and md.Holdoor_RaiseUp_Bolsa then
+                        -- v0.8 #7: si ya tenes uno en bolsa, no se puede comprar otro
+                        consumido    = true
+                        consumidoTxt = "En tu bolsa — togglealo desde el HUD"
+                    elseif item.accion.tipo == "punto_retorno" and md.Holdoor_PuntoRetorno_Bolsa then
+                        -- v0.8 #22: si ya tenes uno en bolsa, no se puede comprar otro
+                        consumido    = true
+                        consumidoTxt = "En tu bolsa — usalo desde el HUD"
                     end
                 end
             end

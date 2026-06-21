@@ -73,7 +73,26 @@ function HoldoorServer.init()
 
     -- v0.7 #40: cargar pagos pendientes de GlobalModData (jugadores offline al momento
     -- de distribuir recompensas — se les aplica al reconectarse).
-    _cargarPagosPendientes()
+    -- v0.8 fix: NO usar _cargarPagosPendientes (es local function declarada mas abajo → gotcha #54).
+    -- Inline el load directo.
+    HoldoorServer.pagosPendientes = {}
+    local okPP, gmPP = pcall(ModData.getOrCreate, "Holdoor_PagosPendientes")
+    if okPP and gmPP and gmPP.pagos then
+        HoldoorServer.pagosPendientes = gmPP.pagos
+        local cntPP = 0; for _ in pairs(HoldoorServer.pagosPendientes) do cntPP = cntPP + 1 end
+        if cntPP > 0 then print("[Holdoor] Pagos pendientes cargados: " .. cntPP .. " jugador(es)") end
+    end
+
+    -- v0.8 #18: cargar persistencia de Milagros del Maestre (Beso + Raise up).
+    -- Formato: { milagros = { [username] = { beso=true, raise=true, raiseOff=true } } }
+    -- Beso/Raise persisten tras muerte y logueo. Solo se borran al CONSUMIRSE.
+    HoldoorServer.milagrosPersist = {}
+    local okMP, gmMP = pcall(ModData.getOrCreate, "Holdoor_MilagrosPersist")
+    if okMP and gmMP and gmMP.milagros then
+        HoldoorServer.milagrosPersist = gmMP.milagros
+        local cntMP = 0; for _ in pairs(HoldoorServer.milagrosPersist) do cntMP = cntMP + 1 end
+        if cntMP > 0 then print("[Holdoor] Milagros persistidos cargados: " .. cntMP .. " jugador(es)") end
+    end
 
     print("[Holdoor] Servidor inicializado v" .. HoldoorConfig.VERSION .. " — estado reseteado")
     print("[Holdoor] addZombiesInOutfit disponible: " .. tostring(type(addZombiesInOutfit) == "function"))
@@ -153,6 +172,9 @@ function HoldoorServer._aplicarRefundAJugador(jugador)
     if not jugador then return end
     local username = jugador:getUsername()
     if not username then return end
+    -- v0.8 fix: guard defensivo. OnCreatePlayer puede disparar ANTES que init() en el primer
+    -- spawn de SP → HoldoorServer.seguros es nil → "attempted index of non-table". Early exit.
+    if not HoldoorServer.seguros then return end
     local seguro = HoldoorServer.seguros[username]
     if not seguro or not seguro.refundPending then return end
 
@@ -217,6 +239,440 @@ function HoldoorServer._limpiarSegurosPorFinOleada()
     -- v0.7 #40: tambien limpiar recompensables (la whitelist solo aplica a la sesion actual).
     HoldoorServer.estado.recompensables = {}
 end
+
+-- ─────────────────────────────────────────────
+--  v0.8 #18 — PERSISTENCIA DE MILAGROS DEL MAESTRE
+-- ─────────────────────────────────────────────
+-- Beso del Dios + Raise up John Snow sobreviven muerte y logueo.
+-- Mismo patron que Seguro de Monedas (GlobalModData por username).
+-- Solo se borran cuando se CONSUMEN (uso real del Beso / disparo del Raise),
+-- nunca por muerte sin uso (eso era lo frustrante: pagaste un monton y morias
+-- sin haberlos usado).
+--
+-- Formato:
+--   HoldoorServer.milagrosPersist[username] = {
+--       beso     = true,        -- tiene Beso en bolsa
+--       raise    = true,        -- tiene Raise en bolsa
+--       raiseOff = true,        -- toggle OFF (default ON si no esta esta key)
+--   }
+
+local function _persistirMilagros()
+    local ok, gm = pcall(ModData.getOrCreate, "Holdoor_MilagrosPersist")
+    if ok and gm then
+        gm.milagros = HoldoorServer.milagrosPersist
+        pcall(function() ModData.transmit("Holdoor_MilagrosPersist") end)
+    end
+end
+
+function HoldoorServer._setMilagroPersist(username, key, value)
+    if not username or not key then return end
+    if not HoldoorServer.milagrosPersist then HoldoorServer.milagrosPersist = {} end
+    local entry = HoldoorServer.milagrosPersist[username] or {}
+    if value then entry[key] = true else entry[key] = nil end
+
+    -- Compactar: si todos los flags vacios, borrar entry entero
+    local hasAny = false
+    for _, v in pairs(entry) do if v then hasAny = true; break end end
+    if hasAny then
+        HoldoorServer.milagrosPersist[username] = entry
+    else
+        HoldoorServer.milagrosPersist[username] = nil
+    end
+    _persistirMilagros()
+end
+
+function HoldoorServer._aplicarMilagrosPersistAJugador(jugador)
+    -- Llamado en OnCreatePlayer. Si hay entry persistida para el username,
+    -- restaura los flags al modData del personaje nuevo.
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    if not HoldoorServer.milagrosPersist then return end
+    local entry = HoldoorServer.milagrosPersist[username]
+    if not entry then return end
+    local md = jugador:getModData()
+    if not md then return end
+
+    if entry.beso then md.Holdoor_BesoDios_Bolsa = true end
+    if entry.raise then
+        md.Holdoor_RaiseUp_Bolsa  = true
+        md.Holdoor_RaiseUp_Activo = entry.raiseOff and nil or true
+        -- v0.8 #21: timestamp del ultimo snapshot para el label del HUD
+        if entry.snapshotTimestamp then
+            md.Holdoor_RaiseSnapshotTs = entry.snapshotTimestamp
+        end
+    end
+
+    pcall(function() jugador:transmitModData() end)
+    print(string.format("[Holdoor][Milagros] %s spawn — restaurado beso=%s raise=%s off=%s",
+        username, tostring(entry.beso), tostring(entry.raise), tostring(entry.raiseOff)))
+end
+
+-- ─────────────────────────────────────────────
+--  v0.8 #21 — REVIVAL: snapshot + restore helpers
+-- ─────────────────────────────────────────────
+-- _iterarPerks: itera PerkFactory.PerkList (lista oficial Java) y devuelve (id_string, enum).
+-- Necesario porque Perks[<name>] no es indexable uniformemente en B42 (gotcha 2026-06-16).
+
+local function _iterarPerks(callback)
+    pcall(function()
+        if not PerkFactory or not PerkFactory.PerkList then return end
+        local list = PerkFactory.PerkList
+        local size; pcall(function() size = list:size() end)
+        if not size then return end
+        for i = 0, size - 1 do
+            local pf = list:get(i)
+            if pf then
+                local id, enum
+                pcall(function() id = tostring(pf:getId()) end)
+                pcall(function() enum = pf:getType() end)
+                if id and enum then callback(id, enum) end
+            end
+        end
+    end)
+end
+
+function HoldoorServer._snapshotJugador(jugador, motivo)
+    -- Captura skills+xp, recetas, monedas, materiales, Beso bolsa.
+    -- Guardado en milagrosPersist[username].snapshot + .snapshotTimestamp (epoch).
+    -- motivo: "compra" | "toggle" | "auto-5m" (para log contextual)
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    if not HoldoorServer.milagrosPersist then HoldoorServer.milagrosPersist = {} end
+    local entry = HoldoorServer.milagrosPersist[username] or {}
+
+    local snap = {
+        skills = {}, recipes = {},
+        bronze = 0, silver = 0, gold = 0,
+        cuero = 0, hierro = 0, acero = 0, valyrio = 0, obsidiana = 0,
+        beso_bolsa = false,
+    }
+
+    -- Skills + XP parcial
+    _iterarPerks(function(id, enum)
+        local lvl = 0; pcall(function() lvl = jugador:getPerkLevel(enum) end)
+        local xp  = 0; pcall(function() xp  = jugador:getXp():getXP(enum) end)
+        if lvl > 0 or xp > 0 then
+            snap.skills[id] = { level = lvl, xp = xp }
+        end
+    end)
+
+    -- Recetas conocidas
+    pcall(function()
+        local kr = jugador:getKnownRecipes()
+        if kr then
+            local size; pcall(function() size = kr:size() end)
+            if size then
+                for i = 0, size - 1 do
+                    local r; pcall(function() r = tostring(kr:get(i)) end)
+                    if r and r ~= "nil" then table.insert(snap.recipes, r) end
+                end
+            end
+        end
+    end)
+
+    -- Monedas + materiales Holdoor (en md)
+    local md = jugador:getModData()
+    if md then
+        snap.bronze = md.Holdoor_Bronze or 0
+        snap.silver = md.Holdoor_Silver or 0
+        snap.gold   = md.Holdoor_Gold   or 0
+        -- v0.8 #21 fix: nombres largos correctos (Cuero/Hierro/Acero/Valyrio/Obsidiana),
+        -- no abreviados (Cu/Hi/Ac/Va/Ob). El HUD muestra abreviado pero el md guarda largo.
+        snap.cuero     = md.Holdoor_Cuero     or 0
+        snap.hierro    = md.Holdoor_Hierro    or 0
+        snap.acero     = md.Holdoor_Acero     or 0
+        snap.valyrio   = md.Holdoor_Valyrio   or 0
+        snap.obsidiana = md.Holdoor_Obsidiana or 0
+        snap.beso_bolsa = md.Holdoor_BesoDios_Bolsa and true or false
+    end
+
+    local ts = os.time()
+    entry.snapshot          = snap
+    entry.snapshotTimestamp = ts
+    HoldoorServer.milagrosPersist[username] = entry
+    _persistirMilagros()
+
+    -- Tambien al md del player para que el cliente lo vea via transmitModData (HUD label)
+    if md then
+        md.Holdoor_RaiseSnapshotTs = ts
+        pcall(function() jugador:transmitModData() end)
+    end
+
+    local nSkills = 0; for _ in pairs(snap.skills) do nSkills = nSkills + 1 end
+    local tag = motivo and (":" .. motivo) or ""
+    print(string.format("[Holdoor][Snapshot%s] %s: %d skills, %d recetas, %dB/%dP/%dO, mats(Cu=%d Hi=%d Ac=%d Va=%d Ob=%d), beso=%s",
+        tag, username, nSkills, #snap.recipes,
+        snap.bronze, snap.silver, snap.gold,
+        snap.cuero, snap.hierro, snap.acero, snap.valyrio, snap.obsidiana,
+        tostring(snap.beso_bolsa)))
+end
+
+function HoldoorServer._restaurarSnapshotMonedas(jugador, snap)
+    -- Solo md (funciona inmediatamente en OnCreatePlayer).
+    if not jugador or not snap then return end
+    local md = jugador:getModData()
+    if not md then return end
+    md.Holdoor_Bronze = snap.bronze or 0
+    md.Holdoor_Silver = snap.silver or 0
+    md.Holdoor_Gold   = snap.gold   or 0
+    -- v0.8 #21 fix: nombres largos en md (Cuero/Hierro/Acero/Valyrio/Obsidiana)
+    md.Holdoor_Cuero     = snap.cuero     or 0
+    md.Holdoor_Hierro    = snap.hierro    or 0
+    md.Holdoor_Acero     = snap.acero     or 0
+    md.Holdoor_Valyrio   = snap.valyrio   or 0
+    md.Holdoor_Obsidiana = snap.obsidiana or 0
+    if snap.beso_bolsa then md.Holdoor_BesoDios_Bolsa = true end
+    pcall(function() jugador:transmitModData() end)
+end
+
+function HoldoorServer._restaurarSnapshotProgreso(jugador, snap)
+    -- v0.8 #21 (fix): usa el patron /addxp via admin command (mismo que la tienda "subir_nivel").
+    -- LevelPerk directo server-side era flaky en MP (gotcha del mod, linea 1066).
+    -- /addxp es el flow autoritario del server validado en B42.
+    -- Server calcula XP total necesario por skill, despacha al cliente, cliente envia /addxp.
+    if not jugador or not snap then return end
+    local username = jugador:getUsername() or "?"
+
+    -- Armar lista de XP a entregar
+    local xpDeltas = {}
+    if snap.skills then
+        _iterarPerks(function(id, enum)
+            local snapSkill = snap.skills[id]
+            if not snapSkill then return end
+            local lvlObjetivo = snapSkill.level or 0
+            local xpParcial   = snapSkill.xp    or 0
+            if lvlObjetivo == 0 and xpParcial == 0 then return end
+
+            -- XP total = sum(getXpForLevel(1..lvlObjetivo)) + xpParcial
+            local xpTotal = 0
+            pcall(function()
+                local perkDef = PerkFactory.getPerk(enum)
+                if perkDef then
+                    for lvl = 1, lvlObjetivo do
+                        local xp = perkDef:getXpForLevel(lvl)
+                        if xp then xpTotal = xpTotal + xp end
+                    end
+                end
+            end)
+            xpTotal = xpTotal + xpParcial
+
+            -- Restar XP que el char nuevo ya tenga
+            local xpActual = 0
+            pcall(function() xpActual = jugador:getXp():getXP(enum) end)
+            local delta = math.floor(xpTotal - xpActual)
+            if delta > 0 then
+                table.insert(xpDeltas, { perk = id, amount = delta, lvlObjetivo = lvlObjetivo })
+            end
+        end)
+    end
+
+    print(string.format("[Holdoor][Restore] %s: calculados %d deltas de XP para restaurar via /addxp",
+        username, #xpDeltas))
+    for _, d in ipairs(xpDeltas) do
+        print(string.format("[Holdoor][Restore.skill] %s: %s lvl=%d, xpDelta=%d",
+            username, d.perk, d.lvlObjetivo, d.amount))
+    end
+
+    -- Dispatch al cliente para ejecutar /addxp en cadena
+    if #xpDeltas > 0 then
+        pcall(function()
+            sendServerCommand(jugador, HoldoorConfig.MODULE, "ejecutarRestoreProgresoBatch", {
+                xpDeltas = xpDeltas,
+            })
+        end)
+        -- Loopback para host local
+        if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+            local lp; pcall(function() lp = getSpecificPlayer(0) end)
+            if lp and lp:getUsername() == username then
+                pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "ejecutarRestoreProgresoBatch", {
+                    xpDeltas = xpDeltas,
+                })
+            end
+        end
+    end
+
+    -- Recetas: merge server-side (no necesita admin)
+    local recipesAdded, recipesIntentadas = 0, 0
+    if snap.recipes then
+        pcall(function()
+            local kr = jugador:getKnownRecipes()
+            if not kr then
+                print("[Holdoor][Restore.recipes] " .. username .. " ERROR: getKnownRecipes() devolvio nil")
+                return
+            end
+            for _, recipe in ipairs(snap.recipes) do
+                recipesIntentadas = recipesIntentadas + 1
+                local has = false
+                pcall(function() has = kr:contains(recipe) end)
+                if not has then
+                    local ok = false
+                    pcall(function() kr:add(recipe); ok = true end)
+                    if ok then recipesAdded = recipesAdded + 1 end
+                end
+            end
+        end)
+    end
+    print(string.format("[Holdoor][Restore] %s: recetas intentadas=%d nuevas=%d",
+        username, recipesIntentadas, recipesAdded))
+end
+
+function HoldoorServer._restaurarSnapshot(jugador, snap)
+    -- LEGACY/wrapper. Aplica monedas YA + encola progreso DIFERIDO.
+    if not jugador or not snap then return end
+    HoldoorServer._restaurarSnapshotMonedas(jugador, snap)
+    -- Skills/recetas se aplican diferidas via la queue en _aplicarRevivePendiente
+end
+
+function HoldoorServer._matarZombiesEnArea(cx, cy, cz, radio)
+    -- v0.8 #21 (fix): solo MATA zombies vivos con setHealth(0) — NO toca cadaveres.
+    -- Distinto de /removezombies (que borra incluso cuerpos) y de _limpiarZona (que ademas
+    -- elimina IsoDeadBody). Usado en Revive para limpiar amenaza inmediata SIN destruir el
+    -- cadaver del player muerto (que tiene los items que tiene que lootear).
+    cz = cz or 0
+    radio = radio or 15
+    local ok_cell, cell = pcall(getCell)
+    if not ok_cell or not cell then return 0 end
+
+    local eliminados = 0
+    for dx = -radio, radio do
+        for dy = -radio, radio do
+            if dx * dx + dy * dy <= radio * radio then
+                local ok_sq, sq = pcall(function() return cell:getGridSquare(cx + dx, cy + dy, cz) end)
+                if ok_sq and sq then
+                    local toRemove = {}
+                    local ok_mo, objs = pcall(function() return sq:getMovingObjects() end)
+                    if ok_mo and objs then
+                        local ok_sz, sz = pcall(function() return objs:size() end)
+                        if ok_sz and sz then
+                            for i = 0, sz - 1 do
+                                local ok_get, obj = pcall(function() return objs:get(i) end)
+                                if ok_get and obj and instanceof(obj, "IsoZombie") then
+                                    table.insert(toRemove, obj)
+                                end
+                            end
+                        end
+                    end
+                    for _, z in ipairs(toRemove) do
+                        local ok_kill = false
+                        pcall(function() z:setHealth(0.0); ok_kill = true end)
+                        if not ok_kill then pcall(function() z:setHealth(0); ok_kill = true end) end
+                        if ok_kill then eliminados = eliminados + 1 end
+                    end
+                end
+            end
+        end
+    end
+    -- Gotcha #22: ventana de 2s para que async OnZombieDead no infle kills
+    if eliminados > 0 and HoldoorServer.estado then
+        HoldoorServer.estado._zombiesIgnorarHasta = os.time() + 2
+    end
+    return eliminados
+end
+
+function HoldoorServer._aplicarRevivePendiente(jugador)
+    -- Llamado en OnCreatePlayer. Si el username tiene needsRevive=true + snapshot:
+    --   1) Restaura todo el progreso server-side
+    --   2) Envia evento "raiseUpRevive" al cliente con coords muerte → cliente hace fade+admin+teleport+matar zombies
+    --   3) Limpia persist (item consumido)
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    if not HoldoorServer.milagrosPersist then return end
+    local entry = HoldoorServer.milagrosPersist[username]
+    if not entry or not entry.needsRevive then return end
+    if not entry.snapshot or not entry.deathCoords then
+        print("[Holdoor][Revive] " .. username .. ": needsRevive=true pero falta snapshot o coords — abortando")
+        entry.needsRevive = nil
+        HoldoorServer.milagrosPersist[username] = entry
+        _persistirMilagros()
+        return
+    end
+
+    print("[Holdoor][Revive] " .. username .. " spawn detectado con needsRevive — iniciando flow")
+
+    -- 1) Restore INMEDIATO de monedas/materiales (md directo, funciona en OnCreatePlayer)
+    pcall(function() HoldoorServer._restaurarSnapshotMonedas(jugador, entry.snapshot) end)
+
+    -- 2) Encolar DIFERIDOS: skills/recetas + matar-zombies.
+    -- v0.8 #21 (fix): LevelPerk, getKnownRecipes:add y _matarZombiesEnArea no funcionan
+    -- al instante en OnCreatePlayer: el char nuevo aun no esta completamente inicializado
+    -- y el cell del lugar de muerte no esta cargado (player todavia en spawn point inicial).
+    -- Diferir +2s asegura que el char este listo + el cell se cargo via el teleport.
+    local coords = entry.deathCoords
+    local snapCopy = entry.snapshot   -- referencia (el entry se limpia abajo, snap perdura por ref)
+    HoldoorServer._matarZombiesQueue = HoldoorServer._matarZombiesQueue or {}
+    local ahora = os.time()
+
+    -- Task: restaurar skills+recetas a +2s (cuando char ya esta initialized)
+    table.insert(HoldoorServer._matarZombiesQueue, {
+        tipo = "restoreProgreso", jugador = jugador, snap = snapCopy,
+        fireAt = ahora + 2, label = "restoreProgreso+2s", username = username,
+    })
+    -- 3 disparos de matar zombies a +2/+5/+10s
+    for _, delay in ipairs({2, 5, 10}) do
+        table.insert(HoldoorServer._matarZombiesQueue, {
+            tipo = "matarZombies", x = coords.x, y = coords.y, z = coords.z, radio = 15,
+            fireAt = ahora + delay, label = "matarZ+" .. delay .. "s", username = username,
+        })
+    end
+    print(string.format("[Holdoor][Revive] %s: encolado restoreProgreso (+2s) + 3 disparos matarZombies (+2/+5/+10s) en (%d,%d,%d)",
+        username, coords.x, coords.y, coords.z))
+
+    -- 3) Dispatch al cliente para fade + admin + teleport
+    pcall(function()
+        sendServerCommand(jugador, HoldoorConfig.MODULE, "raiseUpRevive", {
+            x = coords.x, y = coords.y, z = coords.z,
+        })
+    end)
+    -- Loopback para host local (hosted: sendServerCommand a si mismo no llega)
+    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+        local lp; pcall(function() lp = getSpecificPlayer(0) end)
+        if lp and lp:getUsername() == username then
+            pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "raiseUpRevive", {
+                x = coords.x, y = coords.y, z = coords.z,
+            })
+        end
+    end
+
+    -- 3) Item consumido — limpiar persistencia entera (raise + snapshot + needsRevive + coords)
+    entry.raise             = nil
+    entry.raiseOff          = nil
+    entry.snapshot          = nil
+    entry.snapshotTimestamp = nil
+    entry.needsRevive       = nil
+    entry.deathCoords       = nil
+    -- Compactar entry: si solo queda beso, dejarlo; si ya esta vacio, borrar
+    local hasAny = false
+    for _, v in pairs(entry) do if v then hasAny = true; break end end
+    if hasAny then
+        HoldoorServer.milagrosPersist[username] = entry
+    else
+        HoldoorServer.milagrosPersist[username] = nil
+    end
+    _persistirMilagros()
+
+    -- Limpiar flags md del char nuevo (no debe arrancar con Raise_Bolsa que viene del persist anterior)
+    local md = jugador:getModData()
+    if md then
+        md.Holdoor_RaiseUp_Bolsa   = nil
+        md.Holdoor_RaiseUp_Activo  = nil
+        md.Holdoor_RaiseSnapshotTs = nil  -- v0.8 #21 fix: tambien el TS del HUD
+        pcall(function() jugador:transmitModData() end)
+    end
+end
+
+-- ─────────────────────────────────────────────
+--  v0.8 #21 — RAISE UP JOHN SNOW (rediseno post-muerte)
+-- ─────────────────────────────────────────────
+-- ELIMINADO en v0.8 #21: _dispararRaiseUp (era PRE-muerte via 6 triggers).
+-- El nuevo flow actua POST-muerte:
+--   1) Compra Raise → snapshot inicial automatico (skills+xp+recetas+monedas+materiales)
+--   2) Toggle OFF→ON con cooldown 5min → re-snapshot
+--   3) Cuando muere: OnPlayerDeath captura coords + flag needsRevive
+--   4) Char nuevo spawnea: OnCreatePlayer detecta needsRevive → flow revive (admin + restore + teleport + matar zombies + toast)
+-- Ver _snapshotJugador, _restaurarSnapshot, _aplicarRevivePendiente abajo.
 
 -- ─────────────────────────────────────────────
 --  v0.7 #40 — WHITELIST DE RECOMPENSABLES + PAGOS PENDIENTES OFFLINE
@@ -322,6 +778,9 @@ function HoldoorServer._aplicarPagosPendientesAJugador(jugador)
     if not jugador then return end
     local username = jugador:getUsername()
     if not username then return end
+    -- v0.8 fix: mismo guard que _aplicarRefundAJugador. OnCreatePlayer puede disparar
+    -- antes que init() en el primer spawn de SP.
+    if not HoldoorServer.pagosPendientes then return end
     local pago = HoldoorServer.pagosPendientes[username]
     if not pago then return end
 
@@ -650,6 +1109,41 @@ local function ejecutarAccion(jugador, accion)
         local md = jugador:getModData()
         if md then md.Holdoor_BesoDios_Bolsa = true end
         _persistirModData(jugador)
+        -- v0.8 #18: persistir en GlobalModData — sobrevive muerte/logueo
+        pcall(function()
+            HoldoorServer._setMilagroPersist(jugador:getUsername(), "beso", true)
+        end)
+        return true
+
+    elseif accion.tipo == "raise_up" then
+        -- v0.8 #21: Levanten a John Snow — seguro de vida POST-muerte.
+        -- Al comprar: snapshot inicial automatico de skills+xp+recetas+monedas+materiales.
+        -- Al morir: el snapshot se aplica al char nuevo cuando spawnea (ver _aplicarRevivePendiente).
+        -- Renovar snapshot: toggle OFF→ON con cooldown 5min (ver handler toggleRaiseUp).
+        local md = jugador:getModData()
+        if md then
+            md.Holdoor_RaiseUp_Bolsa  = true
+            md.Holdoor_RaiseUp_Activo = true   -- default ON al comprar
+        end
+        _persistirModData(jugador)
+        -- Persistir en GlobalModData — sobrevive muerte/logueo
+        pcall(function()
+            local u = jugador:getUsername()
+            HoldoorServer._setMilagroPersist(u, "raise", true)
+            HoldoorServer._setMilagroPersist(u, "raiseOff", false)
+        end)
+        -- v0.8 #21: snapshot inicial automatico
+        pcall(function() HoldoorServer._snapshotJugador(jugador, "compra") end)
+        return true
+
+    elseif accion.tipo == "punto_retorno" then
+        -- v0.8 #22: Punto de Retorno — checkpoint personal por player.
+        -- Item va a bolsa. El player primero marca un punto (con boton Marcar), luego se
+        -- teletransporta (con boton Teletransportar). Al teleport se consume bolsa pero
+        -- el punto guardado (Holdoor_PuntoRetorno_X/Y/Z) queda para usos futuros si recomprra.
+        local md = jugador:getModData()
+        if md then md.Holdoor_PuntoRetorno_Bolsa = true end
+        _persistirModData(jugador)
         return true
 
     elseif accion.tipo == "reliquia_cura_sangrado"
@@ -850,6 +1344,20 @@ function HoldoorServer._comprar(jugador, args)
             or "Ya tenes un Beso del Dios en la bolsa. Activalo desde el HUD primero."
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
               { motivo = motivo })
+        return
+    end
+    -- Raise up John Snow (v0.8 #21): bloquear si ya tiene uno en bolsa (no permite 2 simultaneos).
+    -- El item se "consume" cuando se usa para revivir al respawn. El char nuevo nace sin
+    -- el flag y puede recomprar libremente (le costara muy caro otra vez).
+    if item.accion and item.accion.tipo == "raise_up" and md and md.Holdoor_RaiseUp_Bolsa then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
+              { motivo = "Ya tenes un Raise up en la bolsa." })
+        return
+    end
+    -- v0.8 #22: Punto de Retorno — bloquear si ya tiene uno en bolsa (recomprable post-uso).
+    if item.accion and item.accion.tipo == "punto_retorno" and md and md.Holdoor_PuntoRetorno_Bolsa then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "compraFail",
+              { motivo = "Ya tenes un Punto de Retorno en la bolsa." })
         return
     end
     -- Para cura_trait: la validacion "tiene el trait?" se hace EN EL CLIENTE
@@ -1371,8 +1879,7 @@ function HoldoorServer._aggroSostenido()
     local radio = HoldoorConfig.aggroRadio or 120
     local vol   = HoldoorConfig.aggroVolumen or 200
     local sndOk = pcall(addSound, nil, estado.baseX, estado.baseY, estado.baseZ, radio, vol)
-    print(string.format("[Holdoor] AGGRO sound radio=%d vol=%d ok=%s",
-        radio, vol, tostring(sndOk)))
+    print(string.format("[Holdoor] AGGRO sound radio=%d vol=%d ok=%s", radio, vol, tostring(sndOk)))
 
     -- 2) Re-path EXPLICITO: forzar pathToLocation en todos los zombies cercanos.
     --    Es el fallback que en modelo viejo funcionaba (los zombies seguian su path
@@ -2807,12 +3314,14 @@ end
 -- ─────────────────────────────────────────────
 
 function HoldoorServer.setBase(jugador, x, y, z)
+    -- v0.8.4: _plantarTrono se movio al cliente (handler baseActualizada en HoldoorClient).
+    -- Esto es porque IsoThumpable + addToWorld requieren CLIENT context para sincronizar
+    -- el objeto al mundo. Server-side la API no funciona en CoopHost mode.
     local estado        = HoldoorServer.estado
     estado.baseX        = math.floor(x)
     estado.baseY        = math.floor(y)
     estado.baseZ        = math.floor(z)
     estado.baseDefinida = true
-    HoldoorServer._plantarTrono(estado.baseX, estado.baseY, estado.baseZ)
     HoldoorServer.notificarTodos("baseActualizada", { x = estado.baseX, y = estado.baseY, z = estado.baseZ })
     print("[Holdoor] Base definida en " .. estado.baseX .. "," .. estado.baseY .. " por " .. jugador:getUsername())
 end
@@ -2831,7 +3340,7 @@ function HoldoorServer.quitarBase(jugador)
         return
     end
 
-    HoldoorServer._quitarTrono()
+    -- v0.8.4: _quitarTrono se movio al cliente (handler baseQuitada en HoldoorClient).
     estado.baseDefinida = false
     estado.baseX, estado.baseY, estado.baseZ = 0, 0, 0
 
@@ -4348,9 +4857,127 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
             md.Holdoor_BesoDios       = true
             md.Holdoor_BesoDios_Bolsa = nil
             _persistirModData(jugador)
+            -- v0.8 #18: consumido — clear persistencia (no debe respawnar con Beso)
+            pcall(function()
+                HoldoorServer._setMilagroPersist(jugador:getUsername(), "beso", false)
+            end)
             print("[Holdoor][Server] Beso del Dios ACTIVADO por " .. tostring(jugador:getUsername()) .. " (Bolsa→Usado)")
         else
             print("[Holdoor][Server] activarBeso: " .. tostring(jugador:getUsername()) .. " no tiene Beso en bolsa (ignorado)")
+        end
+
+    elseif comando == "toggleRaiseUp" then
+        -- v0.8 #21: el jugador apreto el boton toggle del Raise up John Snow en HUD lateral.
+        -- Server cambia Holdoor_RaiseUp_Activo a true/false. Si pasa de OFF→ON y han pasado
+        -- 5+ minutos desde el ultimo snapshot, re-snapshot. Si no, mantiene el viejo.
+        local md = jugador:getModData()
+        if md and md.Holdoor_RaiseUp_Bolsa then
+            local antesActivo = md.Holdoor_RaiseUp_Activo and true or false
+            md.Holdoor_RaiseUp_Activo = not md.Holdoor_RaiseUp_Activo
+            local ahoraActivo = md.Holdoor_RaiseUp_Activo and true or false
+            _persistirModData(jugador)
+            -- Sincronizar toggle a persistencia (raiseOff=true si toggle a OFF)
+            pcall(function()
+                HoldoorServer._setMilagroPersist(jugador:getUsername(), "raiseOff", not ahoraActivo)
+            end)
+
+            -- v0.8 #21: si paso de OFF→ON → snapshot SIEMPRE (manual del user).
+            -- Sin cooldown — el user tocó el botón a propósito, respetamos su decisión.
+            -- El auto-cada-5min sigue funcionando independiente (ver _autoSnapshotTick).
+            local snapshotRenovado = false
+            if not antesActivo and ahoraActivo then
+                pcall(function() HoldoorServer._snapshotJugador(jugador, "toggle") end)
+                snapshotRenovado = true
+            end
+
+            local nuevoEstado = ahoraActivo and "ACTIVO" or "DESACTIVADO"
+            print("[Holdoor][Server] Raise up toggle: " .. tostring(jugador:getUsername()) ..
+                " -> " .. nuevoEstado .. (snapshotRenovado and " (SNAPSHOT FRESH)" or ""))
+
+            -- Avisar al cliente del estado nuevo + timestamp del snapshot para refrescar el boton
+            local entrySync = HoldoorServer.milagrosPersist and HoldoorServer.milagrosPersist[jugador:getUsername()]
+            local tsSync = (entrySync and entrySync.snapshotTimestamp) or 0
+            pcall(function()
+                sendServerCommand(jugador, HoldoorConfig.MODULE, "raiseUpToggleConfirmado", {
+                    activo            = ahoraActivo,
+                    snapshotTimestamp = tsSync,
+                    snapshotRenovado  = snapshotRenovado,
+                })
+            end)
+        else
+            print("[Holdoor][Server] toggleRaiseUp: " .. tostring(jugador:getUsername()) .. " no tiene Raise up en bolsa (ignorado)")
+        end
+
+    elseif comando == "marcarPuntoRetorno" then
+        -- v0.8 #22: el jugador planta/reemplaza su Punto de Retorno personal.
+        -- Recibe coords actuales del player (args.x/y/z) y las guarda en md.
+        -- NO requiere tener el item en bolsa para marcar (pero el HUD solo muestra el boton si lo tiene).
+        if not (args and args.x and args.y) then
+            print("[Holdoor][Server] marcarPuntoRetorno: " .. tostring(jugador:getUsername()) .. " coords invalidas (ignorado)")
+            return
+        end
+        local md = jugador:getModData()
+        if not md then return end
+        local esReemplazo = md.Holdoor_PuntoRetorno_X ~= nil
+        md.Holdoor_PuntoRetorno_X = math.floor(args.x)
+        md.Holdoor_PuntoRetorno_Y = math.floor(args.y)
+        md.Holdoor_PuntoRetorno_Z = math.floor(args.z or 0)
+        _persistirModData(jugador)
+        print(string.format("[Holdoor][Server] %s %s Punto de Retorno en (%d,%d,%d)",
+            tostring(jugador:getUsername()),
+            esReemplazo and "REEMPLAZO" or "PLANTO",
+            md.Holdoor_PuntoRetorno_X, md.Holdoor_PuntoRetorno_Y, md.Holdoor_PuntoRetorno_Z))
+        pcall(function()
+            sendServerCommand(jugador, HoldoorConfig.MODULE, "puntoRetornoMarcado", {
+                x = md.Holdoor_PuntoRetorno_X,
+                y = md.Holdoor_PuntoRetorno_Y,
+                z = md.Holdoor_PuntoRetorno_Z,
+                esReemplazo = esReemplazo,
+            })
+        end)
+        if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+            local lp; pcall(function() lp = getSpecificPlayer(0) end)
+            if lp and lp:getUsername() == jugador:getUsername() then
+                pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "puntoRetornoMarcado", {
+                    x = md.Holdoor_PuntoRetorno_X,
+                    y = md.Holdoor_PuntoRetorno_Y,
+                    z = md.Holdoor_PuntoRetorno_Z,
+                    esReemplazo = esReemplazo,
+                })
+            end
+        end
+
+    elseif comando == "activarPuntoRetorno" then
+        -- v0.8 #22: el jugador apreto Teletransportar al Punto de Retorno.
+        -- Valida: 1) tiene item en bolsa, 2) tiene punto guardado.
+        -- Si OK: consume bolsa + dispatch al cliente con coords del punto.
+        local md = jugador:getModData()
+        if not (md and md.Holdoor_PuntoRetorno_Bolsa) then
+            print("[Holdoor][Server] activarPuntoRetorno: " .. tostring(jugador:getUsername()) .. " no tiene Punto en bolsa (ignorado)")
+            return
+        end
+        if not (md.Holdoor_PuntoRetorno_X and md.Holdoor_PuntoRetorno_Y) then
+            print("[Holdoor][Server] activarPuntoRetorno: " .. tostring(jugador:getUsername()) .. " no tiene punto marcado (ignorado)")
+            return
+        end
+        -- Consumir bolsa + dispatch al cliente con coords
+        md.Holdoor_PuntoRetorno_Bolsa = nil
+        _persistirModData(jugador)
+        local coords = {
+            x = md.Holdoor_PuntoRetorno_X,
+            y = md.Holdoor_PuntoRetorno_Y,
+            z = md.Holdoor_PuntoRetorno_Z or 0,
+        }
+        print(string.format("[Holdoor][Server] activarPuntoRetorno: %s -> coords (%d,%d,%d) — countdown 5s iniciado en cliente",
+            tostring(jugador:getUsername()), coords.x, coords.y, coords.z))
+        pcall(function()
+            sendServerCommand(jugador, HoldoorConfig.MODULE, "puntoRetornoDisparado", coords)
+        end)
+        if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+            local lp; pcall(function() lp = getSpecificPlayer(0) end)
+            if lp and lp:getUsername() == jugador:getUsername() then
+                pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "puntoRetornoDisparado", coords)
+            end
         end
 
     elseif comando == "delegarAddXp" or comando == "delegarAddItem" then
@@ -4364,6 +4991,23 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
             print("[Holdoor] " .. comando .. ": delegado a " .. tostring(hostAdmin:getUsername()) .. " para " .. tostring(args.target))
         else
             print("[Holdoor] " .. comando .. " WARN: no hay admin online")
+        end
+
+    elseif comando == "delegarSetAccessLevel" then
+        -- v0.8 #23: cliente NO admin pidio /setaccesslevel a si mismo (Beso/Raise/Punto de Retorno).
+        -- Delegamos al host admin que tiene permisos. Mismo patron que delegarAddXp.
+        if not (args and args.target and args.level) then
+            print("[Holdoor] delegarSetAccessLevel WARN: args invalidos")
+            return
+        end
+        local hostAdmin = HoldoorServer._buscarHostAdmin()
+        if hostAdmin then
+            pcall(function()
+                sendServerCommand(hostAdmin, HoldoorConfig.MODULE, "ejecutarSetAccessLevel", args)
+            end)
+            print("[Holdoor] delegarSetAccessLevel: delegado a " .. tostring(hostAdmin:getUsername()) .. " para target=" .. tostring(args.target) .. " level=" .. tostring(args.level))
+        else
+            print("[Holdoor] delegarSetAccessLevel WARN: no hay admin online")
         end
 
     elseif comando == "pedirEstado" then
@@ -4392,6 +5036,37 @@ end
 -- v0.6.1: handler de muerte de player. Si todos los participantes de la oleada activa
 -- mueren o se desconectan → oleada se da por perdida.
 function HoldoorServer._onPlayerMuerto(jugador)
+    -- v0.8 #21: CAPTURA POST-MUERTE para Raise up John Snow.
+    -- ANTES del check oleada (porque el Raise funciona en CUALQUIER momento, no solo oleada).
+    -- Si el username tiene Raise persistido + Activo + snapshot → snapshot fresh AL MORIR
+    -- + capturar coords + needsRevive.
+    pcall(function()
+        if not jugador then return end
+        local u = jugador:getUsername()
+        if not u then return end
+        local entry = HoldoorServer.milagrosPersist and HoldoorServer.milagrosPersist[u]
+        if not entry or not entry.raise then return end           -- no tiene Raise comprado
+        if entry.raiseOff then return end                          -- toggle OFF: el user lo apago
+
+        -- v0.8 #21: snapshot FRESH al morir — garantiza materiales/monedas/XP del momento de muerte
+        pcall(function() HoldoorServer._snapshotJugador(jugador, "muerte") end)
+        -- re-leer entry porque _snapshotJugador lo modifico
+        entry = HoldoorServer.milagrosPersist[u]
+        if not entry or not entry.snapshot then return end
+
+        -- Capturar coords del muerto
+        local x, y, z = 0, 0, 0
+        pcall(function() x = jugador:getX() end)
+        pcall(function() y = jugador:getY() end)
+        pcall(function() z = jugador:getZ() end)
+        entry.deathCoords = { x = math.floor(x), y = math.floor(y), z = math.floor(z) }
+        entry.needsRevive = true
+        HoldoorServer.milagrosPersist[u] = entry
+        _persistirMilagros()
+        print(string.format("[Holdoor][Revive] %s murio en (%d,%d,%d) — Raise up activado, sera revivido al respawn",
+            u, entry.deathCoords.x, entry.deathCoords.y, entry.deathCoords.z))
+    end)
+
     local estado = HoldoorServer.estado
     if not estado.activo then return end
     if not estado.participantes then return end
@@ -4448,6 +5123,77 @@ end
 
 Events.OnGameStart.Add(HoldoorServer.init)
 Events.OnTick.Add(HoldoorServer.onTick)
+
+-- v0.8 #21: AUTO-SNAPSHOT cada 5 minutos (real time) para players con Raise ACTIVO.
+-- Mantiene el snapshot al dia sin que el user tenga que tocar nada. El toggle OFF→ON
+-- sigue funcionando como override manual (con su propio cooldown 5min).
+HoldoorServer._proximoAutoSnapshot = 0   -- 0 = lazy init en el primer tick
+
+local function _autoSnapshotTick()
+    -- Lazy init: en el primer tick, calcular el primer trigger 5 min adelante
+    if HoldoorServer._proximoAutoSnapshot == 0 then
+        HoldoorServer._proximoAutoSnapshot = os.time() + 300
+        return
+    end
+    if os.time() < HoldoorServer._proximoAutoSnapshot then return end
+    HoldoorServer._proximoAutoSnapshot = os.time() + 300
+
+    local ok, players = pcall(getOnlinePlayers)
+    if not ok or not players then return end
+    local size; pcall(function() size = players:size() end)
+    if not size or size <= 0 then return end
+
+    local snapshotsHechos = 0
+    for i = 0, size - 1 do
+        local p = players:get(i)
+        if p then
+            local md; pcall(function() md = p:getModData() end)
+            if md and md.Holdoor_RaiseUp_Bolsa and md.Holdoor_RaiseUp_Activo then
+                pcall(function() HoldoorServer._snapshotJugador(p, "auto-5m") end)
+                snapshotsHechos = snapshotsHechos + 1
+            end
+        end
+    end
+    if snapshotsHechos > 0 then
+        print("[Holdoor][AutoSnapshot] " .. snapshotsHechos .. " player(s) re-snapshoteados (proximo en 5 min)")
+    end
+end
+Events.OnTick.Add(_autoSnapshotTick)
+
+-- v0.8 #21 (fix): cola FIFO de matar-zombies diferidos para el flow Revive.
+-- Encolada en _aplicarRevivePendiente con disparos a +2s/+5s/+10s. Procesados aca cuando
+-- os.time() supera fireAt. Resuelve el bug "0 zombies eliminados" causado por el cell
+-- del lugar de muerte no estar cargado server-side al momento del OnCreatePlayer.
+HoldoorServer._matarZombiesQueue = HoldoorServer._matarZombiesQueue or {}
+
+local function _procesarMatarZombiesQueue()
+    if not HoldoorServer._matarZombiesQueue or #HoldoorServer._matarZombiesQueue == 0 then return end
+    local ahora = os.time()
+    local i = 1
+    while i <= #HoldoorServer._matarZombiesQueue do
+        local task = HoldoorServer._matarZombiesQueue[i]
+        if ahora >= task.fireAt then
+            if task.tipo == "restoreProgreso" then
+                -- Restaurar skills + recetas diferido (char ya inicializado)
+                pcall(function()
+                    HoldoorServer._restaurarSnapshotProgreso(task.jugador, task.snap)
+                end)
+            else
+                -- matarZombies (default por compat)
+                local n = 0
+                pcall(function()
+                    n = HoldoorServer._matarZombiesEnArea(task.x, task.y, task.z, task.radio) or 0
+                end)
+                print(string.format("[Holdoor][Revive] %s diferido %s: %d zombies eliminados en (%d,%d,%d)",
+                    task.username or "?", task.label or "?", n, task.x, task.y, task.z))
+            end
+            table.remove(HoldoorServer._matarZombiesQueue, i)
+        else
+            i = i + 1
+        end
+    end
+end
+Events.OnTick.Add(_procesarMatarZombiesQueue)
 Events.OnZombieDead.Add(HoldoorServer.onZombieMuerto)
 Events.OnClientCommand.Add(HoldoorServer.onComandoCliente)
 Events.OnPlayerDeath.Add(HoldoorServer._onPlayerMuerto)
@@ -4464,7 +5210,25 @@ Events.OnCreatePlayer.Add(function(_, jugador)
     if HoldoorServer._aplicarPagosPendientesAJugador then
         pcall(function() HoldoorServer._aplicarPagosPendientesAJugador(jugador) end)
     end
+    -- v0.8 #18: restaurar Milagros del Maestre (Beso + Raise) si los tenia
+    if HoldoorServer._aplicarMilagrosPersistAJugador then
+        pcall(function() HoldoorServer._aplicarMilagrosPersistAJugador(jugador) end)
+    end
+    -- v0.8 #21: si tiene revive pendiente (murio con Raise activo) → restaurar TODO el progreso + flow visual
+    if HoldoorServer._aplicarRevivePendiente then
+        pcall(function() HoldoorServer._aplicarRevivePendiente(jugador) end)
+    end
 end)
+
+-- v0.8 #21: REDISENO completo del Raise up John Snow.
+-- Eliminado: sistema de 6 triggers + OnPlayerUpdate polling (frgil, falsos positivos,
+-- no captaba instant kills, miss 5-10%).
+-- Nuevo enfoque: dejar morir al jugador → al respawn del char nuevo, restaurar todo el
+-- progreso (skills/recetas/monedas/materiales) + admin + teleport a coords muerte + matar
+-- zombies en 15 tiles + toast. 100% efectivo porque actuamos POST-muerte.
+-- Snapshot incluye: skills+xp, recetas, monedas, materiales. Trait/inventario/peso NO.
+-- Captura inicial: auto al comprar el item. Renovacion: toggle OFF→ON con cooldown 5min.
+-- Ver _snapshotJugador, _restaurarSnapshot, _aplicarRevivePendiente abajo.
 
 -- ─────────────────────────────────────────────
 -- GALERIA DE TRONOS (modo diagnóstico visual)

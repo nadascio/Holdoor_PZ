@@ -753,8 +753,8 @@ HoldoorHUD.instance = nil
 
 local HUD_W          = 265   -- +10 para que entren los simbolos de materiales
 local HUD_H_HEAD     = 28
-local HUD_H_BODY     = 386   -- v0.7 #35 +60 por besoZone + margen (botonera Fase A)
-local HUD_H_BODY_EXT = 506   -- v0.7 #35 +60 igual con radar
+local HUD_H_BODY     = 354   -- v0.8 #22 +30 (boton Retorno al Trono)
+local HUD_H_BODY_EXT = 474   -- v0.8 #22 +30 con radar
 
 -- Paleta de colores por moneda/material (símbolos + colores temáticos)
 local COL_BRONCE    = { r=0.72, g=0.45, b=0.20, a=1 }
@@ -906,51 +906,48 @@ function HoldoorHUD:_crearContenido()
     local y = HUD_H_HEAD + 8
 
     self.lblEstHUD = ISLabel:new(pad, y, 16, "Inactivo", 0.55, 0.55, 0.55, 1, UIFont.Small, true)
-    self:addChild(self.lblEstHUD); y = y + 20
+    self:addChild(self.lblEstHUD); y = y + 15
 
     self.lblOlHUD = ISLabel:new(pad, y, 16, "Oleada: --", COLOR_HUD_ORO.r, COLOR_HUD_ORO.g, COLOR_HUD_ORO.b, 1, UIFont.Small, true)
-    self:addChild(self.lblOlHUD); y = y + 20
+    self:addChild(self.lblOlHUD); y = y + 15
 
     self.lblTimHUD = ISLabel:new(pad, y, 16, "Proxima: --", 0.55, 0.55, 0.55, 1, UIFont.Small, true)
-    self:addChild(self.lblTimHUD); y = y + 20
+    self:addChild(self.lblTimHUD); y = y + 15
 
     self.lblFzaHUD = ISLabel:new(pad, y, 16, "Siguiente: --", 0.85, 0.70, 0.40, 1, UIFont.Small, true)
-    self:addChild(self.lblFzaHUD); y = y + 20
+    self:addChild(self.lblFzaHUD); y = y + 15
 
     self.lblAmenHUD = ISLabel:new(pad, y, 16, "Amenaza: --", 0.55, 0.55, 0.55, 1, UIFont.Small, true)
-    self:addChild(self.lblAmenHUD); y = y + 20
+    self:addChild(self.lblAmenHUD); y = y + 15
 
     -- Brujula a la base (direccion cardinal + distancia categorica)
     self.lblBaseDir = ISLabel:new(pad, y, 16, "Base: no marcada", 0.55, 0.55, 0.50, 1, UIFont.Small, true)
-    self:addChild(self.lblBaseDir); y = y + 20
+    self:addChild(self.lblBaseDir); y = y + 15
 
     -- HP del Trono de Hierro
     self.lblTronoHP = ISLabel:new(pad, y, 16, "Trono: --", 0.55, 0.55, 0.50, 1, UIFont.Small, true)
-    self:addChild(self.lblTronoHP); y = y + 20
+    self:addChild(self.lblTronoHP); y = y + 15
 
     self.lblNotifHUD = ISLabel:new(pad, y, 16, "", 1, 0.85, 0.3, 1, UIFont.Small, true)
     self:addChild(self.lblNotifHUD)
     self.notifExpireSec = 0
-    y = y + 22
-
-    -- Separador visual
-    y = y + 4
+    y = y + 16
 
     -- Stats personales del jugador
     self.lblKillsHUD = ISLabel:new(pad, y, 16, "Mis bajas: --", 0.70, 0.90, 0.55, 1, UIFont.Small, true)
     self:addChild(self.lblKillsHUD)
-    y = y + 18
+    y = y + 14
 
     self.lblKillsPartidaHUD = ISLabel:new(pad, y, 16, "Total partida: --", 0.55, 0.70, 0.45, 1, UIFont.Small, true)
     self:addChild(self.lblKillsPartidaHUD)
-    y = y + 22
+    y = y + 16
 
     -- Saldo de monedas y materiales — render custom en :render() con simbolos+colores
     self.yMonedasHUD    = y
-    y = y + 18
+    y = y + 14
     self.yMaterialesHUD = y
-    y = y + 18
-    y = y + 4
+    y = y + 14
+    y = y + 2
 
     -- v0.6.1: btnZone captura clicks de Enviar+TIENDA. Coords de los botones son
     -- RELATIVAS a btnZone (no a self). Sin esta zona los botones no recibirian clicks
@@ -987,6 +984,44 @@ function HoldoorHUD:_crearContenido()
     self.btnBeso.borderColor     = { r=0.95, g=0.85, b=0.30, a=1 }
     self.besoZone:addChild(self.btnBeso)
     self.besoZone:setVisible(false)  -- oculto por default; actualizarHUD lo muestra si hay bolsa
+
+    y = y + 26 + 4
+
+    -- v0.8 #5: ZONA SEPARADA para el boton "RAISE UP JOHN SNOW" (toggle activo/desactivado).
+    -- Mismo patron anti-gotcha #29 que besoZone — independiente, setVisible(false) NO captura clicks.
+    -- A diferencia del Beso (click=activa), este boton TOGGLE activado/desactivado.
+    -- El revive es automatico cuando HP<15 y esta activado. NO consume al click.
+    self.raiseZone = HoldoorHUDInputZone:new(0, y, HUD_W, 26)
+    self.raiseZone:initialise()
+    self:addChild(self.raiseZone)
+    self.btnRaiseUp = ISButton:new(pad, 0, HUD_W - pad * 2, 26, "RAISE: ACTIVO", self, HoldoorHUD.onRaiseUpToggle)
+    self.btnRaiseUp.backgroundColor = { r=0.10, g=0.45, b=0.15, a=1 }   -- verde default (activo)
+    self.btnRaiseUp.borderColor     = { r=0.30, g=0.95, b=0.40, a=1 }
+    self.raiseZone:addChild(self.btnRaiseUp)
+    self.raiseZone:setVisible(false)  -- oculto por default; actualizarHUD lo muestra si hay bolsa
+
+    y = y + 26 + 4
+
+    -- v0.8 #22: ZONA SEPARADA para "Punto de Retorno" (checkpoint personal + teleport).
+    -- Mismo patron anti-gotcha #29 que besoZone/raiseZone — independiente.
+    -- Dos botones lado a lado: izquierda "Marcar/Reemplazar Punto", derecha "Teletransportar".
+    self.teleportZone = HoldoorHUDInputZone:new(0, y, HUD_W, 26)
+    self.teleportZone:initialise()
+    self:addChild(self.teleportZone)
+    -- Cada boton ocupa la mitad menos un gap interno
+    local btnGap = 4
+    local btnW   = math.floor((HUD_W - pad * 2 - btnGap) / 2)
+    -- Boton IZQUIERDO: Marcar / Reemplazar punto
+    self.btnMarcarPunto = ISButton:new(pad, 0, btnW, 26, "Marcar Punto", self, HoldoorHUD.onMarcarPuntoClick)
+    self.btnMarcarPunto.backgroundColor = { r=0.30, g=0.30, b=0.50, a=1 }
+    self.btnMarcarPunto.borderColor     = { r=0.55, g=0.55, b=0.85, a=1 }
+    self.teleportZone:addChild(self.btnMarcarPunto)
+    -- Boton DERECHO: Teletransportar
+    self.btnTeleportBase = ISButton:new(pad + btnW + btnGap, 0, btnW, 26, "Teletransportar", self, HoldoorHUD.onTeleportBaseClick)
+    self.btnTeleportBase.backgroundColor = { r=0.10, g=0.30, b=0.55, a=1 }
+    self.btnTeleportBase.borderColor     = { r=0.30, g=0.60, b=0.95, a=1 }
+    self.teleportZone:addChild(self.btnTeleportBase)
+    self.teleportZone:setVisible(false)
 
     y = y + 26 + 4
 
@@ -1027,13 +1062,63 @@ function HoldoorHUD:onBesoDelDios()
     local me = getSpecificPlayer(0)
     if not me then return end
     local md = me:getModData()
+    -- v0.8 #9: si esta grisado (no comprado), avisar donde comprarlo
     if not (md and md.Holdoor_BesoDios_Bolsa) then
-        HoldoorClient.chat("[HOLDOOR] No tenes Beso del Dios en la bolsa.", 1, 0.6, 0.2)
+        HoldoorClient.chat("[HOLDOOR] No tenes Beso del Dios. Compralo en TIENDA → Milagros del Maestre.", 0.85, 0.65, 0.30)
         return
     end
     if HoldoorClient and HoldoorClient._activarBesoDelDios then
         HoldoorClient._activarBesoDelDios()
     end
+end
+
+-- v0.8 #5: click en "RAISE: ACTIVO/OFF" — toggle del seguro Raise up John Snow.
+-- NO consume el item. Solo cambia el flag md.Holdoor_RaiseUp_Activo.
+-- El revive automatico se dispara cuando HP<15 Y este flag esta en true.
+function HoldoorHUD:onRaiseUpToggle()
+    local me = getSpecificPlayer(0)
+    if not me then return end
+    local md = me:getModData()
+    -- v0.8 #9: si esta grisado (no comprado), avisar donde comprarlo
+    if not (md and md.Holdoor_RaiseUp_Bolsa) then
+        HoldoorClient.chat("[HOLDOOR] No tenes Raise up John Snow. Compralo en TIENDA → Milagros del Maestre.", 0.85, 0.65, 0.30)
+        return
+    end
+    -- Enviar toggle al server (server cambia el flag y devuelve confirmacion)
+    pcall(function() sendClientCommand(HoldoorConfig.MODULE, "toggleRaiseUp", {}) end)
+end
+
+-- v0.8 #22: click en "Marcar Punto / Reemplazar Punto" — guarda coords actuales del player.
+-- No requiere tener el item en bolsa para marcar (es accion gratis).
+function HoldoorHUD:onMarcarPuntoClick()
+    local me = getSpecificPlayer(0)
+    if not me then return end
+    local x, y, z = 0, 0, 0
+    pcall(function() x = me:getX() end)
+    pcall(function() y = me:getY() end)
+    pcall(function() z = me:getZ() end)
+    pcall(function()
+        sendClientCommand(HoldoorConfig.MODULE, "marcarPuntoRetorno", {
+            x = math.floor(x), y = math.floor(y), z = math.floor(z),
+        })
+    end)
+end
+
+-- v0.8 #22: click en "Teletransportar" — inicia countdown 5s + teleport al Punto de Retorno.
+-- Requiere: item en bolsa + punto previamente marcado.
+function HoldoorHUD:onTeleportBaseClick()
+    local me = getSpecificPlayer(0)
+    if not me then return end
+    local md = me:getModData()
+    if not (md and md.Holdoor_PuntoRetorno_Bolsa) then
+        HoldoorClient.chat("[HOLDOOR] No tenes Punto de Retorno. Compralo en TIENDA → Milagros del Maestre.", 0.85, 0.65, 0.30)
+        return
+    end
+    if not (md.Holdoor_PuntoRetorno_X and md.Holdoor_PuntoRetorno_Y) then
+        HoldoorClient.chat("[HOLDOOR] No marcaste ningun punto todavia. Usa 'Marcar Punto' primero.", 1.00, 0.55, 0.20)
+        return
+    end
+    pcall(function() sendClientCommand(HoldoorConfig.MODULE, "activarPuntoRetorno", {}) end)
 end
 
 function HoldoorHUD:onToggle()
@@ -1058,6 +1143,14 @@ function HoldoorHUD:_setExpandido(v)
     if self.besoZone then
         if not v then self.besoZone:setVisible(false) end
         -- al expandir lo deja en false hasta que actualizarHUD lo prenda si hay bolsa
+    end
+    -- v0.8 #22: teleportZone — anti-gotcha #29.
+    if self.teleportZone then
+        if not v then self.teleportZone:setVisible(false) end
+    end
+    -- v0.8 #5: raiseZone igual que besoZone — anti-gotcha #29.
+    if self.raiseZone then
+        if not v then self.raiseZone:setVisible(false) end
     end
     -- Radar: visible solo si expandido Y radarVisible
     local showRadar = v and (self.radarVisible or false)
@@ -1085,17 +1178,138 @@ function HoldoorHUD:actualizarHUD()
         self.notifExpireSec = 0
     end
 
-    -- v0.7 #35: visibilidad del boton "INVOCAR BESO DEL DIOS" — solo si esta en bolsa.
-    -- Toggle de la ZONA ENTERA (besoZone) para que cuando este oculta NO capture clicks
-    -- (cf. gotcha #29 — sino bloquearia el inventario u otra UI). El boton vive dentro.
-    if self.besoZone then
+    -- v0.8 #9: BESO DEL DIOS — siempre visible (con HUD expandido). Color segun estado:
+    --   - Sin comprar  → GRISADO (texto "BESO DEL DIOS (no comprado)")
+    --   - En bolsa     → DORADO ACTIVO (texto "INVOCAR BESO DEL DIOS")
+    --   - Ya usado     → no se muestra (consumido por vida)
+    if self.besoZone and self.btnBeso then
         local me = getSpecificPlayer(0)
-        local enBolsa = false
+        local enBolsa, usado = false, false
         if me then
             local md = me:getModData()
-            if md and md.Holdoor_BesoDios_Bolsa then enBolsa = true end
+            if md then
+                enBolsa = md.Holdoor_BesoDios_Bolsa and true or false
+                usado   = md.Holdoor_BesoDios       and true or false
+            end
         end
-        self.besoZone:setVisible(enBolsa and self.expandido)
+        -- Siempre visible si HUD expandido (incluso sin comprar), excepto si ya lo usaste
+        self.besoZone:setVisible(self.expandido and not usado)
+        if enBolsa then
+            self.btnBeso:setTitle("INVOCAR BESO DEL DIOS")
+            self.btnBeso.backgroundColor = { r=0.55, g=0.45, b=0.10, a=1 }  -- dorado activo
+            self.btnBeso.borderColor     = { r=0.95, g=0.85, b=0.30, a=1 }
+            self.btnBeso.textColor       = { r=1, g=1, b=1, a=1 }
+        else
+            -- v0.8 #10: mismo estilo que "Sin saldo" de la tienda
+            self.btnBeso:setTitle("Beso del Dios — no comprado")
+            self.btnBeso.backgroundColor = { r=0.18, g=0.18, b=0.20, a=1 }
+            self.btnBeso.borderColor     = { r=0.30, g=0.30, b=0.30, a=1 }
+            self.btnBeso.textColor       = { r=0.55, g=0.55, b=0.50, a=1 }
+        end
+    end
+
+    -- v0.8 #9: RAISE UP JOHN SNOW — siempre visible (con HUD expandido). Color segun estado:
+    --   - Sin comprar  → GRISADO (texto "RAISE UP (no comprado)")
+    --   - En bolsa + activo → VERDE (texto "RAISE: ACTIVO")
+    --   - En bolsa + desactivado → ROJO (texto "RAISE: OFF")
+    if self.raiseZone and self.btnRaiseUp then
+        local me = getSpecificPlayer(0)
+        local enBolsa, activo = false, false
+        local snapshotTs = 0
+        if me then
+            local md = me:getModData()
+            if md and md.Holdoor_RaiseUp_Bolsa then
+                enBolsa = true
+                activo = md.Holdoor_RaiseUp_Activo and true or false
+                snapshotTs = md.Holdoor_RaiseSnapshotTs or 0
+            end
+        end
+
+        -- v0.8 #21: tag de tiempo "(hace Nm)" o "(hace Nm ⟲)" si pasaron 5+ min (renovable)
+        -- Se mete dentro del titulo del boton para no romper layout (cero pixels extra).
+        local tagTiempo = ""
+        if snapshotTs > 0 then
+            local minutos = math.floor((os.time() - snapshotTs) / 60)
+            if minutos < 1 then
+                tagTiempo = " (recien)"
+            elseif minutos >= 5 then
+                tagTiempo = " (" .. minutos .. "m ⟲)"  -- listo para renovar
+            else
+                tagTiempo = " (" .. minutos .. "m)"
+            end
+        end
+
+        self.raiseZone:setVisible(self.expandido)  -- siempre visible cuando HUD expandido
+        if not enBolsa then
+            -- v0.8 #10: mismo estilo que "Sin saldo" de la tienda
+            self.btnRaiseUp:setTitle("Raise up Snow — no comprado")
+            self.btnRaiseUp.backgroundColor = { r=0.18, g=0.18, b=0.20, a=1 }
+            self.btnRaiseUp.borderColor     = { r=0.30, g=0.30, b=0.30, a=1 }
+            self.btnRaiseUp.textColor       = { r=0.55, g=0.55, b=0.50, a=1 }
+        elseif activo then
+            self.btnRaiseUp:setTitle("RAISE: ACTIVO" .. tagTiempo)
+            self.btnRaiseUp.backgroundColor = { r=0.10, g=0.45, b=0.15, a=1 }  -- verde
+            self.btnRaiseUp.borderColor     = { r=0.30, g=0.95, b=0.40, a=1 }
+            self.btnRaiseUp.textColor       = { r=1, g=1, b=1, a=1 }
+        else
+            self.btnRaiseUp:setTitle("RAISE: OFF" .. tagTiempo)
+            self.btnRaiseUp.backgroundColor = { r=0.45, g=0.15, b=0.10, a=1 }  -- rojo
+            self.btnRaiseUp.borderColor     = { r=0.95, g=0.40, b=0.30, a=1 }
+            self.btnRaiseUp.textColor       = { r=1, g=1, b=1, a=1 }
+        end
+    end
+
+    -- v0.8 #22: estados de los 2 botones del Punto de Retorno
+    -- Boton MARCAR:
+    --   - Sin punto guardado → "Marcar Punto" (violeta claro)
+    --   - Con punto guardado → "Reemplazar Punto" (violeta + indicacion de reemplazo)
+    -- Boton TELETRANSPORTAR:
+    --   - Sin item comprado → "Teletransportar — no comprado" (gris)
+    --   - Comprado + sin punto → "Marca un Punto primero" (amarillo warning)
+    --   - Comprado + con punto → "Teletransportar" (azul activo)
+    if self.teleportZone and self.btnMarcarPunto and self.btnTeleportBase then
+        local me = getSpecificPlayer(0)
+        local enBolsaTp = false
+        local hayPunto  = false
+        if me then
+            local md = me:getModData()
+            if md then
+                enBolsaTp = md.Holdoor_PuntoRetorno_Bolsa and true or false
+                hayPunto  = (md.Holdoor_PuntoRetorno_X and md.Holdoor_PuntoRetorno_Y) and true or false
+            end
+        end
+        self.teleportZone:setVisible(self.expandido)
+
+        -- BOTON IZQUIERDO: Marcar / Cambiar
+        if not hayPunto then
+            self.btnMarcarPunto:setTitle("Marcar Punto")
+            self.btnMarcarPunto.backgroundColor = { r=0.30, g=0.30, b=0.50, a=1 }
+            self.btnMarcarPunto.borderColor     = { r=0.55, g=0.55, b=0.85, a=1 }
+            self.btnMarcarPunto.textColor       = { r=1, g=1, b=1, a=1 }
+        else
+            self.btnMarcarPunto:setTitle("Cambiar Punto")
+            self.btnMarcarPunto.backgroundColor = { r=0.40, g=0.30, b=0.55, a=1 }
+            self.btnMarcarPunto.borderColor     = { r=0.70, g=0.55, b=0.95, a=1 }
+            self.btnMarcarPunto.textColor       = { r=1, g=1, b=1, a=1 }
+        end
+
+        -- BOTON DERECHO: Teleport (texto corto para entrar en la mitad del HUD)
+        if not enBolsaTp then
+            self.btnTeleportBase:setTitle("Teleport — no comp.")
+            self.btnTeleportBase.backgroundColor = { r=0.18, g=0.18, b=0.20, a=1 }
+            self.btnTeleportBase.borderColor     = { r=0.30, g=0.30, b=0.30, a=1 }
+            self.btnTeleportBase.textColor       = { r=0.55, g=0.55, b=0.50, a=1 }
+        elseif not hayPunto then
+            self.btnTeleportBase:setTitle("Marca un Punto")
+            self.btnTeleportBase.backgroundColor = { r=0.55, g=0.45, b=0.10, a=1 }
+            self.btnTeleportBase.borderColor     = { r=0.95, g=0.85, b=0.30, a=1 }
+            self.btnTeleportBase.textColor       = { r=1, g=1, b=1, a=1 }
+        else
+            self.btnTeleportBase:setTitle("Teleport")
+            self.btnTeleportBase.backgroundColor = { r=0.10, g=0.30, b=0.55, a=1 }
+            self.btnTeleportBase.borderColor     = { r=0.30, g=0.60, b=0.95, a=1 }
+            self.btnTeleportBase.textColor       = { r=1, g=1, b=1, a=1 }
+        end
     end
 
     local est    = HoldoorClient.estado
@@ -1516,6 +1730,7 @@ function HoldoorHUD.crear()
     HoldoorOverlay.crear()
     HoldoorAnnounce.crear()
     HoldoorToast.crear()
+    HoldoorRaiseUpFade.crear()  -- v0.8 #6
 end
 
 Events.OnGameStart.Add(HoldoorHUD.crear)
@@ -1760,6 +1975,112 @@ function HoldoorToast:render()
     -- Texto centrado
     self:drawText(txt, boxX + (boxW - txtW) / 2, boxY + (boxH - txtH) / 2,
                   self.toastR, self.toastG, self.toastB, alpha, UIFont.Medium)
+end
+
+-- ════════════════════════════════════════════════════════════════════
+-- v0.8 #6: HoldoorRaiseUpFade — animacion epica pantalla negra con fade
+-- para el revive del Raise up John Snow (HP<15 → resurreccion).
+-- Flow: fade in 1s → sostenido 3s con texto + subtexto → fade out 1s.
+-- Total ~5 segundos. NO captura clicks (setWantMouseEvents=false).
+-- Uso: HoldoorRaiseUpFade.mostrar()
+-- ════════════════════════════════════════════════════════════════════
+
+HoldoorRaiseUpFade = ISPanel:derive("HoldoorRaiseUpFade")
+HoldoorRaiseUpFade.instance = nil
+
+function HoldoorRaiseUpFade:new()
+    local sw = getCore():getScreenWidth()
+    local sh = getCore():getScreenHeight()
+    local o  = ISPanel.new(self, 0, 0, sw, sh)
+    setmetatable(o, self)
+    self.__index      = self
+    o.backgroundColor = {r=0, g=0, b=0, a=0}
+    o.borderColor     = {r=0, g=0, b=0, a=0}
+    o.moveWithMouse   = false
+    o.tick            = 99999
+    o.maxTicks        = 600  -- v0.8 #12: 10 segundos a 60fps (era 5s, ampliado a peticion)
+    return o
+end
+
+function HoldoorRaiseUpFade:initialise()
+    ISPanel.initialise(self)
+    pcall(function() self:setWantMouseEvents(false) end)
+end
+
+function HoldoorRaiseUpFade:isMouseOver()              return false end
+function HoldoorRaiseUpFade:onMouseDown(x, y)          return false end
+function HoldoorRaiseUpFade:onMouseUp(x, y)            return false end
+function HoldoorRaiseUpFade:onMouseMove(dx, dy)        return false end
+function HoldoorRaiseUpFade:onMouseMoveOutside(dx, dy) return false end
+function HoldoorRaiseUpFade:onMouseDownOutside(x, y)   return false end
+function HoldoorRaiseUpFade:onMouseUpOutside(x, y)     return false end
+function HoldoorRaiseUpFade:onRightMouseDown(x, y)     return false end
+function HoldoorRaiseUpFade:onRightMouseUp(x, y)       return false end
+function HoldoorRaiseUpFade:onMouseWheel(del)          return false end
+
+function HoldoorRaiseUpFade.mostrar()
+    local inst = HoldoorRaiseUpFade.instance
+    if not inst then return end
+    inst.tick = 0
+    inst:setVisible(true)
+end
+
+function HoldoorRaiseUpFade.crear()
+    if HoldoorRaiseUpFade.instance then return end
+    local inst = HoldoorRaiseUpFade:new()
+    inst:initialise()
+    inst:addToUIManager()
+    inst:setVisible(false)
+    HoldoorRaiseUpFade.instance = inst
+end
+
+function HoldoorRaiseUpFade:render()
+    ISPanel.render(self)
+
+    local maxTicks = self.maxTicks or 600
+    self.tick = (self.tick or maxTicks) + 1
+
+    if self.tick >= maxTicks then
+        self:setVisible(false)
+        return
+    end
+
+    -- 3-phase alpha (v0.8 #12 ampliado a 10s total):
+    -- 0-60 frames (1s): fade in (alpha 0→1)
+    -- 60-540 frames (8s): sostenido (alpha 1)
+    -- 540-600 frames (1s): fade out (alpha 1→0)
+    local alpha
+    local fadeIn  = 60
+    local fadeOut = 60
+    if self.tick < fadeIn then
+        alpha = self.tick / fadeIn
+    elseif self.tick > maxTicks - fadeOut then
+        alpha = (maxTicks - self.tick) / fadeOut
+    else
+        alpha = 1.0
+    end
+    alpha = math.max(0, math.min(1, alpha))
+
+    local sw = self.width
+    local sh = self.height
+    local cy = sh / 2
+
+    -- 1) Fondo negro fullscreen — alpha 1.0 (v0.8 #15: completamente negro, no gris)
+    self:drawRect(0, 0, sw, sh, alpha, 0, 0, 0)
+
+    -- 2) Texto principal — v0.8 #15: sin ¡ inicial (fuente PZ lo renderiza como "?")
+    local tm = getTextManager()
+    local txt = "John Snow ha sido levantado por el R'hllor!"
+    local txtW = tm:MeasureStringX(UIFont.Large, txt)
+    local txtH = tm:MeasureStringY(UIFont.Large, txt)
+    self:drawText(txt, sw/2 - txtW/2, cy - txtH/2 - 20,
+                  0.95, 0.75, 0.20, alpha, UIFont.Large)
+
+    -- 3) Subtexto en fuente mas chica
+    local sub = "El Senor de Luz te devuelve a la vida"
+    local subW = tm:MeasureStringX(UIFont.Medium, sub)
+    self:drawText(sub, sw/2 - subW/2, cy + 16,
+                  0.85, 0.65, 0.30, alpha * 0.85, UIFont.Medium)
 end
 
 -- ─────────────────────────────────────────────

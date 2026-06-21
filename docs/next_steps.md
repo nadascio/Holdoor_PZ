@@ -201,68 +201,149 @@ Hold the door!
 
 ---
 
-## ⚰️ "RAISE UP JOHN SNOW" — Seguro de Vida (sprint #5 o cuando convenga)
+## ⚰️ ~~"RAISE UP JOHN SNOW" — Seguro de Vida~~ ✅ IMPLEMENTADO Sprint v0.8 (2026-06-21)
 
-**Estado:** diseño completo cerrado 2026-06-13. Implementación ~3-5h.
+**Estado:** ✅ Completo y mergeado. Ver `sprints_history.md` → "2026-06-21 — Sprint v0.8".
+
+**Cambio de diseño post-implementación:** el approach PRE-muerte (que aparece descrito abajo) fue **descartado** tras descubrir que es frágil. Reemplazado por **approach POST-muerte** (Revival System): dejar morir al char, revivir al char NUEVO con todo el progreso del viejo (skills + recetas + monedas + materiales). 100% efectivo.
+
+**Item finalmente llamado:** "Levantate, John Snow" (en lugar de "Raise up John Snow", a pedido del user).
+
+**Feature adicional agregada en el mismo sprint:** "Punto de Retorno" — checkpoint personal por player (independiente del host) con countdown 5s + teleport. Ver sprint v0.8 para detalles.
+
+### Diseño viejo (NO usado, archivado por referencia)
+
+**Estado:** diseño REVISADO 2026-06-20 — reusa la infra del Beso del Dios (admin trampoline) de v0.7 #33. Implementación estimada ~3-4h.
 
 ### Concepto
 
 Item endgame de la tienda que da al player una **resurrección automática** la próxima vez que muera por CUALQUIER causa (zombi, caída, hambre, etc.). No requiere oleada activa.
 
-### Approach técnico: INTERCEPCIÓN (no respawn)
+### Approach técnico (refinado 2026-06-20)
 
-En lugar de "morir y crear personaje nuevo" (que perdería apariencia/build), interceptamos el daño letal ANTES de matar al player vía `OnPlayerGetDamage` / `OnPlayerDeath` y curamos al mismo IsoPlayer.
+**ANTES (diseño 2026-06-13)**: interceptar `OnPlayerGetDamage` para cancelar el daño letal antes que mate.
 
-**Ventajas**: conserva cara/pelo/género/edad/ropa/construcciones/vehículos/skills/traits/saldo — todo intacto.
+**AHORA (refinado tras v0.7)**: reusar el admin trampoline del Beso del Dios. Cuando el HP llega a un umbral crítico, hacemos `/setaccesslevel admin` (GodMod auto cura todo de raíz), animación, teleport a lugar seguro, watchdog NoClip selectivo (apagado), después `/setaccesslevel user`.
+
+**Por qué cambió**: en v0.7 #33 descubrimos que admin elevation auto-activa GodMod y eso CURA TODO instantáneamente (mordeduras, infección zombi, hambre, sed, sangrado, fracturas, fatiga). No necesitamos interceptar daño — solo elevar antes que muera.
+
+### Detección de "se está por morir" — DECIDIDO: A + B con guard
+
+**Opción A — `OnPlayerGetDamage(player, source, damage)`**: interceptar cuando damage >= HP actual. Caza casos de daño masivo instantáneo (caída de azotea, atropellamiento, explosión).
+
+**Opción B — `OnPlayerUpdate(player)` polling con threshold**: cada tick chequear `getBodyDamage():getOverallBodyHealth() < 5`. Caza muertes progresivas (hambre, infección tardía, sangrado).
+
+**DECISIÓN LOCKEADA 2026-06-20**: **A + B combinado** para máxima cobertura. Promesa del item es "revive por CUALQUIER causa" — hay que cumplirla.
+
+### Cómo evitar doble-disparo
+
+El truco: `_dispararRaiseUp(jugador)` **consume el flag INMEDIATAMENTE** al inicio:
+
+```lua
+function HoldoorServer._dispararRaiseUp(jugador)
+    local md = jugador:getModData()
+    if not md or not md.Holdoor_RaiseUpActivo then return end   -- guard contra doble disparo
+
+    -- Consumir flag YA — A y B compiten pero solo uno gana
+    md.Holdoor_RaiseUpActivo  = nil
+    md.Holdoor_RaiseUpEnBolsa = nil
+    pcall(function() jugador:transmitModData() end)
+
+    -- Dispatch al cliente para animación + admin trampoline + teleport
+    sendServerCommand(jugador, HoldoorConfig.MODULE, "raiseUpDisparado", {})
+end
+
+-- Handler A: golpe letal instantáneo
+Events.OnPlayerGetDamage.Add(function(jugador, source, damage)
+    local md = jugador:getModData()
+    if not md or not md.Holdoor_RaiseUpActivo then return end
+    local hp = jugador:getBodyDamage():getOverallBodyHealth()
+    if (hp - damage) <= 0 then HoldoorServer._dispararRaiseUp(jugador) end
+end)
+
+-- Handler B: HP llegando a 0 progresivamente
+Events.OnPlayerUpdate.Add(function(jugador)
+    local md = jugador:getModData()
+    if not md or not md.Holdoor_RaiseUpActivo then return end
+    local hp = jugador:getBodyDamage():getOverallBodyHealth()
+    if hp < 5 then HoldoorServer._dispararRaiseUp(jugador) end
+end)
+```
+
+**Performance**: ambos handlers tienen guard al inicio (`if not md.Holdoor_RaiseUpActivo then return end`). Cuando el item NO está activo, costo = ~10ns/dispatch = literalmente cero lag. Cuando SÍ está activo (1-2 jugadores típico), 30ns/dispatch = despreciable.
 
 ### Flow definitivo
 
-1. Player compra "Raise up John Snow" en tienda → flag `md.Holdoor_RaiseUpActivo = true`.
-2. Player muere por cualquier causa.
-3. **Servidor intercepta**, cancela el daño, ejecuta:
-   - HP → 100%
-   - Heridas / sangrado / infección / mordeduras → limpios
-   - Hunger / thirst / fatigue / stress → razonables
-   - Body damage → limpio
-4. **Pantalla negra 3 segundos** + sonido épico (campanas/coro) + texto centrado:
-   > **"¡John Snow ha sido levantado por el R'hllor!"**
-5. **Teletransporte al lugar seguro (approach C híbrido)**:
-   - Buscar tile sin zombis adyacentes cerca del Trono (radio 3 → 15).
-   - Si no encuentra, buscar a 20-30 tiles del lugar de muerte.
-   - Fallback: posición original con invulnerabilidad larga.
-6. **Invulnerabilidad temporal 2-3 segundos** (god mode) para que el player se reposicione si la zona se complica.
-7. Flag consumido. Próxima compra es full price de nuevo.
+1. Player compra "Raise up John Snow" en tienda → flag `md.Holdoor_RaiseUpEnBolsa = true`.
+2. Aparece **botón en HUD lateral debajo del Beso del Dios** con toggle activado/desactivado.
+3. Player ACTIVA el botón (default = activado al comprar) → `md.Holdoor_RaiseUpActivo = true`.
+4. `OnPlayerUpdate` server-side polling: si HP < 5 Y `Holdoor_RaiseUpActivo == true`:
+   - **Pausa**: `/setaccesslevel admin` → GodMod auto cura TODO de raíz (HP/heridas/stats/zombificación)
+   - **Pantalla negra 5s** con animación fade épico: **"¡John Snow ha sido levantado por el R'hllor!"** + sonido (TODO: buscar sonido apropiado)
+   - **Teleport** a lugar seguro: buscar tile sin zombies cerca del Trono (radio 3→15), si no, 20-25 tiles del lugar de muerte
+   - **Watchdog NoClip OFF** durante todo el admin (mismo patrón que Beso del Dios — evita quedar trabado)
+   - **Invulnerabilidad post-revive**: 5 segundos extra de admin (mantener GodMod + Invisible) para reposicionarse
+   - `/setaccesslevel user` después de los ~10s totales
+5. Consumir flag: `md.Holdoor_RaiseUpEnBolsa = nil` + `md.Holdoor_RaiseUpActivo = nil`.
+6. Botón del HUD desaparece. Re-comprable en próxima compra.
+
+### Diseño del botón en HUD lateral
+
+| Estado | Color | Texto botón | Comportamiento si muere |
+|---|---|---|---|
+| Comprado + ACTIVADO (default) | 🟢 Verde | `RAISE: ACTIVO` | Revive automático |
+| Comprado + DESACTIVADO | 🔴 Rojo | `RAISE: OFF` | Muere normal, item se mantiene en bolsa |
+| No comprado | (oculto) | — | — |
+
+Click toggle activa/desactiva. Toast al desactivar: **"⚠️ Raise desactivado — moriras sin revive automatico"**.
 
 ### Decisiones lockeadas
 
 | | |
 |---|---|
-| Approach | **C híbrido** (Trono primero, lugar de muerte secundario) |
-| Invulnerabilidad post-respawn | **2-3 segundos god mode** |
-| Animación | **Pantalla negra 3s + texto épico + sonido** |
+| Approach técnico | **Admin trampoline (reuso de Beso del Dios v0.7 #33)** |
+| Detección de muerte | **`OnPlayerUpdate` polling, HP < 5** (opción B) |
+| Pantalla negra | **5 segundos + animación fade + sonido épico** |
+| Teletransporte | **Cerca del Trono primero (radio 3→15), fallback 20-25 tiles del lugar de muerte** |
+| Invulnerabilidad post-revive | **5 segundos** (más generoso que el guión viejo de 2-3s) |
+| NoClip durante admin | **OFF selectivo** (watchdog cada frame, igual que Beso del Dios) |
+| Total tiempo admin | **~10 segundos** (5s animación + 5s post-revive) |
+| Botón HUD | **Toggle activo/desactivado** (default = activado al comprar) |
 | Precio | **5 oro + 3 valyrio + 5 obsidiana** |
-| Cuándo se puede comprar | **Cualquier momento** (no hay bloqueo por oleadas) |
-| Cuándo se activa | **Cualquier momento que muera** el player (oleada o no) |
-| Cantidad de revives | **1 sola por compra** (re-comprable después) |
-
-### Categoría en tienda
-
-Va en categoría **"Milagros del Maestre"** o en una nueva **"R'hllor"** dedicada solo a esto. Decidimos al implementar.
+| Cuándo se puede comprar | **Cualquier momento** (no requiere oleada activa) |
+| Cuándo se activa | **Cualquier muerte** (oleada o no) |
+| Cantidad de revives | **1 por compra** (re-comprable después) |
 
 ### Item key sugerido
 
 ```lua
 { id="raise_up_jon",
   nombre="Levanten a John Snow",
-  desc="Una segunda chance. El R'hllor te levantara una vez antes de morir definitivamente.",
+  desc="Una segunda chance. Si el HP llega a 0 con el seguro activado, el R'hllor te revive en lugar seguro.",
   precio={gold=5, valyrio=3, obsidiana=5},
   accion={tipo="raise_up"} }
 ```
 
+### Reuso de código existente
+
+Lo que sale GRATIS del Beso del Dios:
+- `HoldoorClient._activarBesoDelDios()` como template (~80 líneas) — copiar y renombrar
+- Watchdog NoClip cada frame durante admin
+- `SendCommandToServer("/setaccesslevel admin")` + revert a user
+- Patrón GlobalModData para flags persistentes entre sesiones
+
+Lo que hay que codear nuevo:
+- `OnPlayerUpdate` polling (~10 líneas server-side)
+- Helper `_buscarTileSeguro(radio)` (~30 líneas)
+- Animación fade pantalla negra + texto + sonido (~50 líneas client UI)
+- Botón toggle en HUD lateral con 2 estados visuales (~40 líneas)
+- Validación re-compra (no permitir 2 en bolsa simultáneo)
+
 ### Limitaciones honestas
 
-- Si el daño es **instantáneo y masivo** (caída altura gigante, explosión), el evento puede no interceptarse a tiempo. Backup: check de HP cada tick.
-- **Construcciones/vehículos del player en el mapa NO se afectan** (sobreviven a la muerte de su creador). En este approach tampoco se tocan, así que perfecto.
+- Si el daño es **instantáneo y masivo** (caída altura gigante, explosión), el HP puede ir de 100 a 0 entre 2 ticks y no triggear el polling. Mitigación: bajar el umbral (5 → 10) o agregar `OnPlayerGetDamage` como backup.
+- **Construcciones/vehículos del player en el mapa NO se afectan** (sobreviven igualmente al revive). Perfecto.
+- **Si el user olvida activar el botón** y muere → no se usa, item queda en bolsa. Trade-off de UX consciente.
 
 ---
 

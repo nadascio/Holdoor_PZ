@@ -1840,4 +1840,221 @@ Ambos handlers leen de tablas indexadas por username, aplican al IsoPlayer fresh
 
 ---
 
-**Última actualización:** 2026-06-20 — Sprint v0.7 cerrado (gotchas #52-#56 lockeados, ver sprints_history.md "2026-06-20 — Sprint v0.7")
+---
+
+## #57 — `/removezombies` borra cadáveres también, no solo zombies vivos
+
+**Confirmado empíricamente + en código propio del mod** (HoldoorServer.lua línea 2759):
+> "setHealth(0) deja cadaveres lootables durante los 30s pausa + 30s prep. El bridge /removezombies se dispara al inicio de la PROXIMA oleada y los limpia"
+
+El comando `/removezombies -x X -y Y -z Z -radius R` elimina TANTO zombies vivos COMO `IsoDeadBody` (cadáveres) en el área. Útil para limpieza total de fin de oleada, pero **destructivo si necesitás preservar el cadáver del player muerto** (ej. Revival System v0.8 #21 donde el user vuelve a lootear su cuerpo).
+
+**Solución para matar SOLO vivos preservando cadáveres:**
+
+```lua
+function HoldoorServer._matarZombiesEnArea(cx, cy, cz, radio)
+    local ok_cell, cell = pcall(getCell)
+    if not ok_cell or not cell then return 0 end
+    local eliminados = 0
+    for dx = -radio, radio do
+        for dy = -radio, radio do
+            if dx*dx + dy*dy <= radio*radio then
+                local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+                if sq then
+                    local objs = sq:getMovingObjects()  -- IsoZombie vivos
+                    -- Skip getStaticMovingObjects() (IsoDeadBody)
+                    if objs then
+                        for i = 0, objs:size() - 1 do
+                            local obj = objs:get(i)
+                            if obj and instanceof(obj, "IsoZombie") then
+                                pcall(function() obj:setHealth(0.0); eliminados = eliminados + 1 end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return eliminados
+end
+```
+
+**Cuándo aplica:** cualquier flow donde matás zombies por radio Y querés preservar cadáveres en el área (Revival System, eventos donde el lugar es importante mantener visualmente, etc).
+
+---
+
+## #58 — `LevelPerk` / `getXp:AddXP` server-side son flaky en MP, usar `/addxp` admin
+
+Comentario del propio mod (HoldoorServer.lua línea 1066-1067):
+> "el AddXP server-side se sobreescribe por el cliente cada vez que syncea (XP sube 1 nivel y vuelve a bajar). Solucion: NO hacer AddXP aca, dejar que HoldoorClient.comprar lo haga en cliente-context puro despues del cobro."
+
+**Síntoma:** llamás `jugador:LevelPerk(enum)` o `jugador:getXp():AddXP(enum, delta)` server-side. En SP funciona. En MP el cliente puede pisar el cambio porque tiene su propia copia del XP y la sincroniza al server.
+
+**Solución (mismo patrón tienda subir_nivel):** usar `/addxp` admin command via cliente.
+
+```lua
+-- Server calcula XP necesario para llegar a nivel objetivo
+local xpTotal = 0
+local perkDef = PerkFactory.getPerk(enum)
+for lvl = 1, lvlObjetivo do
+    local xp = perkDef:getXpForLevel(lvl)
+    if xp then xpTotal = xpTotal + xp end
+end
+xpTotal = xpTotal + xpParcial   -- XP parcial dentro del nivel objetivo
+
+-- Server dispatcha lista al cliente
+sendServerCommand(jugador, MODULE, "ejecutarRestoreProgresoBatch", { xpDeltas = { ... } })
+
+-- Cliente itera y emite /addxp por cada perk (con 2 frames de espacio anti-flood)
+local cmd = string.format('/addxp "%s" %s=%d', username, perkName, amount)
+SendCommandToServer(cmd)
+```
+
+**Por qué funciona:** `/addxp` es admin command server-authoritative que pasa por el flow validado de B42. El player debe ser admin en el momento (caso de uso del Revival: durante los 20s del admin trampoline post-spawn).
+
+**Cuándo aplica:** restaurar progreso de skills tras muerte, otorgar XP por logros, cualquier delta de XP que debe persistir en MP.
+
+---
+
+## #59 — Nombres de materiales en md son LARGOS (Cuero/Hierro/Acero/Valyrio/Obsidiana), no abreviados
+
+**Bug recurrente:** el HUD lateral muestra los materiales abreviados (`Cu`, `Hi`, `Ac`, `Va`, `Ob`). Es **fácil asumir** que los campos del md también son cortos. **NO**.
+
+**Nombres REALES en md (confirmados en HoldoorServer.lua línea 790-794):**
+
+```lua
+md.Holdoor_Cuero       -- NO md.Holdoor_Cu
+md.Holdoor_Hierro      -- NO md.Holdoor_Hi
+md.Holdoor_Acero       -- NO md.Holdoor_Ac
+md.Holdoor_Valyrio     -- NO md.Holdoor_Va
+md.Holdoor_Obsidiana   -- NO md.Holdoor_Ob
+```
+
+**Síntoma del bug si inventás:** leer `md.Holdoor_Cu` devuelve `nil` → fallback a 0 → guardás 0 → restaurás 0. Eternamente. Sin error visible.
+
+**Lección de regla #1:** NO INVENTAR. Antes de tocar materiales en md, **buscar en el código existente** (`grep "md.Holdoor_Cu"` da 0 hits, `grep "md.Holdoor_Cuero"` da los hits reales). Si no aparece, preguntar.
+
+**Cuándo aplica:** snapshot/restore de materiales, modificación de cantidades, validaciones.
+
+---
+
+## #60 — Cell del lugar de muerte NO está cargado server-side en `OnCreatePlayer`
+
+**Síntoma:** llamás `getCell():getGridSquare(deathX, deathY, deathZ):getMovingObjects()` desde el handler `OnCreatePlayer` y la lista viene vacía aunque visualmente hay zombies ahí cuando el player se teleporta segundos después.
+
+**Causa:** cuando `OnCreatePlayer` dispara, el char nuevo está en su spawn point inicial (lejos del lugar de muerte). El server no tiene cargado el cell del lugar de muerte porque ningún player está cerca. `MovingObjects` no tiene los zombies instanciados todavía.
+
+**Solución: diferir la operación con cola FIFO post-teleport.** En el Revival System v0.8 #21 usamos disparos espaciados a +2s/+5s/+10s. Al menos uno corre cuando el cell ya está cargado por el cliente teleportado:
+
+```lua
+HoldoorServer._matarZombiesQueue = {}
+
+-- En OnCreatePlayer (encolar):
+for _, delay in ipairs({2, 5, 10}) do
+    table.insert(HoldoorServer._matarZombiesQueue, {
+        x = coords.x, y = coords.y, z = coords.z, radio = 15,
+        fireAt = os.time() + delay, label = "+"..delay.."s",
+    })
+end
+
+-- onTick separado procesa la cola:
+Events.OnTick.Add(function()
+    if #HoldoorServer._matarZombiesQueue == 0 then return end
+    local ahora = os.time()
+    local i = 1
+    while i <= #HoldoorServer._matarZombiesQueue do
+        local task = HoldoorServer._matarZombiesQueue[i]
+        if ahora >= task.fireAt then
+            local n = HoldoorServer._matarZombiesEnArea(task.x, task.y, task.z, task.radio)
+            print("[Diferido " .. task.label .. "] " .. n .. " zombies eliminados")
+            table.remove(HoldoorServer._matarZombiesQueue, i)
+        else
+            i = i + 1
+        end
+    end
+end)
+```
+
+**Cuándo aplica:** cualquier operación que toque tiles/objetos/zombies en coords lejanas del spawn inicial del player, ejecutada inmediatamente al OnCreatePlayer.
+
+---
+
+## #61 — Caracteres especiales rompen la fuente de PZ B42
+
+**Síntoma:** chats / setHaloNote / labels con `¡`, `¿`, `á`, `é`, `í`, `ó`, `ú`, `ñ` renderizan algunos caracteres como `?` en pantalla aunque el código fuente los tenga bien escritos.
+
+**Caracteres que SÍ rompen:**
+- `¡` (apertura exclamación)
+- `¿` (apertura interrogación)
+- Vocales acentuadas (depende de la fuente y contexto)
+
+**Caracteres que NO rompen:**
+- `!` (cierre exclamación, sin la de apertura)
+- `?` (cierre interrogación, sin la de apertura)
+- Letras sin acento
+- Símbolos ASCII normales
+- Símbolos Unicode comunes (★, ✓, ⟲, →)
+
+**Workaround:** mantener los textos del mod sin acentos ni signos de apertura. Si necesitás puntuación, usar solo cierre. Reformular oraciones para evitar acentos críticos.
+
+**Ejemplos del mod:**
+```
+❌ "¡Volando al Trono!"  →  ✅ "Volando al Trono!"
+❌ "Andá al panel"        →  ✅ "Abri el panel"
+❌ "Marcá tu base"        →  ✅ "Marca tu base"
+```
+
+**Cuándo aplica:** todos los strings que se muestran al user (chat, halo notes, labels HUD, mensajes de tienda, descripciones de items).
+
+---
+
+**Última actualización:** 2026-06-21 — Sprint v0.8 cerrado (gotchas #57-#61 lockeados, ver sprints_history.md "2026-06-21 — Sprint v0.8")
+
+---
+
+## 🔥 62. CoopHost host — NUNCA forzar `sendClientCommand` desde el cliente del host (rompe APIs del mundo)
+
+**Síntoma:** en MP CoopHost, server reporta que las APIs corren (logs muestran `_limpiarZona eliminó 57 zombies`, `addSound ok=true`), pero **empíricamente nada impacta el mundo que el host ve en pantalla**: zombies no caen, bocina no aggrea, Trono no recibe daño. Mensajes del HUD lateral SÍ funcionan (porque usan `notificarTodos` que SÍ broadcast bien).
+
+**Cuándo rompió:** sprint v0.8.3 (2026-06-21). Mi teoría equivocada fue: "en CoopHost ejecutar `HoldoorServer.X()` directo desde el cliente del host hace que los broadcasts no lleguen al friend remoto. Forzar `sendClientCommand` garantiza que el server context se active". REALIDAD: rompí los 7 días siguientes intentando "fixes" basados en esa teoría.
+
+**Causa real:**
+- En MP CoopHost, server y client son **contextos lógicos separados** dentro del mismo proceso. Tienen sus propios `MovingObjects`, sus propios `IsoZombie`, su propio "world view".
+- Cuando el cliente del host hace `HoldoorServer.X()` **DIRECTO**: la función corre en **CLIENT context del host** → `setHealth(0)`, `addSound`, iteración de `IsoZombie` impactan los objetos que el host VE.
+- Cuando el cliente del host hace `sendClientCommand("X", ...)`: el comando entra al server PZ via networking interno y dispara el handler en **SERVER context puro**. Las APIs del mundo en server context tocan **otros** IsoZombies que NO son los del cliente del host. Por eso el log dice "57 eliminados" pero visualmente quedan vivos.
+
+**Patrón correcto (host local directo, remoto via sendClientCommand):**
+```lua
+function HoldoorClient.iniciar(config)
+    if tieneServidorLocal() then
+        -- SP / CoopHost host: directo. El flow corre en client context
+        -- donde setHealth(0), addSound, getMovingObjects impactan el mundo visible.
+        local player = getSpecificPlayer(0)
+        if player then
+            pcall(HoldoorServer.iniciar, player, config)
+        end
+    else
+        -- Cliente remoto: sendClientCommand es lo correcto (no hay otra opción).
+        sendClientCommand(HoldoorConfig.MODULE, "iniciar", { config = config })
+    end
+end
+```
+
+**Cuándo aplica:** todas las acciones que el cliente del host invoca y que después llaman APIs del mundo PZ:
+- `iniciar`, `detener`, `setBase`, `quitarBase`, `oleadaManual`, `comprar`, `transferir`, `pedirEstado`
+- Cualquier flow que termine ejecutando `setHealth`, `addSound`, `getCell():getGridSquare():getMovingObjects()`, etc.
+
+**Lo que SÍ se puede broadcastear sin tocar el mundo del host:**
+- `notificarTodos("evento", datos)` para mensajes / HUD / chat / monedas / item drops via `/additem`. Eso NO toca el mundo, solo envía datos a clientes. Sigue funcionando bien tanto desde server context como desde client context (notificarTodos hace loopback al cliente del host).
+
+**Lo que NO se puede broadcastear (server context no lo hace):**
+- `setHealth(0)` sobre IsoZombie del cliente del host → solo funciona en client context del host
+- `addSound(nil, ...)` cerca del cliente del host → solo aggrea desde client context del host
+
+**Cómo verificar empíricamente:**
+- Si el log del SERVIDOR (PZ console interno) dice que la función corre pero el USUARIO ve que no impacta el mundo → bug de context.
+- Si el log del cliente (`console.txt` del usuario) muestra el print de la función Y empíricamente el mundo cambia → patrón correcto.
+
+**Anti-pattern muerto (NO usar):** forzar `sendClientCommand` siempre "porque garantiza activar server context". Eso es exactamente lo que rompe.
+
+**Relacionado:** gotcha #36 (`sendServerCommand` 3-args broken en CoopHost — sí, eso es real, los clientes remotos sí necesitan `sendClientCommand`). Esta gotcha #62 es el complemento: el host NO debe usar `sendClientCommand` para sus propias acciones.

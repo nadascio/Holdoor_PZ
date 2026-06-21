@@ -800,3 +800,176 @@ La gotcha #21 vieja decía que `setWantMouseEvents(false)` era la API real. Esa 
 **Pending user-test post-merge**: sesiones MP reales con 3+ jugadores en distintas posiciones para validar whitelist + pagos offline.
 
 **Versión:** 0.7-dev (cerrado, listo para push a Workshop).
+
+---
+
+## 2026-06-21 — Sprint v0.8 — Levantate John Snow + Punto de Retorno
+
+**Contexto:** Sprint maratón con 2 features grandes encadenadas. Empezó como "Raise up John Snow" (revive automático pre-muerte) y terminó con un rediseño completo del approach (post-muerte) + un sistema independiente de teleport personal por player.
+
+### Bloque 1 — v0.8 #1-#20: Raise up John Snow (intento PRE-muerte, fallido)
+
+**Concepto inicial:** seguro de vida automático. Si tu HP llega cerca de 0, R'hllor te revive en lugar seguro. Reusa admin trampoline del Beso del Dios.
+
+**Iteraciones:**
+
+1. **v0.8 #1-#7** — POC con polling OnPlayerUpdate + threshold HP menor a 15. Funcionó parcial.
+2. **v0.8 #8-#15** — Pulido UX: HUD toggle ACTIVO/OFF, pantalla negra fade, persistencia GlobalModData, label "hace Xm", admin 20s, ZombiesDontAttack, teleport via comando vanilla.
+3. **v0.8 #16** — Sistema de 6 triggers de muerte inminente (HP critico, delta HP, mordeduras, sangrados, isDead, partes lastimadas) tras descubrir que muchas muertes pasaban en 1 tick sin pasar por HP menor a 15.
+4. **v0.8 #17-#20** — Falsos positivos masivos (8+ revives consecutivos por rasguños menores). Threshold catch-all bajado de menor-99 a menor-80 + Trigger 6 con gate HP general menor 65.
+
+**Hallazgo crítico:** el approach PRE-muerte es frágil. Siempre hay muertes que pasan tan rápido (instant kill, 40 zombies) que no hay ventana de captura. Cobertura máxima 90-95%.
+
+### Bloque 2 — v0.8 #21: Rediseño completo POST-muerte (Revival System)
+
+**Idea del user (game-changer):** dejar morir al char y revivir al char NUEVO con todo el progreso del viejo. 100% efectivo porque actuamos DESPUÉS de la muerte.
+
+**Arquitectura:**
+
+1. Compra del item → snapshot automatico (skills + XP parcial + recetas + monedas + materiales)
+2. Toggle OFF/ON → re-snapshot manual (sin cooldown)
+3. Auto cada 5 min → re-snapshot automatico mientras esta activo
+4. Muerte → snapshot AL MORIR (fresh state) + captura coords + flag needsRevive
+5. Char nuevo spawn (OnCreatePlayer) → restaurar progreso server-side + dispatch al cliente
+6. Cliente → pantalla negra + admin 20s + ZombiesDontAttack + matar zombies en 15 tiles + teleport al lugar de muerte + toast
+
+**Decisiones técnicas claves:**
+
+1. `/removezombies` borra cadáveres tambien (confirmado en línea 2759 del propio mod). Reemplazado por `_matarZombiesEnArea` que solo itera MovingObjects (IsoZombie vivos) con setHealth(0) sin tocar StaticMovingObjects (IsoDeadBody). Cuerpo del player preservado para lootear.
+
+2. `LevelPerk` / `getXp:AddXP` server-side son flaky en MP. Solución: usar `/addxp "user" Perk=XP` admin command (mismo patrón tienda subir_nivel). Server calcula XP necesario con `PerkFactory.getPerk(enum):getXpForLevel(lvl)`, dispatch al cliente, cliente envía addxp con 2 frames de espacio.
+
+3. Cell-loading race post-spawn: cuando `_matarZombiesEnArea` corre directo en OnCreatePlayer, el char nuevo todavía está en spawn inicial. Cell del lugar de muerte no cargado → 0 zombies eliminados. Solución: cola FIFO de tasks diferidos con disparos +2s/+5s/+10s.
+
+4. Nombres de materiales en md son LARGOS (Holdoor_Cuero/Hierro/Acero/Valyrio/Obsidiana), no abreviados como muestra el HUD (Cu/Hi/Ac/Va/Ob). Inventar nombres cortos costó 1 sprint de "snapshot dice 0 materiales".
+
+5. transmitModData puede tener delay. Doble red de seguridad: cliente limpia flags LOCAL inmediatamente al recibir raiseUpRevive + fuerza actualizarHUD.
+
+**Lo que se restaura:** skills + XP, recetas (merge sin duplicar), monedas Holdoor, materiales Holdoor, Beso EN BOLSA si no usado.
+**Lo que NO:** traits (los físicos se auto-restauran via skills), inventario real (queda en el cadáver), hambre/sed/heridas.
+
+### Bloque 3 — v0.8 #22: Punto de Retorno (checkpoint personal independiente del host)
+
+**Problema arquitectónico:** la "base" del juego solo puede marcarla el HOST. En MP los demás players están atados al host. Primer diseño "Retorno al Trono" dependía de HoldoorServer.estado.baseX/Y → restrictivo + bug de desync (server reseteaba OnGameStart).
+
+**Solución (idea del user):** sistema PARALELO e INDEPENDIENTE del host. Cada player tiene su propio checkpoint en md.Holdoor_PuntoRetorno_X/Y/Z. Marca donde quiera, teleporta cuando quiera, sin tocar al host.
+
+**UI final:** una sola fila del HUD lateral, dividida en 2 botones lado a lado dentro de teleportZone (anti-gotcha #29):
+- Izq: "Marcar Punto" o "Cambiar Punto"
+- Der: "Teleport" o "Marca un Punto" o "Teleport no comp."
+
+**Flow:**
+1. Comprar "Punto de Retorno" (2 oro + 1 plata) → bolsa
+2. Caminar a tu lugar seguro + click "Marcar Punto" → guarda coords
+3. Click "Teleport" → countdown 5s sobre cabeza (setHaloNote) → admin trampoline solo al final → teleport
+4. Item consumido, punto guardado queda
+5. Si morís → punto se pierde (md del char)
+
+**CLAVE de balance:** NO se da admin durante los 5s del countdown. El user es vulnerable. Evita ser "Beso mejorado".
+
+### Gotchas nuevos lockeados
+
+- **#57** — `/removezombies` borra cadáveres + zombies. Para matar SOLO zombies vivos preservando cadáveres: iterar getMovingObjects() filtrando IsoZombie + setHealth(0).
+- **#58** — LevelPerk / getXp:AddXP server-side son flaky en MP. Usar `/addxp` admin command (mismo patrón tienda subir_nivel).
+- **#59** — Nombres materiales en md son LARGOS (Cuero/Hierro/Acero/Valyrio/Obsidiana), no abreviados como muestra el HUD. Regla #1: NO INVENTAR.
+- **#60** — Cell del lugar de muerte no cargado en OnCreatePlayer. Diferir matar-zombies con cola FIFO +2s/+5s/+10s.
+- **#61** — Caracteres especiales (acentos, exclamación abierta) rompen fuente B42 → renderizan como `?`. Textos sin acentos.
+
+### Archivos tocados
+
+- **HoldoorServer.lua** — ~600 líneas refactor (snapshot system, restore via /addxp, cola matar zombies diferida, persistencia, handlers Punto de Retorno, eliminación de los 6 triggers viejos)
+- **HoldoorClient.lua** — handlers puntoRetornoMarcado/Disparado + raiseUpRevive (rediseñado), funciones _ejecutarPuntoRetorno + _ejecutarRevivePendiente
+- **HoldoorUI.lua** — teleportZone con 2 botones internos, label estado en botón Raise, ajuste HUD_H_BODY +30
+- **HoldoorShopCatalog.lua** — item nuevo "Punto de Retorno", renombrado "Levantate, John Snow"
+- **HoldoorShop.lua** — marca consumido si Punto en bolsa
+
+### Estado al cierre
+
+✅ Revival System 100% efectivo post-muerte
+✅ Snapshot triple-cobertura (compra / toggle / auto-5min / al-morir)
+✅ Cola matar zombies diferida (cuerpo player preservado)
+✅ Restore via /addxp admin (skills funcionan en MP)
+✅ Punto de Retorno independiente del host
+✅ 2 botones lado a lado en HUD (anti-gotcha #29 respetado)
+✅ Countdown vulnerable (no es Beso mejorado)
+✅ Persistencia milagros en GlobalModData
+✅ Textos sin acentos (fuente PZ)
+
+**Versión:** 0.8-dev (cerrado, listo para push a Workshop).
+
+---
+
+## 2026-06-21 — Sprint v0.8.7 — Rescate MP CoopHost post-refactor v0.8.3
+
+**Severidad:** CRITICA. Una semana de trabajo perdido por un diagnóstico equivocado.
+
+### Contexto
+
+Tras publicar v0.8.1 a Workshop, sesiones de prueba con un amigo revelaron que el friend reportaba bugs en MP CoopHost: el Trono fisico no se le veia, algunas compras fallaban. Intenté refactorizar el flujo MP a través de v0.8.2 / v0.8.3 / v0.8.4 / v0.8.5 con teorías equivocadas. Cada iteración rompía más cosas:
+
+- v0.8.2: arreglé compras del friend (sendServerCommand 3-args → sendClientCommand). Correcto.
+- v0.8.3: **EL ERROR MAYOR** — forcé `sendClientCommand` para LAS 8 ACCIONES DEL PANEL (iniciar/detener/setBase/quitarBase/oleadaManual/comprar/transferir/pedirEstado) incluso desde el cliente del host. Teoría: "round-trip garantiza que el server context se active". REALIDAD: rompió el flow para el host.
+- v0.8.4: moví `_plantarTrono` al client context. Trono visible para host, pero friend sigue sin verlo.
+- v0.8.5: deleguué `addSound` y `_limpiarZona` via `notificarTodos`. Empeoró todo.
+
+### Diagnóstico real (encontrado v0.8.6 + v0.8.7)
+
+**Las funciones server del flow oleadas son IDÉNTICAS byte por byte entre v0.7 y v0.8.x.** El bug NUNCA estuvo en `_limpiarZona`, `addSound`, ni `_aggroSostenido`. El bug estaba en CÓMO se invocaba el flow:
+
+- **v0.7 (que funcionaba)**: `HoldoorClient.iniciar()` llamaba `HoldoorServer.iniciar()` DIRECTO si era host local. El flow entero corría en CLIENT context del host. Las APIs del mundo (`IsoZombie:setHealth(0)`, `addSound`, iteración `getMovingObjects()`) impactaban los objetos que el host VE en pantalla.
+
+- **v0.8.3 (que rompí)**: forcé `sendClientCommand` SIEMPRE. El comando entra al server PZ y el handler corre en SERVER context puro. APIs del mundo en server context tocan **otros** IsoZombies que NO son los del cliente del host. Por eso el log decía "57 caminantes eliminados" pero visualmente quedaban vivos.
+
+### Fix v0.8.6 + v0.8.7
+
+**v0.8.6** — Revert de v0.8.5: eliminado wrapper `_limpiarZonaDelegado` + handlers `ejecutarAddSoundLocal` / `ejecutarLimpiarZonaLocal`. Las 7 llamadas a `_limpiarZona`/`addSound` vuelven al patrón directo v0.7.
+
+**v0.8.7** — Revert de v0.8.3: las 8 acciones del panel restauran el patrón v0.7:
+```lua
+if tieneServidorLocal() then
+    -- Host local: directo (corre en client context)
+    pcall(HoldoorServer.X, player, args)
+else
+    -- Cliente remoto: sendClientCommand (correcto MP)
+    sendClientCommand(MODULE, "X", args)
+end
+```
+
+Esto preserva:
+- Lo que funcionaba para el friend en v0.8.6 (compras MP via sendClientCommand)
+- Lo que funcionaba en v0.7 para el host (llamadas directas)
+
+### Validado post-fix
+
+- Bocina + aggro sostenido (zombies vienen al Trono, log `[Holdoor] AGGRO sound ok=true` aparece en console.txt del cliente)
+- Limpieza al fin de oleada / DETENER OLEADAS / Game Over (zombies caen visualmente)
+- Trono recibe daño (`Damage boost: -X HP al Trono` aparece)
+- Drops de monedas/materiales por kill
+- Raise up John Snow (revive al morir conservando progreso)
+- Punto de Retorno (teleport)
+- Tienda (compras)
+- Beso del Dios (cura + invulnerabilidad)
+- Seguro de Monedas (preserva saldo al morir)
+
+Pendiente: validación con friend conectado en sesión MP real.
+
+### Lecciones
+
+1. **NO INVENTAR cuando hay bugs MP**. Mi teoría de "VMs separados en CoopHost" era plausible pero no verificada — me llevó a inventar una solución (delegate) que rompió lo que andaba.
+2. **El log empírico del usuario triunfa sobre el log del servidor**. El user me decía "no se borran los zombies en pantalla" y yo le contestaba "pero el coop-console.txt dice que sí se borraron 57". El usuario tenía razón: corre el código pero no impacta el contexto que él ve.
+3. **`coop-console.txt` existe en CoopHost pero NO es relevante para el usuario** — los prints relevantes para debug del juego visible van a `console.txt`. Esto se documentó en gotcha #62.
+4. **Patrón "host local directo, remoto via sendClientCommand"** es el correcto para CoopHost. Forzar sendClientCommand siempre rompe el contexto.
+
+### Archivos tocados v0.8.7
+
+- **HoldoorServer.lua** — sin cambios funcionales en este sprint (el revert de v0.8.6 ya había vuelto _limpiarZona/addSound a directo)
+- **HoldoorClient.lua** — 8 acciones del panel: iniciar / detener / setBase / quitarBase / oleadaManual / comprar / transferir / pedirEstado. Patrón `if tieneServidorLocal() then directo else sendClientCommand`.
+- **HoldoorConfig.lua** — VERSION = "0.8.7"
+- **mod.info** — modversion=0.8.7
+- **workshop.txt** — bloque "NUEVO EN v0.8.7 — FIX MAYOR MP" al inicio
+
+### Gotchas nuevos
+
+- **#62** — En CoopHost, FORZAR `sendClientCommand` desde el cliente del host rompe APIs del mundo. Patrón correcto: `if tieneServidorLocal() then directo else sendClientCommand`.
+
+**Versión:** 0.8.7 (cerrado, listo para Workshop publish).

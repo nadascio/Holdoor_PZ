@@ -376,18 +376,44 @@ HoldoorShopCatalog.categorias = {
             { id="sanacion_septon",  nombre="Sanacion del Septon",            desc="Cura sangrado, cortes, mordeduras y fracturas. NO cura infeccion zombi.",
               contenido="Cura Heridas Fisicas",
               precio={gold=5},                             accion={tipo="reliquia_cura_completa"} },
+        },
+    },
+    -- v0.8 #1: nueva categoria "Milagros del Maestre" — items endgame "uso unico por vida"
+    -- que cambian el juego. Antes vivian dentro de Reliquias del Reino (el Beso del Dios)
+    -- pero al sumar el Raise up John Snow no quedaba lugar en Reliquias (6 items para
+    -- caber en una pagina). Esta categoria nueva separa los "premium endgame" de las
+    -- curaciones especificas, queda mas claro conceptualmente.
+    {
+        id     = "milagros",
+        nombre = "Milagros del Maestre",
+        cr=0.95, cg=0.75, cb=0.20,
+        items = {
             -- v0.7 #33: Beso del Dios pivot — usa el bug-feature de admin auto-godmode.
             -- Al elevar a admin via /setaccesslevel, PZ activa GodMod + Invisible + NoClip
             -- por default. GodMod cura TODO: mordeduras, hambre, sed, infeccion zombi, fatiga.
             -- Aprovechamos eso: damos admin por 5 segundos, despues volvemos a user.
-            -- Descripcion en 2 lineas (separadas con \n).
             -- v0.7 #34: tipo sigue siendo "reliquia_godmode_flash" para mantener la
             -- infraestructura de uso-unico (server _aplicarAccion + validacion compra +
             -- UI marca "ya invocado" + pre-check wounds). El handler interno cambio (ahora
             -- es admin trampoline 5s), pero la "etiqueta" del action es la misma.
-            { id="beso_dios",        nombre="Beso del Dios de Muchos Rostros", desc="Cura TODO + escudo anti-zombies + invulnerabilidad 5 seg. Uso unico por vida.",
+            { id="beso_dios",        nombre="Beso del Dios de Muchos Rostros", desc="Cura todo + escudo + invulnerable 5s. Uso unico.",
               contenido="Curacion Total + Escudo 5s",
               precio={gold=9},                             accion={tipo="reliquia_godmode_flash"} },
+            -- v0.8 #1: Raise up John Snow — seguro de vida. Si HP llega a 0 con el seguro
+            -- activado (toggle en HUD lateral), R'hllor te revive en lugar seguro. Reusa
+            -- el admin trampoline del Beso para curar + 5s pantalla negra + teleport.
+            -- Deteccion de muerte: A (OnPlayerGetDamage) + B (OnPlayerUpdate polling HP<5)
+            -- con guard para no doblar disparo. Ver next_steps.md "RAISE UP JOHN SNOW".
+            { id="raise_up_jon",     nombre="Levantate, John Snow",            desc="Resucita en lugar seguro si tu HP llega a 0.",
+              contenido="Resurreccion Automatica",
+              precio={gold=5, valyrio=3, obsidiana=5},     accion={tipo="raise_up"} },
+            -- v0.8 #22: Punto de Retorno — checkpoint personal por player.
+            -- Cada jugador marca su propio punto donde quiera (independiente del host).
+            -- Reusable (recomprable cada uso). NO da invulnerabilidad durante los 5s de countdown.
+            -- Admin trampoline solo el ultimo instante para asegurar el teleport.
+            { id="punto_retorno",    nombre="Punto de Retorno",                desc="Marca un lugar y vuelve a el cuando quieras. Te ahorra caminatas largas y peligros del camino.",
+              contenido="Marca Personal + Teleport con espera 5s",
+              precio={gold=2, silver=1},                   accion={tipo="punto_retorno"} },
         },
     },
     -- v0.7 #33: categoria "Bendiciones del Cuerpo" REMOVIDA. Los items individuales
