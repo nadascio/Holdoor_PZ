@@ -5112,6 +5112,25 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
         -- inicializado porque el jugador eligio el momento → no hay timing fragil de OnCreatePlayer.
         pcall(function() HoldoorServer._ejecutarRecuperarLegado(jugador) end)
 
+    elseif comando == "registrarMuerteRaise" then
+        -- v0.8.x FIX FRIEND: el friend murio con raise. Su _onPlayerMuerto corrio en SU client-ctx
+        -- (donde tomo el snapshot) y nos lo manda aca para que _ejecutarRecuperarLegado (server-ctx,
+        -- disparado cuando el friend aprieta el boton) lo tenga. Guardamos en milagrosPersist[server-ctx].
+        local u = jugador and jugador:getUsername()
+        if u and args and args.snapshot and args.deathCoords then
+            _recargarMilagros()
+            local entry = HoldoorServer.milagrosPersist[u] or {}
+            entry.raise             = true
+            entry.snapshot          = args.snapshot
+            entry.snapshotTimestamp = os.time()
+            entry.deathCoords       = args.deathCoords
+            entry.needsRevive       = true
+            HoldoorServer.milagrosPersist[u] = entry
+            _persistirMilagros()
+            HoldoorServer._raiseDbg("REGISTRAR-MUERTE-FRIEND", u, string.format("snapshot recibido del client del friend, coords=(%d,%d,%d)",
+                args.deathCoords.x, args.deathCoords.y, args.deathCoords.z))
+        end
+
     elseif comando == "marcarPuntoRetorno" then
         -- v0.8 #22: el jugador planta/reemplaza su Punto de Retorno personal.
         -- Recibe coords actuales del player (args.x/y/z) y las guarda en md.
@@ -5310,6 +5329,22 @@ function HoldoorServer._onPlayerMuerto(jugador)
             local n = HoldoorServer._matarZombiesEnArea(entry.deathCoords.x, entry.deathCoords.y, entry.deathCoords.z, 3) or 0
             print(string.format("[Holdoor][Revive] Blindaje cuerpo: %d zombies despejados (radio 3) sobre el cadaver de %s", n, u))
         end)
+
+        -- v0.8.x FIX FRIEND: medido que la muerte/revive del friend corren en SU client-ctx
+        -- (S=false C=true CH=false), donde se tomo el snapshot. Pero al apretar el boton manda
+        -- "recuperarLegado" al SERVER-ctx, que NO tiene ese snapshot (contextos separados) → abortaba.
+        -- Solucion: el friend MANDA su snapshot al server al morir. El HOST NO usa esto (CH=true →
+        -- su flujo corre entero en su client-ctx, donde ya tiene el snapshot).
+        local esFriendRemoto = false
+        pcall(function() esFriendRemoto = isClient() and (not isCoopHost()) and (not isServer()) end)
+        if esFriendRemoto then
+            pcall(function()
+                sendClientCommand(HoldoorConfig.MODULE, "registrarMuerteRaise", {
+                    snapshot = entry.snapshot, deathCoords = entry.deathCoords,
+                })
+            end)
+            HoldoorServer._raiseDbg("FRIEND-ENVIA-SNAP", u, "snapshot+coords enviados al server-ctx")
+        end
     end)
 
     local estado = HoldoorServer.estado
