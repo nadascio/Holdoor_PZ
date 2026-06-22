@@ -1131,12 +1131,14 @@ function HoldoorServer._transferirMonedas(emisor, args)
     _persistirModData(target)
     print("[Holdoor] Transfer: " .. fromUser .. " -> " .. toUser .. " | " .. cantidad .. " " .. tipo)
 
-    -- Notificar a ambos
-    pcall(sendClientCommand, emisor, HoldoorConfig.MODULE, "monedasActualizadas", {})
-    pcall(sendClientCommand, target, HoldoorConfig.MODULE, "monedasActualizadas", {})
-    pcall(sendClientCommand, emisor, HoldoorConfig.MODULE, "transferOK",
+    -- Notificar a ambos. v0.8.x: server→client correcto es sendServerCommand. Antes usaba
+    -- sendClientCommand(player,...) que es client→server → al jugador remoto NO le llegaba
+    -- (por eso el friend receptor no veia el aviso de monedas recibidas).
+    pcall(sendServerCommand, emisor, HoldoorConfig.MODULE, "monedasActualizadas", {})
+    pcall(sendServerCommand, target, HoldoorConfig.MODULE, "monedasActualizadas", {})
+    pcall(sendServerCommand, emisor, HoldoorConfig.MODULE, "transferOK",
         { to=toUser, tipo=tipo, cantidad=cantidad })
-    pcall(sendClientCommand, target, HoldoorConfig.MODULE, "transferRecibido",
+    pcall(sendServerCommand, target, HoldoorConfig.MODULE, "transferRecibido",
         { from=fromUser, tipo=tipo, cantidad=cantidad })
 
     -- SP fallback (no hay sendClientCommand efectivo)

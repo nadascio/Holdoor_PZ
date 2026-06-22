@@ -1348,8 +1348,17 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
 
     elseif comando == "transferRecibido" then
         local tipoLbl = ({bronze="Bronce", silver="Plata", gold="Oro"})[args.tipo] or args.tipo
-        HoldoorClient.chat("[HOLDOOR] Recibiste " .. (args.cantidad or 0) .. " " .. tipoLbl .. " de " .. (args.from or "?") .. "!", 1, 0.85, 0.3)
+        local cantR   = args.cantidad or 0
+        local fromR   = args.from or "?"
+        HoldoorClient.chat("[HOLDOOR] Recibiste " .. cantR .. " " .. tipoLbl .. " de " .. fromR .. "!", 1, 0.85, 0.3)
         playUISound("LevelPerk")
+        -- v0.8.x: feedback VISIBLE (el chat solo no se notaba). Texto flotante arriba de la cabeza
+        -- + toast, como pidio Nahuel.
+        local meR = getSpecificPlayer(0)
+        if meR then pcall(function() meR:Say("+" .. cantR .. " " .. tipoLbl) end) end
+        if HoldoorToast and HoldoorToast.mostrar then
+            pcall(function() HoldoorToast.mostrar(fromR .. " te envio " .. cantR .. " " .. tipoLbl, 1.0, 0.85, 0.3) end)
+        end
 
     elseif comando == "aplicarTrait" then
         HoldoorClient.aplicarTraitLocal(args.trait)
@@ -1443,6 +1452,18 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             end)
             print(string.format("[Holdoor] ejecutarLimpiarZonaLocal: %d eliminados (bx=%s, by=%s, radio=%s)",
                 n, tostring(args.bx), tostring(args.by), tostring(args.radio)))
+        elseif args.bx and args.by then
+            -- v0.8.x FIX FRIEND: el friend tambien limpia, pero SOLO mata zombies vivos que VE
+            -- (setHealth via _matarZombiesEnArea, que NO toca cadaveres → no borra su cuerpo).
+            -- Resuelve los zombies "fantasma" que el host no ve pero el friend si, y que lo mordian
+            -- al cerrar la oleada. El removeCorpse queda SOLO en el host (arriba): no lo hacemos en
+            -- el friend para evitar riesgo del cuerpo + bugs por el delay 2-3s del server (Nahuel).
+            local n = 0
+            pcall(function()
+                n = HoldoorServer._matarZombiesEnArea(args.bx, args.by, args.bz, args.radio) or 0
+            end)
+            print(string.format("[Holdoor] ejecutarLimpiarZonaLocal (FRIEND): %d zombies vivos eliminados (setHealth, sin cadaveres) radio=%s",
+                n, tostring(args.radio)))
         end
 
     elseif comando == "ejecutarAddSoundLocal" then
