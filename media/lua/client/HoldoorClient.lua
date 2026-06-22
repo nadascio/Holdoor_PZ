@@ -1387,6 +1387,31 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
                 miUsername, n, args.x, args.y, args.z or 0, args.radio or 15))
         end
 
+    elseif comando == "ejecutarLimpiarZonaLocal" then
+        -- v0.8.13: ejecutar _limpiarZona en CLIENT context del HOST (para que setHealth(0) impacte
+        -- los IsoZombies que el host VE en pantalla). En MP CoopHost, server context no impacta
+        -- visualmente. Solo el host local lo procesa (filtra por tieneServidorLocal).
+        -- _limpiarZona() lee HoldoorServer.estado (mismo VM Lua en CoopHost host). Coords se
+        -- pasan en args como diagnostico (logs) y por si en futuro se refactoriza la funcion.
+        if tieneServidorLocal() then
+            local n = 0
+            pcall(function()
+                n = HoldoorServer._limpiarZona() or 0
+            end)
+            print(string.format("[Holdoor] ejecutarLimpiarZonaLocal: %d eliminados (bx=%s, by=%s, radio=%s)",
+                n, tostring(args.bx), tostring(args.by), tostring(args.radio)))
+        end
+
+    elseif comando == "ejecutarAddSoundLocal" then
+        -- v0.8.13: ejecutar addSound en CLIENT context del HOST (AI de zombies es client-side
+        -- en MP CoopHost). Coords EXPLICITAS en args. Solo el host local lo procesa.
+        if tieneServidorLocal() and args.x and args.y then
+            local ok = pcall(addSound, nil, args.x, args.y, args.z or 0,
+                             args.radio or 100, args.vol or 150)
+            print(string.format("[Holdoor] ejecutarAddSoundLocal: ok=%s (x=%d, y=%d, radio=%d, vol=%d)",
+                tostring(ok), args.x, args.y, args.radio or 100, args.vol or 150))
+        end
+
     elseif comando == "ejecutarTeleportTargetAdmin" then
         -- v0.8.10: el HOST admin teletransporta al target con /teleportto "target" X,Y,Z.
         -- Solo el cliente del host (tieneServidorLocal) lo ejecuta. Si target == miUsername
@@ -2466,7 +2491,7 @@ function HoldoorClient.init()
     end)
 
     print("[Holdoor] Cliente inicializado v" .. HoldoorConfig.VERSION .. " -- usa /holdoor en el chat para abrir el panel")
-    print("[Holdoor v0.8.11 MARKER] Rebalance economia: drops por kill +raros, fin oleada/cierre final +premium.")
+    print("[Holdoor v0.8.13 MARKER] Separacion CAT1/CAT2: _limpiarZona y addSound via delegate al cliente del host.")
     if tieneServidorLocal() then
         print("[Holdoor] Modo: SINGLE PLAYER (acceso directo al servidor)")
     else

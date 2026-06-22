@@ -944,10 +944,13 @@ function HoldoorServer.iniciar(jugador, config)
     -- v0.7: limpieza ANTES del countdown de preparacion. Los async OnZombieDead
     -- se procesan durante los 5s de preparacion (fase != "activa") = no cuentan
     -- como kills. Cuando arranca _lanzarOleada, kills=0 limpio.
-    local eliminadosIni = HoldoorServer._limpiarZona() or 0
-    if eliminadosIni > 0 then
-        HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminadosIni })
-    end
+    -- v0.8.13: delegate al cliente del host (CLIENT context) para que setHealth(0) impacte
+    -- visualmente. Coords explicitas en args. Patron del Raise up v0.8.10.
+    local _radioLimp = math.floor((HoldoorServer.estado.config.radioSpawn or 20) + 30)
+    HoldoorServer.notificarTodos("ejecutarLimpiarZonaLocal", {
+        bx = HoldoorServer.estado.baseX, by = HoldoorServer.estado.baseY,
+        bz = HoldoorServer.estado.baseZ, radio = _radioLimp,
+    })
 
     HoldoorServer._iniciarPreparacion(5)
 end
@@ -1601,12 +1604,12 @@ function HoldoorServer.detener(jugador)
     estado.ownerUsername     = nil
 
     -- Limpiar zombies cercanos a la base — igual que al terminar oleada normal.
-    -- Evita que queden hordas residuales rodeando el Trono despues de un detener manual.
+    -- v0.8.13: delegate al cliente del host (CLIENT context).
     if estado.baseDefinida then
-        local eliminados = HoldoorServer._limpiarZona()
-        if eliminados and eliminados > 0 then
-            HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminados })
-        end
+        local _radioLimp = math.floor((estado.config.radioSpawn or 20) + 30)
+        HoldoorServer.notificarTodos("ejecutarLimpiarZonaLocal", {
+            bx = estado.baseX, by = estado.baseY, bz = estado.baseZ, radio = _radioLimp,
+        })
     end
 
     HoldoorServer.notificarTodos("detenido", {})
@@ -1630,11 +1633,12 @@ function HoldoorServer.detenerPorLimite(ultBonusSilver, ultBonusGold)
 
     -- v0.6: limpiar zombies cercanos al ganar la partida (sino siguen viniendo los
     -- spawneados durante la ultima oleada y se acumulan ~40 zombies encima del player).
+    -- v0.8.13: delegate al cliente del host.
     if estado.baseDefinida then
-        local eliminados = HoldoorServer._limpiarZona()
-        if eliminados and eliminados > 0 then
-            HoldoorServer.notificarTodos("zonaLimpiada", { cantidad = eliminados })
-        end
+        local _radioLimp = math.floor((estado.config.radioSpawn or 20) + 30)
+        HoldoorServer.notificarTodos("ejecutarLimpiarZonaLocal", {
+            bx = estado.baseX, by = estado.baseY, bz = estado.baseZ, radio = _radioLimp,
+        })
     end
 
     local oleadas = estado.oleadaActual
@@ -1780,8 +1784,11 @@ function HoldoorServer._spawnTanda()
     end
 
     -- Ruido fuerte al spawnear: atrae a los nuevos zombis hacia la base
+    -- v0.8.13: delegate al cliente del host (AI de zombies es client-side en MP).
     local sndR = math.floor(radio * 2 + 30)
-    pcall(addSound, nil, bx, by, bz, sndR, 180)
+    HoldoorServer.notificarTodos("ejecutarAddSoundLocal", {
+        x = bx, y = by, z = bz, radio = sndR, vol = 180,
+    })
 
     local remaining = 0
     for _, t in ipairs(estado.encoladosTiers) do remaining = remaining + t.count end
@@ -1873,8 +1880,11 @@ function HoldoorServer._spawnTick()
         end
 
         -- addSound localizado en el centro del cúmulo (los empuja a la base)
+        -- v0.8.13: delegate al cliente del host.
         if spawneados > 0 then
-            pcall(addSound, nil, spawnX, spawnY, bz, 50, 150)
+            HoldoorServer.notificarTodos("ejecutarAddSoundLocal", {
+                x = spawnX, y = spawnY, z = bz, radio = 50, vol = 150,
+            })
         end
     end
 
@@ -1908,10 +1918,13 @@ function HoldoorServer._aggroSostenido()
     estado.aggroUltimoSec = ahora
 
     -- 1) Sonido amplio desde la base
+    -- v0.8.13: delegate al cliente del host. Coords explicitas en args.
     local radio = HoldoorConfig.aggroRadio or 120
     local vol   = HoldoorConfig.aggroVolumen or 200
-    local sndOk = pcall(addSound, nil, estado.baseX, estado.baseY, estado.baseZ, radio, vol)
-    print(string.format("[Holdoor] AGGRO sound radio=%d vol=%d ok=%s", radio, vol, tostring(sndOk)))
+    HoldoorServer.notificarTodos("ejecutarAddSoundLocal", {
+        x = estado.baseX, y = estado.baseY, z = estado.baseZ, radio = radio, vol = vol,
+    })
+    print(string.format("[Holdoor] AGGRO sound delegado al cliente (radio=%d vol=%d)", radio, vol))
 
     -- 2) Re-path EXPLICITO: forzar pathToLocation en todos los zombies cercanos.
     --    Es el fallback que en modelo viejo funcionaba (los zombies seguian su path
@@ -2936,13 +2949,17 @@ function HoldoorServer._oleadaCompletada()
         -- Cierre Facil: matar con setHealth(0). Los cadaveres quedan lootables 1 minuto
         -- (30s pausa + 30s preparacion). Al inicio de la proxima oleada, el bridge
         -- /removezombies (en _lanzarOleada) los limpia y arranca limpio.
-        local eliminadosFinOleada = HoldoorServer._limpiarZona() or 0
+        -- v0.8.13: delegate al cliente del host (CLIENT context).
+        local _radioLimp = math.floor((estado.config.radioSpawn or 20) + 30)
+        HoldoorServer.notificarTodos("ejecutarLimpiarZonaLocal", {
+            bx = estado.baseX, by = estado.baseY, bz = estado.baseZ, radio = _radioLimp,
+        })
         estado._bridgesPendientes = nil  -- este modo no usa los 3 bridges espaciados
         estado._zombiesIgnorarHasta = os.time() + 2  -- ventana 2s OnZombieDead async
-        if eliminadosFinOleada > 0 then
+        if false then  -- log se hace en el handler client ahora
             print(string.format(
-                "[Holdoor FacilHordasMP] Cierre oleada %d: %d zombies eliminados con setHealth (cadaveres lootables ~1min)",
-                estado.oleadaActual or 0, eliminadosFinOleada
+                "[Holdoor FacilHordasMP] Cierre oleada %d (delegado al cliente)",
+                estado.oleadaActual or 0
             ))
         end
     else
@@ -4774,10 +4791,12 @@ function HoldoorServer._tronoCayo()
     print("[Holdoor] !!! EL TRONO HA CAIDO !!! Game Over (modo defensa)")
 
     -- Limpiar zombis del radio al perder: no tiene sentido que sigan vagando
-    local eliminados = HoldoorServer._limpiarZona()
-    if eliminados > 0 then
-        print("[Holdoor] Game Over: " .. eliminados .. " zombis residuales limpiados")
-    end
+    -- v0.8.13: delegate al cliente del host.
+    local _radioLimp = math.floor((estado.config.radioSpawn or 20) + 30)
+    HoldoorServer.notificarTodos("ejecutarLimpiarZonaLocal", {
+        bx = estado.baseX, by = estado.baseY, bz = estado.baseZ, radio = _radioLimp,
+    })
+    print("[Holdoor] Game Over: limpieza zona delegada al cliente del host")
 
     HoldoorServer.notificarTodos("tronoCayo", {
         oleadas = estado.oleadaActual or 0,
