@@ -418,8 +418,12 @@ function HoldoorClient._activarRaiseUpJohnSnow(coordsObjetivo)
     -- NOTA v0.8 #21: el matar-zombies NO se hace aca, lo hizo el server ANTES del dispatch
     -- (via HoldoorServer._matarZombiesEnArea que usa setHealth(0) sin tocar cadaveres).
     -- /removezombies en cliente era contraproducente: borra cuerpos incluido el del player.
-    -- v0.8 #23: 30 frames (~1s) — necesario para que el delegate setaccesslevel roundtrip en MP
-    local teleportFrames = 30
+    -- v0.8 #23: 30 frames (~1s) — necesario para que el delegate setaccesslevel roundtrip en MP.
+    -- v0.8.10: subimos a 120 frames (~4s) para friend remoto. El delegate setaccesslevel toma
+    -- mas tiempo en cliente remoto (host admin recibe pedido + ejecuta + replica admin status).
+    -- En SP/host local es instantaneo (igual funciona con 4s — no rompe nada).
+    -- Ademas el server tambien dispatcha ejecutarTeleportTargetAdmin como redundancia.
+    local teleportFrames = 120
     local teleportHandler
     teleportHandler = function()
         teleportFrames = teleportFrames - 1
@@ -899,9 +903,11 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.mostrarOleada(args)
 
     elseif comando == "iniciado" then
-        HoldoorClient.estado.activo        = true
-        HoldoorClient.estado.killsOleada   = 0
-        HoldoorClient.estado.killsPartida  = 0
+        HoldoorClient.estado.activo            = true
+        HoldoorClient.estado.killsOleada       = 0
+        HoldoorClient.estado.killsPartida      = 0
+        HoldoorClient.estado.misKills          = 0  -- v0.8.8: contador individual oleada
+        HoldoorClient.estado.misKillsPartida   = 0  -- v0.8.8: contador individual total partida
         if args.config    then HoldoorClient.estado.config           = args.config    end
         if args.numPlayers then HoldoorClient.estado.numJugadores    = args.numPlayers end
         if args.multiplier then HoldoorClient.estado.playerMultiplier = args.multiplier end
@@ -978,7 +984,8 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.estado.oleadaDuracionSec = args.duracion or 180
         HoldoorClient.estado.oleadaTargetKills = args.target or 50
         HoldoorClient.estado.oleadaKills      = 0
-        HoldoorClient.estado.killsOleada      = 0  -- resetear contador personal
+        HoldoorClient.estado.killsOleada      = 0  -- contador equipo oleada
+        HoldoorClient.estado.misKills         = 0  -- v0.8.8: reset individual al arrancar oleada
         -- Compatibilidad: zombies total/restantes ya no se usan, los dejamos en 0
         HoldoorClient.estado.zombiesTotal     = 0
         HoldoorClient.estado.zombiesRestantes = 0
@@ -991,8 +998,24 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
 
     elseif comando == "killUpdate" then
         -- v0.6 modelo C: el server avisa cuando suben los kills (para refresh HUD en vivo)
+        -- v0.8.8: agregamos contadores INDIVIDUALES (misKills, misKillsPartida) en base a
+        -- args.matador. Los contadores de EQUIPO existentes (killsOleada/killsPartida) se
+        -- siguen incrementando en onZombieMuertoLocal (cliente local). NO los duplicamos acá.
         HoldoorClient.estado.oleadaKills      = args.kills or 0
         HoldoorClient.estado.oleadaTargetKills = args.target or HoldoorClient.estado.oleadaTargetKills
+        -- Si el matador soy yo → incrementar mis contadores individuales.
+        local miUsername = nil
+        pcall(function()
+            local p = getSpecificPlayer(0)
+            if p then miUsername = p:getUsername() end
+        end)
+        local fueMio = (args.matador and miUsername and args.matador == miUsername)
+        -- Fallback: si el server no identificó al matador, asumimos que fui yo (SP / host solo).
+        if not args.matador then fueMio = true end
+        if fueMio then
+            HoldoorClient.estado.misKills        = (HoldoorClient.estado.misKills or 0) + 1
+            HoldoorClient.estado.misKillsPartida = (HoldoorClient.estado.misKillsPartida or 0) + 1
+        end
         if HoldoorUI then HoldoorUI.actualizarTodo() end
 
     elseif comando == "dropKill" then
@@ -1011,11 +1034,17 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             end
         end
         -- Sobre la cabeza del personaje (player:Say) — el user lo quiere asi
+        -- v0.8.8: solo el cliente del matador hace Say + toast. Si args.matador no viene,
+        -- fallback al comportamiento viejo (todos hacen Say) por safety.
         local p = getSpecificPlayer(0)
-        if p and args.texto then pcall(function() p:Say(args.texto) end) end
-        -- Tambien toast arriba (salvo bronce que es muy frecuente)
-        if args.tipo ~= "bronce" and HoldoorToast and args.texto then
-            pcall(HoldoorToast.mostrar, args.texto, r, g, b)
+        local miUsername = p and p:getUsername() or nil
+        local esParaMi = (not args.matador) or (miUsername and args.matador == miUsername)
+        if esParaMi then
+            if p and args.texto then pcall(function() p:Say(args.texto) end) end
+            -- Tambien toast arriba (salvo bronce que es muy frecuente)
+            if args.tipo ~= "bronce" and HoldoorToast and args.texto then
+                pcall(HoldoorToast.mostrar, args.texto, r, g, b)
+            end
         end
         -- Sonido para gold/item/material premium (plata y materiales bajos silenciosos por no spammear).
         -- v0.6 fix: usar helper playUISound — pcall directo a getSoundManager crashea en algunos contextos.
@@ -1341,6 +1370,37 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
                 local cmd = string.format('/additem "%s" "%s" 1', args.target, tostring(itemName))
                 pcall(function() SendCommandToServer(cmd) end)
                 print("[Holdoor] ejecutarAddItem: " .. cmd)
+            end
+        end
+
+    elseif comando == "ejecutarMatarZombiesLocal" then
+        -- v0.8.10: matar zombies en CLIENT context del target (Raise up para friend remoto).
+        -- Solo el target lo procesa. Usa setHealth(0) que NO toca cadaveres (preserva loot).
+        local me = getSpecificPlayer(0)
+        local miUsername = me and me:getUsername() or nil
+        if miUsername and args.target == miUsername and args.x and args.y then
+            local n = 0
+            pcall(function()
+                n = HoldoorServer._matarZombiesEnArea(args.x, args.y, args.z or 0, args.radio or 15) or 0
+            end)
+            print(string.format("[Holdoor] ejecutarMatarZombiesLocal (target=%s): %d zombies eliminados en (%d,%d,%d) radio=%d",
+                miUsername, n, args.x, args.y, args.z or 0, args.radio or 15))
+        end
+
+    elseif comando == "ejecutarTeleportTargetAdmin" then
+        -- v0.8.10: el HOST admin teletransporta al target con /teleportto "target" X,Y,Z.
+        -- Solo el cliente del host (tieneServidorLocal) lo ejecuta. Si target == miUsername
+        -- (host se teleporta a sí mismo), skip — ya lo hizo _activarRaiseUpJohnSnow.
+        if tieneServidorLocal() and args.target and args.x and args.y then
+            local me = getSpecificPlayer(0)
+            local miUsername = me and me:getUsername() or nil
+            if miUsername == args.target then
+                print("[Holdoor] ejecutarTeleportTargetAdmin: target soy yo (host), skip (ya teleportado por _activarRaiseUpJohnSnow)")
+            else
+                local cmd = string.format('/teleportto "%s" %d,%d,%d',
+                    args.target, args.x, args.y, args.z or 0)
+                pcall(function() SendCommandToServer(cmd) end)
+                print("[Holdoor] ejecutarTeleportTargetAdmin: " .. cmd)
             end
         end
 
@@ -2406,7 +2466,7 @@ function HoldoorClient.init()
     end)
 
     print("[Holdoor] Cliente inicializado v" .. HoldoorConfig.VERSION .. " -- usa /holdoor en el chat para abrir el panel")
-    print("[Holdoor v0.8.7 MARKER] revert 8 acciones del panel: host local llama HoldoorServer directo (client context), remoto via sendClientCommand.")
+    print("[Holdoor v0.8.11 MARKER] Rebalance economia: drops por kill +raros, fin oleada/cierre final +premium.")
     if tieneServidorLocal() then
         print("[Holdoor] Modo: SINGLE PLAYER (acceso directo al servidor)")
     else

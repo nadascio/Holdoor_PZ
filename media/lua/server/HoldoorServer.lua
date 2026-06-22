@@ -617,7 +617,17 @@ function HoldoorServer._aplicarRevivePendiente(jugador)
             fireAt = ahora + delay, label = "matarZ+" .. delay .. "s", username = username,
         })
     end
-    print(string.format("[Holdoor][Revive] %s: encolado restoreProgreso (+2s) + 3 disparos matarZombies (+2/+5/+10s) en (%d,%d,%d)",
+    -- v0.8.10: teleport del friend (cliente remoto) via host admin. Para el host local
+    -- el teleport ya se hace en _activarRaiseUpJohnSnow client-side (funciona porque es
+    -- admin local). Para el friend ese client-side falla por timing del setAccessLevel.
+    -- El host admin recibe ejecutarTeleportTargetAdmin y hace /teleportto "friend" X,Y,Z.
+    -- Delay +3s: el fade negro ya empezó visualmente (cubre el teleport).
+    table.insert(HoldoorServer._matarZombiesQueue, {
+        tipo = "teleportTargetAdmin", target = username,
+        x = coords.x, y = coords.y, z = coords.z,
+        fireAt = ahora + 3, label = "teleportTargetAdmin+3s", username = username,
+    })
+    print(string.format("[Holdoor][Revive] %s: encolado restoreProgreso (+2s) + 3 matarZombies (+2/+5/+10s) + teleportTargetAdmin (+3s) en (%d,%d,%d)",
         username, coords.x, coords.y, coords.z))
 
     -- 3) Dispatch al cliente para fade + admin + teleport
@@ -1235,6 +1245,19 @@ local function ejecutarAccion(jugador, accion)
         _persistirModData(jugador)
         return true
 
+    elseif accion.tipo == "convertir_recurso" then
+        -- v0.8.9 Banco de Hierro: convierte moneda/material a otra. El precio del
+        -- item descuenta los recursos de origen (motor existente). Aca solo sumamos
+        -- el destino. accion.recibo = {key="Holdoor_Silver", cantidad=1}
+        local md = jugador:getModData()
+        if not md or not accion.recibo or not accion.recibo.key then return false end
+        local n = accion.recibo.cantidad or 1
+        md[accion.recibo.key] = (md[accion.recibo.key] or 0) + n
+        _persistirModData(jugador)
+        HoldoorServer.notificarTodos("monedasActualizadas", {})
+        HoldoorServer.notificarTodos("materialesActualizados", {})
+        return true
+
     elseif accion.tipo == "cure_bite" then
         -- API real B42 confirmada en server/ClientCommands.lua:495+ (cheat de body part).
         -- Solo usamos SetBitten/SetInfected/SetFakeInfected en cada body part.
@@ -1491,13 +1514,12 @@ function HoldoorServer._entregarItemsViaAdmin(targetUsername, items)
     return true
 end
 
-function HoldoorServer._distribuirMonedas(bronze, silver, gold)
+function HoldoorServer._distribuirMonedas(bronze, silver, gold, matadorUsername)
     if (bronze or 0) <= 0 and (silver or 0) <= 0 and (gold or 0) <= 0 then return end
 
-    -- v0.7 #40: solo los que estan en la whitelist (snapshot al iniciar oleadas:
-    -- jugadores dentro de 15 tiles de la base) reciben recompensa. Los demas (otros
-    -- usuarios del servidor que NO participaron) no reciben nada. Los que estan en
-    -- la whitelist pero OFFLINE acumulan pago pendiente en GlobalModData.
+    -- v0.8.8: si matadorUsername presente Y identificado online, dar SOLO a él (drops
+    -- por kill son individuales). El bono fin de oleada NO pasa matadorUsername →
+    -- cae al fallback grupal del bloque inferior. Backward-compatible.
     local estado = HoldoorServer.estado
     local recompensables = estado.recompensables or {}
 
@@ -1530,6 +1552,16 @@ function HoldoorServer._distribuirMonedas(bronze, silver, gold)
         end
     end)
 
+    -- v0.8.8: si matador identificado Y online Y en whitelist → solo a él.
+    -- Si matador NO está en whitelist (entró tarde, etc) → fallback grupal (mas generoso).
+    if matadorUsername and onlineByUser[matadorUsername] and recompensables[matadorUsername] then
+        darMonedasA(onlineByUser[matadorUsername], bronze, silver, gold)
+        HoldoorServer.notificarTodos("monedasActualizadas", {})
+        print(string.format("[Holdoor] Monedas al matador %s: %dB/%dS/%dG (individual)",
+            matadorUsername, bronze or 0, silver or 0, gold or 0))
+        return
+    end
+
     local enviados, pendientes = 0, 0
     for username, _ in pairs(recompensables) do
         local p = onlineByUser[username]
@@ -1543,7 +1575,7 @@ function HoldoorServer._distribuirMonedas(bronze, silver, gold)
     end
 
     HoldoorServer.notificarTodos("monedasActualizadas", {})
-    print(string.format("[Holdoor] Monedas distribuidas: %dB/%dS/%dG | online=%d offline=%d",
+    print(string.format("[Holdoor] Monedas distribuidas (grupal): %dB/%dS/%dG | online=%d offline=%d",
         bronze or 0, silver or 0, gold or 0, enviados, pendientes))
 end
 
@@ -2751,7 +2783,7 @@ end
 
 -- Distribuye materiales a todos los players online (en MP) o al player local (en SP).
 -- materiales: tabla {cuero=N, hierro=N, acero=N, valyrio=N, obsidiana=N}
-function HoldoorServer._distribuirMateriales(materiales)
+function HoldoorServer._distribuirMateriales(materiales, matadorUsername)
     if not materiales then return end
     local _hay = false
     for _k, _ in pairs(materiales) do _hay = true; break end
@@ -2773,6 +2805,7 @@ function HoldoorServer._distribuirMateriales(materiales)
 
     -- v0.7 #40: igual que _distribuirMonedas — solo a la whitelist de recompensables,
     -- offline acumula pago pendiente.
+    -- v0.8.8: si matadorUsername presente, dar SOLO a él (drops por kill individuales).
     local estado = HoldoorServer.estado
     local recompensables = estado.recompensables or {}
     local hayWhitelist = false; for _ in pairs(recompensables) do hayWhitelist = true; break end
@@ -2802,6 +2835,13 @@ function HoldoorServer._distribuirMateriales(materiales)
             end
         end
     end)
+
+    -- v0.8.8: matador identificado Y online Y en whitelist → solo a él.
+    if matadorUsername and onlineByUser[matadorUsername] and recompensables[matadorUsername] then
+        darMatsA(onlineByUser[matadorUsername])
+        HoldoorServer.notificarTodos("materialesActualizados", {})
+        return
+    end
 
     local enviados, pendientes = 0, 0
     for username, _ in pairs(recompensables) do
@@ -3103,20 +3143,26 @@ function HoldoorServer._rollDropsPorKill(zombie, matadorUsername)
 
     -- Distribuir monedas (si hubo algo)
     if bronze > 0 or silver > 0 or gold > 0 then
-        HoldoorServer._distribuirMonedas(bronze, silver, gold)
+        -- v0.8.8: drops por kill van al matador (individual). Si no se identificó → grupal fallback.
+        HoldoorServer._distribuirMonedas(bronze, silver, gold, matadorUsername)
         -- Notif al cliente: el cliente decide si poner toast/sonido segun el tipo.
         -- El cliente SIEMPRE pone player:Say sobre la cabeza (incluso para bronce).
+        -- v0.8.8: incluir matador para que el Say arriba de la cabeza solo se haga
+        -- en el cliente del matador (no en todos los clientes como antes).
         if gold > 0 then
             HoldoorServer.notificarTodos("dropKill", {
                 tipo = "gold", cantidad = gold, texto = "+" .. gold .. " ORO !!!",
+                matador = matadorUsername,
             })
         elseif silver > 0 then
             HoldoorServer.notificarTodos("dropKill", {
                 tipo = "silver", cantidad = silver, texto = "+" .. silver .. " Plata",
+                matador = matadorUsername,
             })
         elseif bronze > 0 then
             HoldoorServer.notificarTodos("dropKill", {
                 tipo = "bronce", cantidad = bronze, texto = "+" .. bronze .. " Br",
+                matador = matadorUsername,
             })
         end
     end
@@ -3189,13 +3235,15 @@ function HoldoorServer._rollDropsPorKill(zombie, matadorUsername)
     for _, m in ipairs(matCfgs) do
         if ZombRand(10000) < math.floor(m.chance * 10000) then
             -- Distribuir 1 material directamente al ModData del player
+            -- v0.8.8: drops por kill van al matador (individual).
             local materiales = { [m.col] = 1 }
-            HoldoorServer._distribuirMateriales(materiales)
+            HoldoorServer._distribuirMateriales(materiales, matadorUsername)
             HoldoorServer.notificarTodos("dropKill", {
                 tipo = "material",
                 cantidad = 1,
                 texto = "+1 " .. m.nombre,
                 material = m.col,
+                matador = matadorUsername,  -- v0.8.8: Say solo en cliente del matador
             })
             -- Solo 1 material por kill (si cayó cuero, no testeamos los más raros)
             break
@@ -3227,14 +3275,9 @@ function HoldoorServer.onZombieMuerto(zombie)
     -- v0.6 modelo C: incrementar kills (sin "zombies restantes" porque no hay total fijo).
     estado.oleadaKills = (estado.oleadaKills or 0) + 1
 
-    -- Notificar al cliente del kill (para HUD: actualiza "Kills X/Y" en tiempo real)
-    HoldoorServer.notificarTodos("killUpdate", {
-        kills  = estado.oleadaKills,
-        target = estado.oleadaTargetKills or 0,
-    })
-
     -- v0.6.1 MP: identificar al matador para dropear solo a el (no a todos).
     -- Si no se identifica, fallback al primer player online (SP / hosted solo).
+    -- v0.8.8: movido ANTES del killUpdate para incluir matador en el payload.
     local matadorUsername = nil
     pcall(function()
         local atk = zombie:getAttackedBy()
@@ -3244,6 +3287,15 @@ function HoldoorServer.onZombieMuerto(zombie)
         local ok, p = pcall(getSpecificPlayer, 0)
         if ok and p then pcall(function() matadorUsername = p:getUsername() end) end
     end
+
+    -- Notificar al cliente del kill (para HUD: actualiza "Kills X/Y" en tiempo real).
+    -- v0.8.8: incluye 'matador' para que cada cliente decida si incrementar su contador
+    -- individual (misKills) o solo el del equipo (killsOleada).
+    HoldoorServer.notificarTodos("killUpdate", {
+        kills   = estado.oleadaKills,
+        target  = estado.oleadaTargetKills or 0,
+        matador = matadorUsername,
+    })
 
     -- Drops por kill (v0.6: escalados por modo). El cierre por target se chequea
     -- en _chequearCierreOleada (llamado desde onTick), no aca.
@@ -5178,14 +5230,26 @@ local function _procesarMatarZombiesQueue()
                 pcall(function()
                     HoldoorServer._restaurarSnapshotProgreso(task.jugador, task.snap)
                 end)
+            elseif task.tipo == "teleportTargetAdmin" then
+                -- v0.8.10: dispatch al cliente del HOST admin para que teletransporte al target
+                -- con /teleportto "target" X,Y,Z. Para el host mismo, el cliente del host filtra
+                -- (no se teleporta a sí mismo porque _activarRaiseUpJohnSnow ya lo hizo).
+                HoldoorServer.notificarTodos("ejecutarTeleportTargetAdmin", {
+                    target = task.target, x = task.x, y = task.y, z = task.z,
+                })
+                print(string.format("[Holdoor][Revive] %s diferido %s: delegado teleport al host admin (target=%s)",
+                    task.username or "?", task.label or "?", tostring(task.target)))
             else
-                -- matarZombies (default por compat)
-                local n = 0
-                pcall(function()
-                    n = HoldoorServer._matarZombiesEnArea(task.x, task.y, task.z, task.radio) or 0
-                end)
-                print(string.format("[Holdoor][Revive] %s diferido %s: %d zombies eliminados en (%d,%d,%d)",
-                    task.username or "?", task.label or "?", n, task.x, task.y, task.z))
+                -- v0.8.10: matarZombies via delegate al CLIENTE DEL TARGET (no server-side).
+                -- Razón (gotcha #62): setHealth(0) server-side no afecta los IsoZombies que el
+                -- cliente remoto ve. El cliente del friend ejecuta _matarZombiesEnArea local
+                -- (en su client context, donde sí están sus zombies). Preserva cadáver porque
+                -- _matarZombiesEnArea usa setHealth(0), no toca IsoDeadBody.
+                HoldoorServer.notificarTodos("ejecutarMatarZombiesLocal", {
+                    target = task.username, x = task.x, y = task.y, z = task.z, radio = task.radio,
+                })
+                print(string.format("[Holdoor][Revive] %s diferido %s: delegado matarZombies al cliente (target=%s, radio=%d)",
+                    task.username or "?", task.label or "?", tostring(task.username), task.radio or 15))
             end
             table.remove(HoldoorServer._matarZombiesQueue, i)
         else

@@ -470,6 +470,43 @@ HoldoorShopCatalog.categorias = {
             },
         },
     },
+
+    -- ─────────────────────────────────────────────
+    -- v0.8.9: Banco de Hierro — conversion de monedas + recetas Valyrio/Obsidiana
+    -- El motor de tienda descuenta los recursos del precio (mdKeyMap soporta todos).
+    -- El handler "convertir_recurso" en HoldoorServer suma el destino (accion.recibo).
+    -- ─────────────────────────────────────────────
+    {
+        id     = "banco_hierro",
+        nombre = "Banco de Hierro",
+        descCorta = "Casa de cambio de Braavos. Convierte monedas y forja materiales raros.",
+        cr=0.85, cg=0.70, cb=0.30,
+        items  = {
+            { id="b50_p1", nombre="50 Bronce a 1 Plata",
+              desc="Cambistas de Braavos. Tasa 50:1.",
+              contenido="1 Plata",
+              precio={bronze=50},
+              accion={tipo="convertir_recurso", recibo={key="Holdoor_Silver", cantidad=1}} },
+
+            { id="p30_o1", nombre="30 Plata a 1 Oro",
+              desc="Maestres del Oro. Tasa 30:1.",
+              contenido="1 Oro",
+              precio={silver=30},
+              accion={tipo="convertir_recurso", recibo={key="Holdoor_Gold", cantidad=1}} },
+
+            { id="forja_valyrio", nombre="Forja Valyria",
+              desc="Herreros de Qohor refunden con fuego de dragon.",
+              contenido="1 Acero Valyrio",
+              precio={cuero=15, hierro=10, acero=10},
+              accion={tipo="convertir_recurso", recibo={key="Holdoor_Valyrio", cantidad=1}} },
+
+            { id="forja_obsidiana", nombre="Forja del Vidriagon",
+              desc="Tallado en hueso de dragon. Cura mordeduras.",
+              contenido="1 Obsidiana",
+              precio={cuero=20, hierro=15, acero=12},
+              accion={tipo="convertir_recurso", recibo={key="Holdoor_Obsidiana", cantidad=1}} },
+        },
+    },
 }
 
 -- Construye string de precio formateado en el orden monedas + materiales

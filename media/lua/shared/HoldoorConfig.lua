@@ -129,41 +129,43 @@ HoldoorConfig.perfectRunMatBonus    = 0.15   -- +15% en chances de materiales
 -- Final de modo: plata garantizada + tirada por oro final
 -- 2026-06-13: Bronce base 2x (floor(zombis/2)) + chances +50%.
 HoldoorConfig.rewardTable = {
+    -- v0.8.11 rebalance: subir bonus fin oleada y cantidad cierre final para compensar
+    -- la baja de drops por kill. El cierre final es el premio gordo (al ganar las 5 oleadas).
     facil = {
-        bonusSilverChance = 0.08,   -- 8% (antes 5%)
-        bonusGoldChance   = 0.00,
+        bonusSilverChance = 0.08,
+        bonusGoldChance   = 0.001,  -- v0.8.11: 0% → 0.1% (chance de pegarla, premio raro en Facil)
         endGoldChance     = 0.55,
         endGoldMin        = 1,
         endGoldMax        = 1,
     },
     normal = {
-        bonusSilverChance = 0.18,   -- 18% (antes 12%)
-        bonusGoldChance   = 0.03,   -- 3% (antes 2%)
+        bonusSilverChance = 0.20,   -- v0.8.11: 18% → 20%
+        bonusGoldChance   = 0.04,   -- v0.8.11: 3% → 4%
         endGoldChance     = 0.75,
         endGoldMin        = 1,
-        endGoldMax        = 1,
+        endGoldMax        = 2,      -- v0.8.11: 1 → 1-2 oros al ganar Normal
     },
     dificil = {
-        bonusSilverChance = 0.30,   -- 30% (antes 20%)
-        bonusGoldChance   = 0.08,   -- 8% (antes 5%)
+        bonusSilverChance = 0.35,   -- v0.8.11: 30% → 35%
+        bonusGoldChance   = 0.10,   -- v0.8.11: 8% → 10%
         endGoldChance     = 0.95,
-        endGoldMin        = 1,
-        endGoldMax        = 2,
+        endGoldMin        = 2,      -- v0.8.11: 1 → 2
+        endGoldMax        = 3,      -- v0.8.11: 2 → 3
     },
     pesadilla = {
-        bonusSilverChance = 0.45,   -- 45% (antes 30%)
-        bonusGoldChance   = 0.15,   -- 15% (antes 10%)
+        bonusSilverChance = 0.50,   -- v0.8.11: 45% → 50%
+        bonusGoldChance   = 0.18,   -- v0.8.11: 15% → 18%
         endGoldChance     = 1.00,
-        endGoldMin        = 2,
-        endGoldMax        = 3,
+        endGoldMin        = 3,      -- v0.8.11: 2 → 3
+        endGoldMax        = 5,      -- v0.8.11: 3 → 5
     },
-    -- v0.7: TEST con bonus Normal (era 0.50/0.30/0.80/5/10).
+    -- v0.7: TEST con bonus Normal.
     test = {
-        bonusSilverChance = 0.18,
-        bonusGoldChance   = 0.03,
+        bonusSilverChance = 0.20,
+        bonusGoldChance   = 0.04,
         endGoldChance     = 0.75,
         endGoldMin        = 1,
-        endGoldMax        = 1,
+        endGoldMax        = 2,
     },
 }
 
@@ -367,7 +369,7 @@ HoldoorConfig.frases = {
 }
 
 HoldoorConfig.MODULE  = "Holdoor"
-HoldoorConfig.VERSION = "0.8.7"
+HoldoorConfig.VERSION = "0.8.11"
 
 -- ════════════════════════════════════════════════════════════════════
 -- SPRINT v0.6 — MODELO C HÍBRIDO (timer + target kills)
@@ -718,13 +720,15 @@ HoldoorConfig.testHordasMP = {
 
 -- ─── DROPS POR KILL ──────────────────────────────────────────
 -- Chances BASE (Normal). Se multiplican por dropMultPorModoV6 según dificultad.
+-- v0.8.11: Opción B rebalance — plata y oro mas raros para que la economia
+-- por kill no sea trivial. El Banco de Hierro pasa a ser via principal de oro.
 HoldoorConfig.dropPorKillBase = {
-    bronceChance = 0.25,   -- 25% chance por kill
+    bronceChance = 0.25,   -- 25% chance por kill (sin cambios)
     bronceMin    = 1,
     bronceMax    = 3,      -- random entre 1-3 bronces
-    plataChance  = 0.05,   -- 5%
-    oroChance    = 0.005,  -- 0.5%
-    itemChance   = 0.007,  -- 0.7%
+    plataChance  = 0.03,   -- v0.8.11: 5% → 3% (1 cada 33 kills aprox)
+    oroChance    = 0.0015, -- v0.8.11: 0.5% → 0.15% (1 cada 666 kills aprox)
+    itemChance   = 0.007,  -- 0.7% (sin cambios)
 }
 
 -- Multiplicadores por modo sobre las chances base
@@ -736,11 +740,11 @@ HoldoorConfig.dropMultPorModoV6 = {
     -- v0.7: TEST drops Normal (era 4.0/10.0/20.0/20.0).
     test      = { bronce = 1.0, plata = 1.0, oro = 1.0, item = 1.0 },
 }
--- Tabla resultante (chance final por modo en Normal x mult):
---   Fácil:     bronce 20% | plata 2%  | oro 0.1%  | item 0.3%
---   Normal:    bronce 25% | plata 5%  | oro 0.5%  | item 0.7%
---   Difícil:   bronce 30% | plata 8%  | oro 1.5%  | item 1.2%
---   Pesadilla: bronce 35% | plata 12% | oro 3.0%  | item 2.0%
+-- v0.8.11 Tabla resultante (chance final por modo = base x mult):
+--   Fácil:     bronce 20% | plata 1.2%  | oro 0.03%  | item 0.3%
+--   Normal:    bronce 25% | plata 3.0%  | oro 0.15%  | item 0.7%
+--   Difícil:   bronce 30% | plata 4.8%  | oro 0.45%  | item 1.2%
+--   Pesadilla: bronce 35% | plata 7.2%  | oro 0.90%  | item 2.0%
 
 -- ─── DROPS DE MATERIALES POR KILL ───────────────────────────
 -- Chances bajas (decreasen exponencialmente con la rareza). Aplica mult del modo.

@@ -933,8 +933,10 @@ function HoldoorHUD:_crearContenido()
     self.notifExpireSec = 0
     y = y + 16
 
-    -- Stats personales del jugador
-    self.lblKillsHUD = ISLabel:new(pad, y, 16, "Mis bajas: --", 0.70, 0.90, 0.55, 1, UIFont.Small, true)
+    -- v0.8.8 (revisado): stats kills formato compacto 1 linea.
+    -- SP: "Bajas (oleada): 5"
+    -- MP: "Bajas (oleada): 5 / 8"  (yo / equipo)
+    self.lblKillsHUD = ISLabel:new(pad, y, 16, "Bajas (oleada): --", 0.70, 0.90, 0.55, 1, UIFont.Small, true)
     self:addChild(self.lblKillsHUD)
     y = y + 14
 
@@ -1138,6 +1140,8 @@ function HoldoorHUD:_setExpandido(v)
         self.btnZone,
     }
     for _, c in ipairs(hijos) do if c then c:setVisible(v) end end
+    -- v0.8.8: formato compacto, sin labels extra. El texto "yo / equipo" se arma en
+    -- actualizarTodo y se renderiza en lblKillsHUD y lblKillsPartidaHUD.
     -- v0.7 #35: besoZone es independiente: si HUD colapsa, ocultar SIEMPRE (no captura
     -- clicks asi). Si HUD expande, actualizarHUD decide si mostrarla segun bolsa.
     if self.besoZone then
@@ -1564,21 +1568,35 @@ function HoldoorHUD:actualizarHUD()
         self.lblRadarCount:setName("Buscando: " .. zombiesLeft .. " zombie" .. (zombiesLeft > 1 and "s" or ""))
     end
 
-    -- Stats personales
-    local ko = est.killsOleada  or 0
-    local kp = est.killsPartida or 0
+    -- v0.8.8: stats kills formato compacto "yo / equipo" en MP, "yo" en SP.
+    local miOleada   = est.misKills        or 0
+    local miPartida  = est.misKillsPartida or 0
+    local eqOleada   = est.killsOleada     or 0
+    local eqPartida  = est.killsPartida    or 0
+    local esMP = false
+    pcall(function() esMP = isClient() == true end)
+
+    -- Oleada
     if self.lblKillsHUD then
         if activo then
-            self.lblKillsHUD:setName("Mis bajas (oleada): " .. ko)
+            local txt = esMP
+                and ("Bajas (oleada): " .. miOleada .. " / " .. eqOleada)
+                or  ("Bajas (oleada): " .. miOleada)
+            self.lblKillsHUD:setName(txt)
             self.lblKillsHUD:setColor(0.70, 0.95, 0.55, 1)
         else
-            self.lblKillsHUD:setName("Mis bajas (oleada): --")
+            self.lblKillsHUD:setName("Bajas (oleada): --")
             self.lblKillsHUD:setColor(0.50, 0.55, 0.40, 1)
         end
     end
+
+    -- Partida
     if self.lblKillsPartidaHUD then
-        if kp > 0 then
-            self.lblKillsPartidaHUD:setName("Total partida: " .. kp)
+        if miPartida > 0 or eqPartida > 0 then
+            local txt = esMP
+                and ("Total partida: " .. miPartida .. " / " .. eqPartida)
+                or  ("Total partida: " .. miPartida)
+            self.lblKillsPartidaHUD:setName(txt)
             self.lblKillsPartidaHUD:setColor(0.55, 0.75, 0.45, 1)
         else
             self.lblKillsPartidaHUD:setName("Total partida: --")
