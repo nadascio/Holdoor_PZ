@@ -616,6 +616,18 @@ local function tieneServidorLocal()
     return false
 end
 
+-- v0.8.15: distingue SINGLE PLAYER de cualquier forma de MP (CoopHost host O remoto).
+-- DIFERENTE de tieneServidorLocal(): ese sigue usandose en los handlers CAT 2 para saber si
+-- ejecutar las world APIs (true para SP y CoopHost host). esSinglePlayer() decide si una ACCION
+-- del panel corre directo (SP) o se manda por sendClientCommand para que la logica corra en
+-- SERVER context. Medido en v0.8.14 DIAG: en server-ctx el broadcast por red alcanza al host
+-- (via estado.hostPlayer) Y al friend → ambos ven el HUD. En SP no hay red, corre directo.
+local function esSinglePlayer()
+    local ic = false
+    pcall(function() ic = isClient() end)
+    return not ic
+end
+
 -- v0.8 #23: helper para ejecutar /setaccesslevel via delegate al host admin si soy cliente remoto.
 -- En MP los clientes NO admin no pueden ejecutar /setaccesslevel a si mismos. El amigo manda
 -- una solicitud al server, el server le pide al host admin que ejecute el comando.
@@ -730,6 +742,19 @@ end
 
 function HoldoorClient.onComandoServidor(modulo, comando, args)
     if modulo ~= HoldoorConfig.MODULE then return end
+
+    -- v0.8.14 DIAG: si esto se imprime en el console del HOST, significa que sendServerCommand
+    -- al host local SI llega por red en CoopHost -> el fix real puede usar OPCION B (logica en
+    -- server context + world APIs por red al host). Si NUNCA aparece -> la red al host no llega
+    -- y el fix debe usar onTick client-side leyendo el estado compartido.
+    if comando == "diagPongHost" then
+        local via = tostring(args and args.via or "?")
+        print("[Holdoor][DIAG] *** PONG RECIBIDO POR RED EN CLIENT *** via=" .. via)
+        if HoldoorClient.chat then
+            pcall(HoldoorClient.chat, "[DIAG] PONG recibido por red (via " .. via .. ")", 0.3, 1.0, 0.3)
+        end
+        return
+    end
 
     -- v0.7 #39: SEGURO DE MONEDAS — server avisa que el seguro esta activo al iniciar oleada.
     -- Snapshot del saldo se hace AL MORIR (no aca), asi que aca solo es un aviso generico.
@@ -1395,8 +1420,11 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         -- pasan en args como diagnostico (logs) y por si en futuro se refactoriza la funcion.
         if tieneServidorLocal() then
             local n = 0
+            -- v0.8.15: pasar coords EXPLICITAS de args. Bajo OPCION B esto corre en el client-ctx
+            -- del host, donde HoldoorServer.estado NO esta sincronizado con el server-ctx (contextos
+            -- separados). Sin args, _limpiarZona limpiaria en 0,0,0.
             pcall(function()
-                n = HoldoorServer._limpiarZona() or 0
+                n = HoldoorServer._limpiarZona(args.bx, args.by, args.bz, args.radio) or 0
             end)
             print(string.format("[Holdoor] ejecutarLimpiarZonaLocal: %d eliminados (bx=%s, by=%s, radio=%s)",
                 n, tostring(args.bx), tostring(args.by), tostring(args.radio)))
@@ -1410,6 +1438,18 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
                              args.radio or 100, args.vol or 150)
             print(string.format("[Holdoor] ejecutarAddSoundLocal: ok=%s (x=%d, y=%d, radio=%d, vol=%d)",
                 tostring(ok), args.x, args.y, args.radio or 100, args.vol or 150))
+        end
+
+    elseif comando == "ejecutarReAggroLocal" then
+        -- v0.8.15: pathToLocation sobre los IsoZombie que el host VE (client-ctx). En server-ctx
+        -- no impacta el render del host (gotcha #62). Coords EXPLICITAS en args porque el estado
+        -- del client-ctx no esta sincronizado bajo OPCION B. Solo el host local lo procesa.
+        if tieneServidorLocal() and args.bx and args.by then
+            pcall(function()
+                HoldoorServer._reAggroZombies(args.bx, args.by, args.bz, args.radioSpawn)
+            end)
+            print(string.format("[Holdoor] ejecutarReAggroLocal ejecutado (bx=%s, by=%s, radioSpawn=%s)",
+                tostring(args.bx), tostring(args.by), tostring(args.radioSpawn)))
         end
 
     elseif comando == "ejecutarTeleportTargetAdmin" then
@@ -1650,10 +1690,21 @@ end
 
 function HoldoorClient.iniciar(config, modoId)
     HoldoorClient.estado.modoId = modoId or "normal"
+    -- v0.8.14 DIAG: si soy CoopHost host (isClient + servidor local), disparar ping al server
+    -- para MEDIR si sendServerCommand al host local llega por red. Aditivo: NO altera el flujo
+    -- de oleadas (sigue siendo el de v0.8.13: direct call abajo). Solo instrumenta la incognita
+    -- del engine que define que arquitectura usa el fix real.
+    do
+        local _ic = false; pcall(function() _ic = isClient() end)
+        if _ic and tieneServidorLocal() then
+            print("[Holdoor][DIAG] CoopHost host detectado -> enviando diagPingHost al server")
+            pcall(sendClientCommand, HoldoorConfig.MODULE, "diagPingHost", {})
+        end
+    end
     -- v0.8.7: host local (SP / CoopHost host) llama HoldoorServer directo → corre en client
     -- context, donde setHealth(0) y addSound impactan los IsoZombie visibles. Solo cliente
     -- remoto usa sendClientCommand (correcto MP). Patron v0.7 restaurado.
-    if tieneServidorLocal() then
+    if esSinglePlayer() then
         local player = getSpecificPlayer(0)
         if player then
             local ok, err = pcall(HoldoorServer.iniciar, player, config)
@@ -1669,7 +1720,7 @@ end
 
 function HoldoorClient.detener()
     -- v0.8.7: ver iniciar.
-    if tieneServidorLocal() then
+    if esSinglePlayer() then
         local player = getSpecificPlayer(0)
         if player then
             local ok, err = pcall(HoldoorServer.detener, player)
@@ -1708,7 +1759,7 @@ function HoldoorClient.setBase()
     HoldoorClient.chat("[HOLDOOR] Base marcada en " .. x .. ", " .. y, 0.4, 0.8, 1)
 
     -- v0.8.7: ver iniciar.
-    if tieneServidorLocal() then
+    if esSinglePlayer() then
         local ok, err = pcall(HoldoorServer.setBase, player, x, y, z)
         if not ok then
             print("[Holdoor] setBase ERROR: " .. tostring(err))
@@ -1727,7 +1778,7 @@ function HoldoorClient.quitarBase()
     if not player then return end
 
     -- v0.8.7: ver iniciar.
-    if tieneServidorLocal() then
+    if esSinglePlayer() then
         local ok, err = pcall(HoldoorServer.quitarBase, player)
         if not ok then print("[Holdoor] quitarBase ERROR: " .. tostring(err)) end
     else
@@ -1737,7 +1788,7 @@ end
 
 function HoldoorClient.oleadaManual()
     -- v0.8.7: ver iniciar. Validaciones v0.7.
-    if tieneServidorLocal() then
+    if esSinglePlayer() then
         if not HoldoorServer.estado.activo then
             HoldoorClient.chat("[HOLDOOR] El sistema de oleadas no esta activo.", 1, 0.3, 0.2)
             return
@@ -2076,7 +2127,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
     local args = { categoria=categoriaId, item=itemId }
     if infoNivel then args.precioOverride = infoNivel.precio end
     -- v0.8.7: host local directo, remoto via sendClientCommand (ver iniciar).
-    if tieneServidorLocal() then
+    if esSinglePlayer() then
         local p = getSpecificPlayer(0)
         if p then
             local ok, err = pcall(HoldoorServer._comprar, p, args)
@@ -2355,7 +2406,7 @@ end
 function HoldoorClient.transferir(toUser, tipo, cantidad)
     local args = { to=toUser, tipo=tipo, cantidad=cantidad }
     -- v0.8.7: host local directo, remoto via sendClientCommand.
-    if tieneServidorLocal() then
+    if esSinglePlayer() then
         local p = getSpecificPlayer(0)
         if p then pcall(HoldoorServer._transferirMonedas, p, args) end
     else
@@ -2491,7 +2542,7 @@ function HoldoorClient.init()
     end)
 
     print("[Holdoor] Cliente inicializado v" .. HoldoorConfig.VERSION .. " -- usa /holdoor en el chat para abrir el panel")
-    print("[Holdoor v0.8.13 MARKER] Separacion CAT1/CAT2: _limpiarZona y addSound via delegate al cliente del host.")
+    print("[Holdoor v0.8.15 MARKER] OPCION B: logica de oleada corre en SERVER context (sendClientCommand siempre en MP), broadcast por red al host (estado.hostPlayer) + friend. World APIs (limpieza/aggro/reaggro) con coords explicitas en client-ctx del host.")
     if tieneServidorLocal() then
         print("[Holdoor] Modo: SINGLE PLAYER (acceso directo al servidor)")
     else

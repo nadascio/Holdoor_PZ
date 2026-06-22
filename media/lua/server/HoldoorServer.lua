@@ -1929,7 +1929,12 @@ function HoldoorServer._aggroSostenido()
     -- 2) Re-path EXPLICITO: forzar pathToLocation en todos los zombies cercanos.
     --    Es el fallback que en modelo viejo funcionaba (los zombies seguian su path
     --    aunque addSound no los aggreara). Cada 4s mantiene los paths frescos.
-    HoldoorServer._reAggroZombies()
+    -- v0.8.15: delegado al cliente del host (pathToLocation no impacta en server-ctx). Coords
+    -- explicitas en args (el client-ctx no tiene el estado sincronizado).
+    HoldoorServer.notificarTodos("ejecutarReAggroLocal", {
+        bx = estado.baseX, by = estado.baseY, bz = estado.baseZ,
+        radioSpawn = (estado.config.radioSpawn or 20),
+    })
 end
 
 -- v0.6 — Check de cierre de oleada (timer Y/O target kills, lo que pase primero).
@@ -2394,20 +2399,23 @@ end
 --  Para que los que se quedaron quietos o se distrajeron vuelvan al combate
 -- ─────────────────────────────────────────────
 
-function HoldoorServer._reAggroZombies()
+function HoldoorServer._reAggroZombies(bxArg, byArg, bzArg, radioSpawnArg)
+    -- v0.8.15: acepta coords EXPLICITAS (params). Bajo OPCION B corre en client-ctx del host
+    -- (delegada via CAT 2) donde el estado no esta sincronizado. El check de fase=activa lo hace
+    -- el server ANTES de delegar (en _aggroSostenido), por eso aca no lo re-chequeamos.
     local estado = HoldoorServer.estado
-    if estado.fase ~= "activa" then return end
-
-    local bx = estado.baseX
-    local by = estado.baseY
-    local bz = estado.baseZ
-    local radio = math.floor((estado.config.radioSpawn or 20) + 15)
+    local bx = bxArg or estado.baseX
+    local by = byArg or estado.baseY
+    local bz = bzArg or estado.baseZ
+    local radioSpawnBase = radioSpawnArg or (estado.config.radioSpawn or 20)
+    if not bx or not by then return end
+    local radio = math.floor(radioSpawnBase + 15)
 
     local ok_cell, cell = pcall(getCell)
     if not ok_cell or not cell then return end
 
     local repathed = 0
-    local destRadio = math.max(2, math.floor((estado.config.radioSpawn or 20) * 0.3))
+    local destRadio = math.max(2, math.floor(radioSpawnBase * 0.3))
 
     for dx = -radio, radio do
         for dy = -radio, radio do
@@ -2579,12 +2587,17 @@ function HoldoorServer._limpiarCadaveres()
     return cadaveresRemovidos
 end
 
-function HoldoorServer._limpiarZona()
+function HoldoorServer._limpiarZona(bxArg, byArg, bzArg, radioArg)
+    -- v0.8.15: acepta coords EXPLICITAS (params). Bajo OPCION B esta funcion corre en el CLIENT
+    -- context del host (delegada via CAT 2 / notificarTodos), donde HoldoorServer.estado NO esta
+    -- sincronizado con el server-ctx (contextos separados, medido en v0.8.14). Por eso usamos los
+    -- args; si no vienen (SP / llamada directa), caemos al estado local.
     local estado = HoldoorServer.estado
-    local bx = estado.baseX
-    local by = estado.baseY
-    local bz = estado.baseZ
-    local radio = math.floor((estado.config.radioSpawn or 20) + 30)   -- v0.7: +12 -> +30 (~45 tiles)
+    local bx = bxArg or estado.baseX
+    local by = byArg or estado.baseY
+    local bz = bzArg or estado.baseZ
+    local radio = radioArg or math.floor((estado.config.radioSpawn or 20) + 30)   -- v0.7: +12 -> +30 (~45 tiles)
+    if not bx or not by then return 0 end
 
     local ok_cell, cell = pcall(getCell)
     if not ok_cell or not cell then return 0 end
@@ -4839,23 +4852,52 @@ end
 -- ─────────────────────────────────────────────
 
 function HoldoorServer.notificarTodos(tipo, datos)
-    -- v0.6.1 fix final: en MP hosted, sendServerCommand al host local NO llega via
-    -- loopback (mismo proceso). Por eso llamamos onComandoServidor directo PRIMERO para
-    -- que el HUD del host se sincronize. Esto se ejecuta en server-context, donde APIs
-    -- como InventoryItemFactory son null — PERO ahora los items se entregan via /additem
-    -- (cliente-side, fuera de notificarTodos), entonces no hay choque de context.
-    -- Para clientes remotos, sendServerCommand SÍ llega (van por la red).
-    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
-        pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, tipo, datos)
+    -- v0.8.15: detectar si corremos en SERVER context. Medido en v0.8.14 DIAG: en CoopHost el
+    -- server-ctx tiene isServer=true / isClient=false, getSpecificPlayer(0)==nil, y HoldoorClient
+    -- no existe → el host NO recibe por loopback ni por getSpecificPlayer(0). Debe recibir por RED
+    -- (sendServerCommand al objeto player guardado en estado.hostPlayer; medido: llega via=jugador).
+    local enServerCtx = false
+    pcall(function() enServerCtx = (isServer() == true) and (isClient() ~= true) end)
+
+    if not enServerCtx then
+        -- ── SP / client-context: comportamiento clasico v0.6.1 (INTACTO) ──
+        -- loopback directo al cliente local + broadcast a remotos excluyendo al local.
+        if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+            pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, tipo, datos)
+        end
+        local localUser
+        pcall(function()
+            local lp = getSpecificPlayer(0)
+            if lp then localUser = lp:getUsername() end
+        end)
+        local ok, players = pcall(getOnlinePlayers)
+        if ok and players then
+            local ok2, n = pcall(function() return players:size() end)
+            if ok2 and n and n > 0 then
+                for i = 0, n - 1 do
+                    local ok3, p = pcall(function() return players:get(i) end)
+                    if ok3 and p then
+                        local pUser
+                        pcall(function() pUser = p:getUsername() end)
+                        if pUser ~= localUser then
+                            pcall(sendServerCommand, p, HoldoorConfig.MODULE, tipo, datos)
+                        end
+                    end
+                end
+            end
+        end
+        return
     end
 
-    -- Broadcast a clientes remotos (excluye al host local que ya manejamos arriba)
-    local localUser
-    pcall(function()
-        local lp = getSpecificPlayer(0)
-        if lp then localUser = lp:getUsername() end
-    end)
+    -- ── SERVER context (CoopHost / dedicated): TODO va por RED ──
+    -- Mandamos a cada player conectado (incluido el host si aparece en getOnlinePlayers). El host
+    -- recibe en su CLIENT context, donde las world APIs (addSound/limpieza/reaggro) impactan y el
+    -- HUD se actualiza. El friend tambien recibe → ve el HUD. Esto resuelve el bug del friend.
+    local hostPlayer = HoldoorServer.estado.hostPlayer
+    local hostUser
+    if hostPlayer then pcall(function() hostUser = hostPlayer:getUsername() end) end
 
+    local hostAlcanzado = false
     local ok, players = pcall(getOnlinePlayers)
     if ok and players then
         local ok2, n = pcall(function() return players:size() end)
@@ -4863,14 +4905,20 @@ function HoldoorServer.notificarTodos(tipo, datos)
             for i = 0, n - 1 do
                 local ok3, p = pcall(function() return players:get(i) end)
                 if ok3 and p then
-                    local pUser
-                    pcall(function() pUser = p:getUsername() end)
-                    if pUser ~= localUser then
-                        pcall(sendServerCommand, p, HoldoorConfig.MODULE, tipo, datos)
+                    pcall(sendServerCommand, p, HoldoorConfig.MODULE, tipo, datos)
+                    if hostUser then
+                        local pUser
+                        pcall(function() pUser = p:getUsername() end)
+                        if pUser == hostUser then hostAlcanzado = true end
                     end
                 end
             end
         end
+    end
+
+    -- Fallback: si el host no estaba en getOnlinePlayers, mandarle explicito (medido: llega).
+    if not hostAlcanzado and hostPlayer then
+        pcall(sendServerCommand, hostPlayer, HoldoorConfig.MODULE, tipo, datos)
     end
 end
 
@@ -4895,12 +4943,16 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
     -- - setBase / oleadaManual / pedirEstado / transferir / comprar: cualquiera
 
     if comando == "iniciar" then
+        -- v0.8.15: guardar el player object del HOST para poder mandarle broadcasts por red desde
+        -- server-ctx (getSpecificPlayer(0) da nil ahi; este objeto SI llega, medido v0.8.14).
+        HoldoorServer.estado.hostPlayer = jugador
         HoldoorServer.iniciar(jugador, args.config)
 
     elseif comando == "detener" then
         HoldoorServer.detener(jugador)
 
     elseif comando == "setBase" then
+        HoldoorServer.estado.hostPlayer = jugador  -- v0.8.15: ver "iniciar"
         HoldoorServer.setBase(jugador, args.x, args.y, args.z)
     elseif comando == "quitarBase" then
         HoldoorServer.quitarBase(jugador)
@@ -5097,6 +5149,31 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
             baseDefinida      = estado.baseDefinida,
             config            = estado.config,
         })
+
+    elseif comando == "diagPingHost" then
+        -- v0.8.14 DIAG: el host disparo este ping. Respondemos con un "pong" por sendServerCommand
+        -- para MEDIR si la red al host local llega en CoopHost. Probamos 2 rutas: el jugador que
+        -- pidio (arg de OnClientCommand) y getSpecificPlayer(0). Si el host ve "PONG RECIBIDO POR
+        -- RED" en su console -> OPCION B viable. Si no -> hay que usar onTick client-side.
+        local _is, _ic = false, false
+        pcall(function() _is = isServer() end)
+        pcall(function() _ic = isClient() end)
+        local jugUser = "nil"
+        pcall(function() if jugador then jugUser = jugador:getUsername() end end)
+        print(string.format("[Holdoor][DIAG] diagPingHost recibido en server-ctx | isServer=%s isClient=%s jugador=%s",
+            tostring(_is), tostring(_ic), tostring(jugUser)))
+        if jugador then
+            local okp = pcall(sendServerCommand, jugador, HoldoorConfig.MODULE, "diagPongHost", { via = "jugador" })
+            print("[Holdoor][DIAG] pong->jugador enviado (sendServerCommand ok=" .. tostring(okp) .. ")")
+        end
+        local lp
+        pcall(function() lp = getSpecificPlayer(0) end)
+        if lp then
+            local okp2 = pcall(sendServerCommand, lp, HoldoorConfig.MODULE, "diagPongHost", { via = "getSpecificPlayer0" })
+            print("[Holdoor][DIAG] pong->getSpecificPlayer(0) enviado (sendServerCommand ok=" .. tostring(okp2) .. ")")
+        else
+            print("[Holdoor][DIAG] getSpecificPlayer(0) devolvio nil en server-ctx")
+        end
     end
 end
 
