@@ -395,6 +395,7 @@ function HoldoorClient._activarRaiseUpJohnSnow(coordsObjetivo)
     print(string.format("[Holdoor] RaiseUp ACTIVADO para %s — esRevive=%s coords=%s",
         username, tostring(esRevive),
         esRevive and string.format("(%d,%d,%d)", coordsObjetivo.x, coordsObjetivo.y, coordsObjetivo.z) or "lugar-seguro"))
+    if HoldoorServer and HoldoorServer._raiseDbg then HoldoorServer._raiseDbg("CLIENT-ANIMACION", username, "esRevive="..tostring(esRevive)) end
 
     -- 1) Pantalla negra fade epica
     if HoldoorRaiseUpFade and HoldoorRaiseUpFade.mostrar then
@@ -753,6 +754,16 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         if HoldoorClient.chat then
             pcall(HoldoorClient.chat, "[DIAG] PONG recibido por red (via " .. via .. ")", 0.3, 1.0, 0.3)
         end
+        return
+    end
+
+    -- v0.8.17: el server avisa que moriste con Raise activo y revuelves a la vida → tenes legado
+    -- pendiente. El boton del HUD ya se activo (via md sincronizado). Avisamos por chat + refresh HUD.
+    if comando == "legadoDisponible" then
+        if HoldoorClient.chat then
+            pcall(HoldoorClient.chat, "[HOLDOOR] El R'hllor te ofrece volver. Apreta RAISE UP en el panel lateral para recuperar tu legado.", 0.95, 0.75, 0.20)
+        end
+        if HoldoorUI and HoldoorUI.actualizarTodo then pcall(HoldoorUI.actualizarTodo) end
         return
     end
 
@@ -1212,10 +1223,13 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         if HoldoorUI and HoldoorUI.overlay and HoldoorUI.instancia and HoldoorUI.instancia:isVisible() then
             HoldoorUI.overlay:setVisible(true)
         end
-        -- v0.8.4: SOLO el HOST planta el Trono fisico. _plantarTrono usa IsoThumpable + addToWorld
-        -- que requieren CLIENT context. Antes corria server-side y no se renderizaba. Ahora
-        -- el cliente del HOST lo planta local (el objeto se sincroniza al amigo via PZ world sync).
-        if tieneServidorLocal() and HoldoorServer and HoldoorServer._plantarTrono then
+        -- v0.8.16: CADA cliente planta su propia copia local del Trono (IsoThumpable). En MP
+        -- CoopHost, crear el objeto client-side SOLO en el host NO se propaga al friend
+        -- (transmitUpdatedSprite actualiza el sprite de un objeto EXISTENTE, no lo crea) y
+        -- server-side no renderiza. Por eso el friend ahora planta su instancia local con las
+        -- coords del broadcast (que le llegan gracias a OPCION B). HP/destruccion los maneja la
+        -- logica del server por broadcasts. Ver gotchas "Objetos del mundo en MP CoopHost".
+        if HoldoorServer and HoldoorServer._plantarTrono then
             pcall(function() HoldoorServer._plantarTrono(args.x, args.y, args.z) end)
         end
 
@@ -1225,8 +1239,8 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.estado.tronoHP, HoldoorClient.estado.tronoMaxHP = nil, nil
         -- v0.7 #16: esconder overlay al quitar base (no hay nada que mostrar).
         if HoldoorUI and HoldoorUI.overlay then HoldoorUI.overlay:setVisible(false) end
-        -- v0.8.4: SOLO el HOST destruye el Trono fisico (mismo razonamiento que baseActualizada)
-        if tieneServidorLocal() and HoldoorServer and HoldoorServer._quitarTrono then
+        -- v0.8.16: cada cliente quita SU copia local del Trono (mismo razonamiento que baseActualizada).
+        if HoldoorServer and HoldoorServer._quitarTrono then
             pcall(function() HoldoorServer._quitarTrono() end)
         end
         -- Tambien borrar de ModData del propio jugador (persistencia)
@@ -1410,6 +1424,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             end)
             print(string.format("[Holdoor] ejecutarMatarZombiesLocal (target=%s): %d zombies eliminados en (%d,%d,%d) radio=%d",
                 miUsername, n, args.x, args.y, args.z or 0, args.radio or 15))
+            if HoldoorServer and HoldoorServer._raiseDbg then HoldoorServer._raiseDbg("CLIENT-MATAR-ZOMBIES", miUsername, n.." eliminados radio="..(args.radio or 15)) end
         end
 
     elseif comando == "ejecutarLimpiarZonaLocal" then
@@ -2542,7 +2557,7 @@ function HoldoorClient.init()
     end)
 
     print("[Holdoor] Cliente inicializado v" .. HoldoorConfig.VERSION .. " -- usa /holdoor en el chat para abrir el panel")
-    print("[Holdoor v0.8.15 MARKER] OPCION B: logica de oleada corre en SERVER context (sendClientCommand siempre en MP), broadcast por red al host (estado.hostPlayer) + friend. World APIs (limpieza/aggro/reaggro) con coords explicitas en client-ctx del host.")
+    print("[Holdoor v0.8.19 MARKER] Raise up fix contextos: muerte detecta raise via md.Bolsa (player modData, SI sincroniza entre contextos), y el boton ejecuta recuperarLegado EN CLIENT-CTX (donde _onPlayerMuerto guardo el snapshot). Medido: el GlobalModData NO cruza contextos en CoopHost. Prints DIAG activos.")
     if tieneServidorLocal() then
         print("[Holdoor] Modo: SINGLE PLAYER (acceso directo al servidor)")
     else

@@ -264,8 +264,38 @@ local function _persistirMilagros()
     end
 end
 
+-- v0.8.18: milagrosPersist es una tabla en memoria cargada UNA VEZ al iniciar el server. Bajo
+-- OPCIÓN B la compra corre en server-ctx y la muerte/revive (OnPlayerDeath/OnCreatePlayer) en
+-- client-ctx → cada contexto tiene su PROPIA tabla en memoria y NO se ven (por eso el Raise up
+-- daba entry=false al morir aunque el HUD mostraba ACTIVO). Recargamos del GlobalModData
+-- (sincronizado entre contextos via ModData.transmit) antes de cada lectura/escritura critica.
+-- Ver gotchas "Tablas Lua en memoria NO se comparten entre contextos en CoopHost".
+local function _recargarMilagros()
+    local ok, gm = pcall(ModData.getOrCreate, "Holdoor_MilagrosPersist")
+    if ok and gm and gm.milagros then
+        HoldoorServer.milagrosPersist = gm.milagros
+    end
+end
+
+-- ─────────────────────────────────────────────
+-- DEBUGGER del flujo Raise up John Snow (host + friend). Loguea cada paso con: el contexto
+-- (isServer/isClient/isCoopHost — CLAVE para saber en que contexto corre el flujo del friend),
+-- el username, y datos extra. Greppeable por "RAISE-DBG". Expuesto en HoldoorServer para que
+-- los handlers client (HoldoorClient.lua) tambien lo usen. Quitar cuando el Raise up este
+-- 100% cerrado (host + friend confirmados).
+-- ─────────────────────────────────────────────
+function HoldoorServer._raiseDbg(paso, username, extra)
+    local s, c, ch = "?", "?", "?"
+    pcall(function() s  = tostring(isServer()) end)
+    pcall(function() c  = tostring(isClient()) end)
+    pcall(function() ch = tostring(isCoopHost()) end)
+    print(string.format("[Holdoor][RAISE-DBG] %-16s | user=%s | ctx S=%s C=%s CH=%s | %s",
+        tostring(paso), tostring(username), s, c, ch, tostring(extra or "")))
+end
+
 function HoldoorServer._setMilagroPersist(username, key, value)
     if not username or not key then return end
+    _recargarMilagros()  -- v0.8.18: estado fresco del global antes de modificar (no pisar otro ctx)
     if not HoldoorServer.milagrosPersist then HoldoorServer.milagrosPersist = {} end
     local entry = HoldoorServer.milagrosPersist[username] or {}
     if value then entry[key] = true else entry[key] = nil end
@@ -287,6 +317,7 @@ function HoldoorServer._aplicarMilagrosPersistAJugador(jugador)
     if not jugador then return end
     local username = jugador:getUsername()
     if not username then return end
+    _recargarMilagros()  -- v0.8.18: la compra pudo correr en otro ctx (server-ctx)
     if not HoldoorServer.milagrosPersist then return end
     local entry = HoldoorServer.milagrosPersist[username]
     if not entry then return end
@@ -339,6 +370,7 @@ function HoldoorServer._snapshotJugador(jugador, motivo)
     if not jugador then return end
     local username = jugador:getUsername()
     if not username then return end
+    _recargarMilagros()  -- v0.8.18: estado fresco del global antes de snapshot (cross-ctx)
     if not HoldoorServer.milagrosPersist then HoldoorServer.milagrosPersist = {} end
     local entry = HoldoorServer.milagrosPersist[username] or {}
 
@@ -571,14 +603,54 @@ function HoldoorServer._matarZombiesEnArea(cx, cy, cz, radio)
     return eliminados
 end
 
+-- v0.8.17: NUEVO flujo ON-DEMAND. OnCreatePlayer ya NO ejecuta el revive automaticamente
+-- (era fragil: el char recien creado no estaba 100% inicializado → no disparaba NADA: ni
+-- animacion, ni teleport, ni matar zombies). Ahora SOLO activa el boton del HUD: el jugador
+-- aprieta "Raise up John Snow — Recupera tu Legado" cuando esta listo, y ESO dispara
+-- _ejecutarRecuperarLegado (via handler "recuperarLegado"). El char ya esta inicializado.
 function HoldoorServer._aplicarRevivePendiente(jugador)
-    -- Llamado en OnCreatePlayer. Si el username tiene needsRevive=true + snapshot:
-    --   1) Restaura todo el progreso server-side
-    --   2) Envia evento "raiseUpRevive" al cliente con coords muerte → cliente hace fade+admin+teleport+matar zombies
-    --   3) Limpia persist (item consumido)
     if not jugador then return end
     local username = jugador:getUsername()
     if not username then return end
+    _recargarMilagros()  -- v0.8.18: el needsRevive/snapshot se escribio en otro ctx posiblemente
+    if not HoldoorServer.milagrosPersist then return end
+    local entry = HoldoorServer.milagrosPersist[username]
+    -- v0.8.17 DIAG: ver si al revivir hay needsRevive/snapshot/coords (botón legado no aparecia).
+    HoldoorServer._raiseDbg("REVIVE-DETECT", username, string.format("entry=%s needsRevive=%s snap=%s coords=%s",
+        tostring(entry ~= nil), tostring(entry and entry.needsRevive),
+        tostring(entry and entry.snapshot ~= nil), tostring(entry and entry.deathCoords ~= nil)))
+    if not entry or not entry.needsRevive then return end
+    if not entry.snapshot or not entry.deathCoords then
+        print("[Holdoor][Revive] " .. username .. ": needsRevive pero falta snapshot/coords — abortando")
+        entry.needsRevive = nil
+        HoldoorServer.milagrosPersist[username] = entry
+        _persistirMilagros()
+        return
+    end
+    -- Solo activar el boton (flag md) + avisar. La ejecucion real espera al click del jugador.
+    local md = jugador:getModData()
+    if md then
+        md.Holdoor_RaiseUp_LegadoDisponible = true
+        pcall(function() jugador:transmitModData() end)
+    end
+    print("[Holdoor][Revive] " .. username .. ": LEGADO DISPONIBLE — boton activado, esperando click del jugador")
+    pcall(function()
+        sendServerCommand(jugador, HoldoorConfig.MODULE, "legadoDisponible", {})
+    end)
+end
+
+-- v0.8.17: el cuerpo que ANTES era _aplicarRevivePendiente automatico. Ahora se dispara
+-- ON-DEMAND cuando el jugador aprieta el boton del HUD (handler "recuperarLegado").
+--   1) Restaura todo el progreso server-side
+--   2) Envia evento "raiseUpRevive" al cliente con coords muerte → cliente hace fade+admin+teleport+matar zombies
+--   3) Limpia persist (item consumido)
+function HoldoorServer._ejecutarRecuperarLegado(jugador)
+    -- Llamado por el handler "recuperarLegado" cuando el jugador aprieta el boton.
+    -- Si el username tiene needsRevive=true + snapshot:
+    if not jugador then return end
+    local username = jugador:getUsername()
+    if not username then return end
+    _recargarMilagros()  -- v0.8.18: este corre en server-ctx; el snapshot/needsRevive se escribio en client-ctx
     if not HoldoorServer.milagrosPersist then return end
     local entry = HoldoorServer.milagrosPersist[username]
     if not entry or not entry.needsRevive then return end
@@ -590,7 +662,8 @@ function HoldoorServer._aplicarRevivePendiente(jugador)
         return
     end
 
-    print("[Holdoor][Revive] " .. username .. " spawn detectado con needsRevive — iniciando flow")
+    HoldoorServer._raiseDbg("RECUPERAR-INICIO", username, string.format("entry=true snap=true coords=(%d,%d,%d)",
+        entry.deathCoords.x, entry.deathCoords.y, entry.deathCoords.z))
 
     -- 1) Restore INMEDIATO de monedas/materiales (md directo, funciona en OnCreatePlayer)
     pcall(function() HoldoorServer._restaurarSnapshotMonedas(jugador, entry.snapshot) end)
@@ -669,6 +742,7 @@ function HoldoorServer._aplicarRevivePendiente(jugador)
         md.Holdoor_RaiseUp_Bolsa   = nil
         md.Holdoor_RaiseUp_Activo  = nil
         md.Holdoor_RaiseSnapshotTs = nil  -- v0.8 #21 fix: tambien el TS del HUD
+        md.Holdoor_RaiseUp_LegadoDisponible = nil  -- v0.8.17: apagar boton legado (consumido)
         pcall(function() jugador:transmitModData() end)
     end
 end
@@ -5031,6 +5105,13 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
             print("[Holdoor][Server] toggleRaiseUp: " .. tostring(jugador:getUsername()) .. " no tiene Raise up en bolsa (ignorado)")
         end
 
+    elseif comando == "recuperarLegado" then
+        -- v0.8.17: el jugador apreto el boton "Raise up John Snow — Recupera tu Legado" tras
+        -- morir y revivir. Dispara el flujo completo ON-DEMAND (animacion + godmode + restore
+        -- skills/monedas/materiales + teleport al cuerpo + matar zombies). El char ya esta
+        -- inicializado porque el jugador eligio el momento → no hay timing fragil de OnCreatePlayer.
+        pcall(function() HoldoorServer._ejecutarRecuperarLegado(jugador) end)
+
     elseif comando == "marcarPuntoRetorno" then
         -- v0.8 #22: el jugador planta/reemplaza su Punto de Retorno personal.
         -- Recibe coords actuales del player (args.x/y/z) y las guarda en md.
@@ -5192,9 +5273,16 @@ function HoldoorServer._onPlayerMuerto(jugador)
         if not jugador then return end
         local u = jugador:getUsername()
         if not u then return end
-        local entry = HoldoorServer.milagrosPersist and HoldoorServer.milagrosPersist[u]
-        if not entry or not entry.raise then return end           -- no tiene Raise comprado
-        if entry.raiseOff then return end                          -- toggle OFF: el user lo apago
+        -- v0.8.19: detectar el Raise via PLAYER modData (se sincroniza entre contextos via
+        -- transmitModData — confiable), NO via milagrosPersist. Medido 2026-06-22: la compra corre
+        -- en server-ctx y este evento (OnPlayerDeath) en client-ctx → milagrosPersist NO se comparte
+        -- entre contextos (ni en memoria ni via GlobalModData transmit). md.Bolsa SÍ cruza (HUD lo prueba).
+        local mdMuerto = jugador:getModData()
+        local tieneRaise  = (mdMuerto and mdMuerto.Holdoor_RaiseUp_Bolsa)  and true or false
+        local raiseActivo = (mdMuerto and mdMuerto.Holdoor_RaiseUp_Activo) and true or false
+        HoldoorServer._raiseDbg("MUERTE", u, string.format("Bolsa=%s Activo=%s", tostring(tieneRaise), tostring(raiseActivo)))
+        if not tieneRaise then return end    -- no tiene Raise comprado
+        if not raiseActivo then return end   -- toggle OFF: el user lo apago
 
         -- v0.8 #21: snapshot FRESH al morir — garantiza materiales/monedas/XP del momento de muerte
         pcall(function() HoldoorServer._snapshotJugador(jugador, "muerte") end)
@@ -5213,6 +5301,15 @@ function HoldoorServer._onPlayerMuerto(jugador)
         _persistirMilagros()
         print(string.format("[Holdoor][Revive] %s murio en (%d,%d,%d) — Raise up activado, sera revivido al respawn",
             u, entry.deathCoords.x, entry.deathCoords.y, entry.deathCoords.z))
+
+        -- BLINDAJE DEL CUERPO: despejar zombies en radio CHICO (3) sobre el cadaver, para que no se
+        -- lo coman mientras el jugador decide cuando revivir. _matarZombiesEnArea usa setHealth(0),
+        -- NO toca el IsoDeadBody del player → su cuerpo queda intacto para lootear. Radio 3 = solo los
+        -- que estan literalmente encima; NO barre la oleada (ese respiro lo da el revive radio 15).
+        pcall(function()
+            local n = HoldoorServer._matarZombiesEnArea(entry.deathCoords.x, entry.deathCoords.y, entry.deathCoords.z, 3) or 0
+            print(string.format("[Holdoor][Revive] Blindaje cuerpo: %d zombies despejados (radio 3) sobre el cadaver de %s", n, u))
+        end)
     end)
 
     local estado = HoldoorServer.estado

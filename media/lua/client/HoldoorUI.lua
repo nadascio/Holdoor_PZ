@@ -1081,6 +1081,28 @@ function HoldoorHUD:onRaiseUpToggle()
     local me = getSpecificPlayer(0)
     if not me then return end
     local md = me:getModData()
+    -- v0.8.17: si hay LEGADO disponible (murio con Raise activo y revivio) → recuperar (prioridad).
+    -- Dispara el flujo completo on-demand: animacion + godmode + restore + teleport + matar zombies.
+    if md and md.Holdoor_RaiseUp_LegadoDisponible then
+        HoldoorClient.chat("[HOLDOOR] Levantate, Jon Snow. El R'hllor te devuelve a la vida...", 0.95, 0.75, 0.20)
+        -- v0.8.19: ejecutar EN CLIENT-CTX (donde _onPlayerMuerto guardó el snapshot al morir).
+        -- Mandarlo a server-ctx via sendClientCommand NO veria el snapshot (contextos separados en
+        -- CoopHost — medido 2026-06-22). El host ejecuta directo en su client-ctx. Remoto delega
+        -- (TODO friend: su snapshot vive en su propio client-ctx).
+        local esHost = false
+        pcall(function() esHost = (not isClient()) or isCoopHost() end)
+        if HoldoorServer and HoldoorServer._raiseDbg then
+            local u = (getSpecificPlayer(0) and getSpecificPlayer(0):getUsername()) or "?"
+            HoldoorServer._raiseDbg("BOTON-CLICK", u, "esHost="..tostring(esHost).." -> "..(esHost and "ejecuta-directo-client-ctx" or "sendClientCommand-a-server-ctx"))
+        end
+        if esHost and HoldoorServer and HoldoorServer._ejecutarRecuperarLegado then
+            local p = getSpecificPlayer(0)
+            if p then pcall(function() HoldoorServer._ejecutarRecuperarLegado(p) end) end
+        else
+            pcall(function() sendClientCommand(HoldoorConfig.MODULE, "recuperarLegado", {}) end)
+        end
+        return
+    end
     -- v0.8 #9: si esta grisado (no comprado), avisar donde comprarlo
     if not (md and md.Holdoor_RaiseUp_Bolsa) then
         HoldoorClient.chat("[HOLDOOR] No tenes Raise up John Snow. Compralo en TIENDA → Milagros del Maestre.", 0.85, 0.65, 0.30)
@@ -1220,12 +1242,16 @@ function HoldoorHUD:actualizarHUD()
         local me = getSpecificPlayer(0)
         local enBolsa, activo = false, false
         local snapshotTs = 0
+        local legadoDisp = false   -- v0.8.17: murio con Raise activo y revivio → boton para recuperar
         if me then
             local md = me:getModData()
-            if md and md.Holdoor_RaiseUp_Bolsa then
-                enBolsa = true
-                activo = md.Holdoor_RaiseUp_Activo and true or false
-                snapshotTs = md.Holdoor_RaiseSnapshotTs or 0
+            if md then
+                legadoDisp = md.Holdoor_RaiseUp_LegadoDisponible and true or false
+                if md.Holdoor_RaiseUp_Bolsa then
+                    enBolsa = true
+                    activo = md.Holdoor_RaiseUp_Activo and true or false
+                    snapshotTs = md.Holdoor_RaiseSnapshotTs or 0
+                end
             end
         end
 
@@ -1244,7 +1270,13 @@ function HoldoorHUD:actualizarHUD()
         end
 
         self.raiseZone:setVisible(self.expandido)  -- siempre visible cuando HUD expandido
-        if not enBolsa then
+        if legadoDisp then
+            -- v0.8.17: PRIORIDAD MAXIMA. Murio con Raise activo y revivio → ofrecer recuperar legado.
+            self.btnRaiseUp:setTitle("RAISE UP — RECUPERA TU LEGADO")
+            self.btnRaiseUp.backgroundColor = { r=0.55, g=0.42, b=0.10, a=1 }  -- dorado
+            self.btnRaiseUp.borderColor     = { r=1.0, g=0.82, b=0.30, a=1 }
+            self.btnRaiseUp.textColor       = { r=1, g=0.95, b=0.70, a=1 }
+        elseif not enBolsa then
             -- v0.8 #10: mismo estilo que "Sin saldo" de la tienda
             self.btnRaiseUp:setTitle("Raise up Snow — no comprado")
             self.btnRaiseUp.backgroundColor = { r=0.18, g=0.18, b=0.20, a=1 }

@@ -369,7 +369,7 @@ HoldoorConfig.frases = {
 }
 
 HoldoorConfig.MODULE  = "Holdoor"
-HoldoorConfig.VERSION = "0.8.15"
+HoldoorConfig.VERSION = "0.8.19"
 
 -- ════════════════════════════════════════════════════════════════════
 -- SPRINT v0.6 — MODELO C HÍBRIDO (timer + target kills)
