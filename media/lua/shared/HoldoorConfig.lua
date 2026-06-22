@@ -91,13 +91,16 @@ HoldoorConfig.modos = {
 
 -- ─── HP DEL TRONO POR MODO ──────────────────────────────────
 -- HP máximo de la forja (pieza central del Trono). Game over cuando llega a 0.
--- Suben las dificultades altas tienen menos HP — combinan más zombis + Trono más frágil.
+-- El HP es un COLCHÓN de emergencia para cuando se filtran zombis a la forja, no la barra
+-- principal de la pelea (la gente arma base y mata melee en la puerta). Sube con la dificultad
+-- para compensar que el daño por zombi también sube (1/2/4/8) — así pesadilla sigue siendo
+-- pesadilla por el daño, no por un Trono de cristal.
 HoldoorConfig.tronoHPPorModo = {
-    facil     = 600,
-    normal    = 500,
-    dificil   = 400,
-    pesadilla = 300,
-    test      = 600,
+    facil     = 700,
+    normal    = 800,
+    dificil   = 900,
+    pesadilla = 1000,
+    test      = 700,
 }
 
 -- ─── MULTIPLICADORES GLOBALES DE DROP POR MODO ──────────────
@@ -369,7 +372,7 @@ HoldoorConfig.frases = {
 }
 
 HoldoorConfig.MODULE  = "Holdoor"
-HoldoorConfig.VERSION = "0.8.19"
+HoldoorConfig.VERSION = "0.9.0"
 
 -- ════════════════════════════════════════════════════════════════════
 -- SPRINT v0.6 — MODELO C HÍBRIDO (timer + target kills)

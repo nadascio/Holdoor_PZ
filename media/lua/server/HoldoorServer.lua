@@ -285,12 +285,14 @@ end
 -- 100% cerrado (host + friend confirmados).
 -- ─────────────────────────────────────────────
 function HoldoorServer._raiseDbg(paso, username, extra)
-    local s, c, ch = "?", "?", "?"
-    pcall(function() s  = tostring(isServer()) end)
-    pcall(function() c  = tostring(isClient()) end)
-    pcall(function() ch = tostring(isCoopHost()) end)
-    print(string.format("[Holdoor][RAISE-DBG] %-16s | user=%s | ctx S=%s C=%s CH=%s | %s",
-        tostring(paso), tostring(username), s, c, ch, tostring(extra or "")))
+    -- v0.9.0: neutralizado para release (no spam en consola). Las llamadas quedan inertes.
+    -- Para volver a debuggear el Raise up, descomentar el bloque de abajo.
+    -- local s, c, ch = "?", "?", "?"
+    -- pcall(function() s  = tostring(isServer()) end)
+    -- pcall(function() c  = tostring(isClient()) end)
+    -- pcall(function() ch = tostring(isCoopHost()) end)
+    -- print(string.format("[Holdoor][RAISE-DBG] %-16s | user=%s | ctx S=%s C=%s CH=%s | %s",
+    --     tostring(paso), tostring(username), s, c, ch, tostring(extra or "")))
 end
 
 function HoldoorServer._setMilagroPersist(username, key, value)
@@ -974,19 +976,28 @@ function HoldoorServer.iniciar(jugador, config)
         end
     end)
 
-    -- v0.6 fix: resetear HP del Trono al iniciar nueva instancia. Sino conserva HP
-    -- residual de la sesion anterior (ej. termina test con 1200/1500 → arranca normal con 1200).
+    -- v0.8.x FIX TRONO MP: fijar el HP del Trono al valor del MODO al iniciar.
+    -- El reset viejo corria en server-ctx (estado.trono es nil en CoopHost -> no hacia nada) y
+    -- ademas usaba estado.trono.maxHP, que es el HP del PLANTADO (default "normal", porque al
+    -- marcar base el client-ctx del host aun no tenia modoId). Ahora: el server calcula el HP por
+    -- modo, lo fija como autoridad y delega al host el ajuste del Trono fisico (vive en su client-ctx).
+    local hpModo = HoldoorServer._getHPTronoPorModo(estado.config.modoId)
+    estado.tronoHP    = hpModo
+    estado.tronoMaxHP = hpModo
+    -- SP: el Trono vive en este mismo contexto -> ajustar directo (el loopback de notificarTodos
+    -- tambien dispararia el handler, pero esto garantiza el estado server-side).
     if estado.trono and estado.trono.piezas then
-        local maxHpTrono = estado.trono.maxHP or 1500
+        estado.trono.maxHP = hpModo
+        if estado.trono.piezaCentral then estado.trono.piezaCentral.hpMax = hpModo end
         for _, p in ipairs(estado.trono.piezas) do
-            if p and p.obj then
-                pcall(function() p.obj:setHealth(maxHpTrono) end)
-            end
+            if p and p.obj then pcall(function() p.obj:setHealth(hpModo) end) end
         end
-        estado.tronoHP = maxHpTrono
-        HoldoorServer.notificarTodos("tronoHP", { hp = maxHpTrono, maxHp = maxHpTrono })
-        print(string.format("[Holdoor] HP Trono reseteado a %d/%d al iniciar nueva instancia", maxHpTrono, maxHpTrono))
     end
+    -- CoopHost: el Trono fisico vive en el client-ctx del host -> delegar el ajuste.
+    HoldoorServer.notificarTodos("ajustarHPTronoLocal", { hp = hpModo })
+    HoldoorServer.notificarTodos("tronoHP", { hp = hpModo, maxHp = hpModo })
+    print(string.format("[Holdoor] HP Trono fijado a %d/%d (modo %s) al iniciar",
+        hpModo, hpModo, tostring(estado.config.modoId)))
 
     print("[Holdoor] Iniciado por " .. jugador:getUsername() .. " | Jugadores: " .. numPlayers .. " | Mult: x" .. mult)
     HoldoorServer.notificarTodos("iniciado", {
@@ -3109,41 +3120,19 @@ function HoldoorServer.onTick()
         end
     end
 
-    -- Polling del HP del Trono + warnings + game over
-    if estado.trono and estado.trono.piezas then
+    -- v0.8.x FIX TRONO MP: el daño y el HP del Trono se calculan en el CLIENT-ctx del HOST
+    -- (donde vive el objeto Trono). En server-ctx estado.trono es nil (setBase no planta aca,
+    -- solo notifica) → antes _aplicarDanoBoost hacia return y el HP quedaba 500/500. Delegamos:
+    -- el server pide al host que aplique daño a su Trono local + reporte el HP. El warnings/
+    -- game over/broadcast los hace el server al recibir el HP (handler "reportarTronoHP").
+    if estado.activo and estado.fase == "activa" and estado.baseDefinida then
         local ahora = os.time()
-
-        -- Damage boost server-side cada 2s en fase activa
-        -- (compensa el daño muy bajo que hacen los zombis vanilla a thumpables)
-        if estado.fase == "activa" and ahora >= (estado.ultimoDmgBoost or 0) + 2 then
+        if ahora >= (estado.ultimoDmgBoost or 0) + 2 then
             estado.ultimoDmgBoost = ahora
-            HoldoorServer._aplicarDanoBoost()
-        end
-
-        -- HP polling cada 1s
-        -- HP del Trono = SOLO el HP de la pieza central (forja).
-        -- Las barricadas se rompen individualmente pero NO afectan al HP del Trono.
-        if ahora >= (estado.ultimoHPTick or 0) + 1 then
-            estado.ultimoHPTick = ahora
-            local centro = estado.trono.piezaCentral
-            local hpCentro = 0
-            if centro and centro.obj then
-                pcall(function() hpCentro = centro.obj:getHealth() end)
-                hpCentro = math.max(0, hpCentro)
-            end
-            local maxHp = estado.trono.maxHP or 1500
-            if hpCentro ~= estado.tronoHP or maxHp ~= estado.tronoMaxHP then
-                HoldoorServer._checkWarningsHP(estado.tronoHP or maxHp, hpCentro, maxHp)
-
-                estado.tronoHP = hpCentro
-                estado.tronoMaxHP = maxHp
-                HoldoorServer.notificarTodos("tronoHP", { hp = hpCentro, maxHp = maxHp })
-
-                -- Game Over: forja a 0 = Trono caido
-                if hpCentro <= 0 and estado.config.modoDefensa and estado.fase ~= "derrotado" then
-                    HoldoorServer._tronoCayo()
-                end
-            end
+            HoldoorServer.notificarTodos("ejecutarDanoTronoLocal", {
+                bx = estado.baseX, by = estado.baseY, bz = estado.baseZ,
+                modoId = (estado.config and estado.config.modoId) or "normal",
+            })
         end
     end
 
@@ -3472,6 +3461,17 @@ end
 -- ─────────────────────────────────────────────
 
 function HoldoorServer.setBase(jugador, x, y, z)
+    -- v0.8.x ANTI-EXPLOIT: el Trono debe plantarse a nivel del suelo (planta baja, Z=0).
+    -- Sin esto el jugador puede ponerlo en un piso superior y romper la escalera -> los zombis
+    -- nunca pathean hasta el -> victoria gratis. Sotanos (Z<0) tambien quedan bloqueados.
+    if math.floor(z or 0) ~= 0 then
+        pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "aviso",
+              { mensaje = "El Trono debe marcarse a nivel del suelo (planta baja). Baja a la planta baja para marcar la base." })
+        print("[Holdoor] setBase RECHAZADO: Z=" .. tostring(z) .. " no es planta baja (jugador "
+              .. (jugador and jugador:getUsername() or "?") .. ")")
+        return
+    end
+
     -- v0.8.4: _plantarTrono se movio al cliente (handler baseActualizada en HoldoorClient).
     -- Esto es porque IsoThumpable + addToWorld requieren CLIENT context para sincronizar
     -- el objeto al mundo. Server-side la API no funciona en CoopHost mode.
@@ -5131,6 +5131,28 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
             _persistirMilagros()
             HoldoorServer._raiseDbg("REGISTRAR-MUERTE-FRIEND", u, string.format("snapshot recibido del client del friend, coords=(%d,%d,%d)",
                 args.deathCoords.x, args.deathCoords.y, args.deathCoords.z))
+        end
+
+    elseif comando == "reportarTronoHP" then
+        -- v0.8.x FIX TRONO MP: el host (que tiene el Trono en su client-ctx) nos reporta el HP de
+        -- su forja tras aplicar el daño. Aca el server hace la LOGICA: warnings + broadcast del HP +
+        -- game over si llega a 0. Antes esto corria en el onTick leyendo estado.trono, que es nil
+        -- en server-ctx → nunca actualizaba (HP quedaba 500/500).
+        local estado = HoldoorServer.estado
+        if estado.activo then
+            local hp    = tonumber(args and args.hp) or 0
+            local maxHp = tonumber(args and args.maxHp) or estado.tronoMaxHP or 1500
+            hp = math.max(0, hp)
+            if hp ~= estado.tronoHP or maxHp ~= estado.tronoMaxHP then
+                HoldoorServer._checkWarningsHP(estado.tronoHP or maxHp, hp, maxHp)
+                estado.tronoHP    = hp
+                estado.tronoMaxHP = maxHp
+                HoldoorServer.notificarTodos("tronoHP", { hp = hp, maxHp = maxHp })
+                -- Game Over: forja a 0 = Trono caido
+                if hp <= 0 and estado.config.modoDefensa and estado.fase ~= "derrotado" then
+                    HoldoorServer._tronoCayo()
+                end
+            end
         end
 
     elseif comando == "marcarPuntoRetorno" then

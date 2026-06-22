@@ -1,0 +1,52 @@
+v0.9.0 - Multiplayer Solido
+
+Sprint largo de cierre del soporte multiplayer. El foco fue que TODO funcione
+igual para el host y para los invitados, no solo para quien hostea.
+Lema de la version: es para todos o para ninguno.
+
+---------- EL TRONO EN MULTIPLAYER ----------
+
+- El Trono ahora recibe dano correctamente en partidas CoopHost. Antes el calculo
+  de dano corria en un contexto del motor donde el Trono fisico no existia, asi que
+  el HP quedaba clavado en el maximo y los zombis nunca lo bajaban.
+- El dano se calcula y aplica en el cliente del host (donde el Trono es mutable) y
+  el HP se transmite a todos los jugadores. Host e invitados ven el mismo numero.
+- El HP del Trono se fija segun el modo AL INICIAR la oleada. Antes heredaba un
+  valor incorrecto del momento de marcar la base (cuando el modo todavia no se sabia).
+
+---------- HP DEL TRONO REBALANCEADO ----------
+
+- Vida por dificultad: 700 Facil / 800 Normal / 900 Dificil / 1000 Pesadilla.
+- La vida SUBE con la dificultad para compensar que el dano por zombi tambien sube
+  (1 / 2 / 4 / 8 por zombi adyacente). En Pesadilla los zombis pegan mas fuerte, asi
+  que la tension viene del dano, no de un Trono de cristal.
+- El HP es un colchon de emergencia para cuando se te filtran zombis a la forja, no
+  la barra principal de la pelea: se asume que defendes con muros y melee en la puerta.
+
+---------- LEVANTATE JOHN SNOW EN MULTIPLAYER ----------
+
+- El milagro de resurreccion (conserva skills, recetas, monedas y materiales) ahora
+  funciona para TODOS los jugadores, no solo el host.
+- Blindaje del cuerpo al morir: se despeja un radio de zombis alrededor del cadaver
+  para que puedas recuperar tus pertenencias antes de que se lo coman.
+
+---------- FIXES MP ----------
+
+- Limpieza de oleada arreglada: al terminar la oleada los zombis ya no quedan
+  mordiendo a los invitados (la limpieza ahora corre tambien en su cliente).
+- Transferencia de monedas con aviso visible para el jugador que las recibe.
+
+---------- ANTI-TRAMPA ----------
+
+- El Trono debe marcarse a nivel del suelo (planta baja). No se puede esconder en un
+  piso superior y romper la escalera para que los zombis nunca lleguen. Si intentas
+  marcar la base en altura, el mod lo rechaza con un aviso.
+
+---------- TIENDA ----------
+
+- Aviso al subir Estado Fisico o Fuerza al nivel 10: son habilidades pasivas cuyo
+  nivel maximo lo limita el PESO del personaje (sobrepeso, bajo peso, obesidad). La
+  tienda ahora te avisa antes de comprar, para que no gastes monedas si tu peso no
+  permite el salto.
+
+Hold the door... Hodor.

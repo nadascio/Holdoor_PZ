@@ -582,6 +582,32 @@ function HoldoorShopPanel:onComprar(button)
         return
     end
 
+    -- v0.9.0: advertencia al subir una skill PASIVA (Fitness/Fuerza) al NIVEL 10.
+    -- El nivel maximo de las pasivas lo capea el PESO del personaje (sobrepeso/bajo peso/obesidad):
+    -- el jugador podria gastar las monedas y NO subir. NO validamos (es mecanica del juego base),
+    -- solo advertimos para no prometer el salto. Solo en el 9->10 (nivelActual == 9); el resto
+    -- de los niveles compra normal sin cartel. Reusa onConfirmComprar (modal Si/No ya existente).
+    if itemDef and itemDef.accion and itemDef.accion.tipo == "subir_nivel"
+       and itemDef.accion.tier == "pasiva" and HoldoorClient and HoldoorClient.calcSubirNivel then
+        local info = HoldoorClient.calcSubirNivel(itemDef.accion.perk, itemDef.accion.tier)
+        if info and not info.max and info.nivelActual == 9 then
+            local txt = "ATENCION: vas a subir " .. (itemDef.nombre or "esta habilidad") .. " al NIVEL 10.\n\n"
+                     .. "Es una habilidad PASIVA: tu PESO corporal (sobrepeso, bajo peso u obesidad) "
+                     .. "puede impedir el salto al 10. Si tu peso no es el adecuado, podrias gastar las "
+                     .. "monedas y NO subir de nivel.\n\n"
+                     .. "Comprar la experiencia igual?"
+            local modal = ISModalDialog:new(0, 0, 420, 230, txt, true, self,
+                HoldoorShopPanel.onConfirmComprar, 0, categoriaId, itemId)
+            modal:initialise()
+            modal:addToUIManager()
+            local sw = getCore():getScreenWidth()
+            local sh = getCore():getScreenHeight()
+            modal:setX((sw - modal.width) / 2)
+            modal:setY((sh - modal.height) / 2)
+            return
+        end
+    end
+
     HoldoorClient.comprar(categoriaId, itemId)
 end
 

@@ -1488,6 +1488,46 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
                 tostring(args.bx), tostring(args.by), tostring(args.radioSpawn)))
         end
 
+    elseif comando == "ejecutarDanoTronoLocal" then
+        -- v0.8.x FIX TRONO MP: el HOST aplica el daño a su Trono local (cuenta zombies adyacentes
+        -- + setHealth) y reporta el HP de la forja al server. El Trono vive en el client-ctx del
+        -- host (no en server-ctx), por eso el daño/HP se calculan aca. Solo el host (tieneServidorLocal).
+        if tieneServidorLocal() then
+            -- asegurar modoId en el client-ctx del host (vive en server-ctx) para que el daño por
+            -- zombi de _aplicarDanoBoost use el valor del modo correcto, no el default "normal".
+            pcall(function()
+                HoldoorServer.estado.config = HoldoorServer.estado.config or {}
+                if args.modoId then HoldoorServer.estado.config.modoId = args.modoId end
+            end)
+            pcall(function() HoldoorServer._aplicarDanoBoost() end)
+            local trono = HoldoorServer.estado and HoldoorServer.estado.trono
+            if trono and trono.piezaCentral and trono.piezaCentral.obj then
+                local hp = 0
+                pcall(function() hp = trono.piezaCentral.obj:getHealth() end)
+                hp = math.max(0, hp)
+                local maxHp = trono.maxHP or 1500
+                pcall(function()
+                    sendClientCommand(HoldoorConfig.MODULE, "reportarTronoHP", { hp = hp, maxHp = maxHp })
+                end)
+            end
+        end
+
+    elseif comando == "ajustarHPTronoLocal" then
+        -- v0.8.x FIX TRONO MP: el host fija el HP de su Trono fisico al valor del modo (enviado por
+        -- el server al iniciar). Corrige el plantado, que usa el default "normal" porque al marcar
+        -- base el client-ctx aun no conocia el modoId. Solo el host (tieneServidorLocal).
+        if tieneServidorLocal() then
+            local hp = tonumber(args and args.hp) or 0
+            local trono = HoldoorServer.estado and HoldoorServer.estado.trono
+            if hp > 0 and trono and trono.piezas then
+                trono.maxHP = hp
+                if trono.piezaCentral then trono.piezaCentral.hpMax = hp end
+                for _, p in ipairs(trono.piezas) do
+                    if p and p.obj then pcall(function() p.obj:setHealth(hp) end) end
+                end
+            end
+        end
+
     elseif comando == "ejecutarTeleportTargetAdmin" then
         -- v0.8.10: el HOST admin teletransporta al target con /teleportto "target" X,Y,Z.
         -- Solo el cliente del host (tieneServidorLocal) lo ejecuta. Si target == miUsername
@@ -1726,17 +1766,6 @@ end
 
 function HoldoorClient.iniciar(config, modoId)
     HoldoorClient.estado.modoId = modoId or "normal"
-    -- v0.8.14 DIAG: si soy CoopHost host (isClient + servidor local), disparar ping al server
-    -- para MEDIR si sendServerCommand al host local llega por red. Aditivo: NO altera el flujo
-    -- de oleadas (sigue siendo el de v0.8.13: direct call abajo). Solo instrumenta la incognita
-    -- del engine que define que arquitectura usa el fix real.
-    do
-        local _ic = false; pcall(function() _ic = isClient() end)
-        if _ic and tieneServidorLocal() then
-            print("[Holdoor][DIAG] CoopHost host detectado -> enviando diagPingHost al server")
-            pcall(sendClientCommand, HoldoorConfig.MODULE, "diagPingHost", {})
-        end
-    end
     -- v0.8.7: host local (SP / CoopHost host) llama HoldoorServer directo → corre en client
     -- context, donde setHealth(0) y addSound impactan los IsoZombie visibles. Solo cliente
     -- remoto usa sendClientCommand (correcto MP). Patron v0.7 restaurado.
@@ -1773,6 +1802,16 @@ function HoldoorClient.setBase()
     local x = math.floor(player:getX())
     local y = math.floor(player:getY())
     local z = math.floor(player:getZ())
+
+    -- v0.8.x ANTI-EXPLOIT: el Trono debe plantarse a nivel del suelo (planta baja, Z=0). Sin esto
+    -- el jugador lo pone en un piso superior y rompe la escalera -> los zombis nunca pathean -> gana
+    -- gratis. La validacion va ACA (cliente), ANTES de marcar local/optimista: si validamos solo en
+    -- el server, el cliente ya seteo baseDefinida + mostro el toast "Base marcada" antes de que el
+    -- server alcance a rechazar. (La validacion del server queda igual como respaldo.)
+    if z ~= 0 then
+        HoldoorClient.chat("[HOLDOOR] El Trono debe marcarse a NIVEL DEL SUELO (planta baja). Baja a la planta baja para marcar la base.", 1, 0.45, 0.45)
+        return
+    end
 
     HoldoorClient.estado.baseX        = x
     HoldoorClient.estado.baseY        = y
