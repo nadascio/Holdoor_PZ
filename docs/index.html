@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Holdoor — Guía del Defensor del Trono</title>
+<meta name="description" content="Guía completa del mod Holdoor para Project Zomboid B42: oleadas, tienda, milagros, modos y estadísticas.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=EB+Garamond:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0c0c10; --bg2:#13131a; --panel:#181821; --panel2:#1f1f2b;
+    --gold:#d4af37; --gold-soft:#c9a227; --iron:#8a8f99; --blood:#8b1a1a; --blood-bright:#c0392b;
+    --ice:#7fb6d6; --text:#e9e6df; --muted:#a09a8d; --line:#2c2c38;
+    --green:#5fae5f; --amber:#e0b53e; --orange:#e07b39; --red:#d2493f; --test:#5e8fd0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:'EB Garamond',Georgia,serif; font-size:18px; line-height:1.65;
+    background-image:radial-gradient(ellipse at top,#1a1a24 0%,#0c0c10 60%);
+    background-attachment:fixed;
+  }
+  h1,h2,h3,h4{font-family:'Cinzel',serif; line-height:1.2; color:var(--gold)}
+  a{color:var(--gold-soft)} a:hover{color:#f1d471}
+
+  /* HERO */
+  header.hero{
+    text-align:center; padding:70px 20px 50px; border-bottom:2px solid var(--line);
+    background:linear-gradient(180deg,rgba(139,26,26,.18),transparent 70%);
+  }
+  header.hero .crest{font-size:54px;letter-spacing:6px}
+  header.hero h1{font-size:clamp(34px,6vw,64px); font-weight:900; letter-spacing:3px;
+    text-shadow:0 2px 18px rgba(212,175,55,.35)}
+  header.hero .tag{font-style:italic; color:var(--iron); font-size:clamp(16px,2.5vw,22px); margin-top:10px}
+  header.hero .ver{display:inline-block;margin-top:18px;padding:4px 16px;border:1px solid var(--gold-soft);
+    border-radius:20px;color:var(--gold-soft);font-family:'Cinzel';font-size:13px;letter-spacing:2px}
+
+  /* NAV */
+  nav{position:sticky;top:0;z-index:50;background:rgba(10,10,14,.95);backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--line);padding:10px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+  nav a{font-family:'Cinzel';font-size:12.5px;letter-spacing:1px;text-decoration:none;color:var(--muted);
+    padding:6px 11px;border-radius:6px;border:1px solid transparent;white-space:nowrap;transition:.15s}
+  nav a:hover{color:var(--gold);border-color:var(--line);background:var(--panel)}
+
+  main{max-width:920px;margin:0 auto;padding:10px 20px 80px}
+  section{padding:46px 0 10px;border-bottom:1px solid var(--line)}
+  section:last-of-type{border-bottom:none}
+  h2{font-size:clamp(26px,4vw,38px);margin-bottom:6px;display:flex;align-items:center;gap:12px}
+  h2 .ico{font-size:.9em;filter:drop-shadow(0 0 6px rgba(212,175,55,.4))}
+  h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--gold-soft),transparent)}
+  h3{font-size:21px;color:#e7d9a8;margin:26px 0 8px}
+  p{margin:10px 0;color:var(--text)}
+  .lead{font-size:20px;color:#d8d2c4}
+  .muted{color:var(--muted)}
+  strong{color:#f1e6c4}
+  ul,ol{margin:10px 0 10px 24px} li{margin:6px 0}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:16px 0}
+  .step{background:var(--panel);border-left:3px solid var(--gold-soft);border-radius:8px;padding:14px 16px}
+  .step .n{font-family:'Cinzel';color:var(--gold);font-size:13px;letter-spacing:2px}
+  .callout{background:linear-gradient(180deg,rgba(139,26,26,.15),var(--panel));border:1px solid var(--blood);
+    border-radius:10px;padding:14px 18px;margin:16px 0}
+  .callout.gold{background:linear-gradient(180deg,rgba(212,175,55,.1),var(--panel));border-color:var(--gold-soft)}
+  .tip{background:linear-gradient(180deg,rgba(127,182,214,.1),var(--panel));border:1px solid var(--ice);
+    border-radius:10px;padding:14px 18px;margin:14px 0}
+
+  /* tablas */
+  .tw{overflow-x:auto;margin:16px 0;border-radius:10px;border:1px solid var(--line)}
+  table{width:100%;border-collapse:collapse;min-width:480px;background:var(--panel)}
+  th,td{padding:10px 12px;text-align:center;border-bottom:1px solid var(--line);font-size:15.5px}
+  th{font-family:'Cinzel';font-size:12.5px;letter-spacing:1px;color:var(--gold);background:var(--panel2);
+    position:sticky;top:0}
+  td:first-child,th:first-child{text-align:left}
+  tr:last-child td{border-bottom:none}
+  .m-facil{color:var(--green)} .m-normal{color:var(--amber)} .m-dificil{color:var(--orange)}
+  .m-pesadilla{color:var(--red)} .m-test{color:var(--test)}
+
+  /* tienda colapsable */
+  details{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:12px 0;overflow:hidden}
+  details[open]{border-color:var(--gold-soft)}
+  summary{cursor:pointer;padding:14px 18px;font-family:'Cinzel';font-size:17px;color:#e7d9a8;
+    list-style:none;display:flex;align-items:center;gap:10px;user-select:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"\25B8";color:var(--gold-soft);transition:.2s;font-size:14px}
+  details[open] summary::before{transform:rotate(90deg)}
+  summary:hover{background:var(--panel2)}
+  .det-body{padding:4px 20px 18px}
+  .sub{color:var(--gold-soft);font-family:'Cinzel';font-size:12.5px;letter-spacing:1px;
+    margin:14px 0 4px;text-transform:uppercase}
+
+  .coin{display:inline-block;padding:1px 9px;border-radius:12px;font-size:13px;font-weight:bold;
+    font-family:'Cinzel';margin:0 2px}
+  .bronze{background:#5a3b1e;color:#e0a96d} .silver{background:#454a52;color:#cfd6e0} .gold{background:#5a4a12;color:#f0d264}
+
+  footer{text-align:center;padding:46px 20px;color:var(--muted);border-top:2px solid var(--line);
+    background:linear-gradient(0deg,rgba(139,26,26,.12),transparent)}
+  footer .hodor{font-family:'Cinzel';color:var(--gold);font-size:20px;letter-spacing:3px;margin:14px 0}
+  footer a{margin:0 10px}
+
+  .imgph{border:1px dashed var(--iron);border-radius:10px;padding:26px;text-align:center;color:var(--muted);
+    font-style:italic;margin:14px 0;background:repeating-linear-gradient(45deg,#14141a,#14141a 10px,#161620 10px,#161620 20px)}
+  @media(max-width:600px){ body{font-size:16.5px} main{padding:6px 14px 60px} th,td{padding:8px 9px;font-size:13.5px} }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="crest">⚔</div>
+  <h1>HOLDOOR</h1>
+  <div class="tag">Guía del Defensor del Trono de Hierro</div>
+  <div class="ver">WAVE DEFENSE GOT &nbsp;·&nbsp; v0.9.0 &nbsp;·&nbsp; PZ BUILD 42</div>
+</header>
+
+<nav>
+  <a href="#intro">Intro</a>
+  <a href="#arranque">Arranque</a>
+  <a href="#oleadas">Oleadas</a>
+  <a href="#trono">El Trono</a>
+  <a href="#tienda">La Tienda</a>
+  <a href="#milagros">Milagros</a>
+  <a href="#modos">Modos</a>
+  <a href="#stats">Estadísticas</a>
+  <a href="#mp">Multiplayer</a>
+  <a href="#tips">Tips & FAQ</a>
+</nav>
+
+<main>
+
+<section id="intro">
+  <h2><span class="ico">🛡️</span> Qué es Holdoor</h2>
+  <p class="lead">Un sistema de <strong>defensa por oleadas</strong> con temática Game of Thrones para Project Zomboid Build 42. Marcás tu base, aparece el <strong>Trono de Hierro</strong> y defendés contra hordas crecientes de muertos. Si el Trono cae, perdés.</p>
+  <div class="card">
+    <h3 style="margin-top:0">El loop del juego</h3>
+    <p>Marcás tu base con <strong>F10</strong> → el Trono de Hierro aparece físicamente en el centro → arrancan oleadas de zombis que vienen a romperlo → cada kill te da <strong>monedas y materiales</strong> → gastás en la <strong>Tienda</strong> entre oleada y oleada → aguantás más → eventualmente el Trono cae o vos llegás al final.</p>
+    <p class="muted">Sesión típica: 30–90 minutos. Solo o cooperativo. Es un modo <strong>opcional</strong>: activás Holdoor cuando querés, sin reemplazar tu partida normal de PZ.</p>
+  </div>
+</section>
+
+<section id="arranque">
+  <h2><span class="ico">🚪</span> Arranque rápido</h2>
+  <div class="grid">
+    <div class="step"><div class="n">PASO 1</div><strong>Abrí el panel</strong><br>En <strong>single player</strong>: tecla <strong>F10</strong>. En <strong>multiplayer</strong>: comando <strong>/holdoor</strong> en el chat (solo el host/admin).</div>
+    <div class="step"><div class="n">PASO 2</div><strong>Marcá tu base</strong><br>Parate donde querés el Trono y apretá <strong>"Marcar mi base"</strong>. Debe ser a <strong>nivel del suelo</strong> (planta baja).</div>
+    <div class="step"><div class="n">PASO 3</div><strong>Elegí la dificultad</strong><br>Fácil / Normal / Difícil / Pesadilla / Test. Cambia HP del Trono, cantidad de zombis y recompensas.</div>
+    <div class="step"><div class="n">PASO 4</div><strong>Iniciá las oleadas</strong><br>Apretá <strong>"Iniciar oleadas"</strong> y defendé. El círculo naranja marca de dónde van a aparecer los zombis.</div>
+  </div>
+  <div class="tip"><strong>El HUD lateral</strong> (derecha de la pantalla) te muestra en todo momento: oleada actual y timer, bajas, tu saldo de monedas y materiales, y los botones de tus ítems premium (Beso del Dios, Raise up) cuando los comprás.</div>
+</section>
+
+<section id="oleadas">
+  <h2><span class="ico">🌊</span> Cómo funcionan las oleadas</h2>
+  <p>Cada oleada combina <strong>tiempo + meta de muertes</strong>. La oleada se cierra por lo que pase primero:</p>
+  <ul>
+    <li><strong>Llegás a la meta de kills antes del tiempo</strong> → <strong style="color:var(--gold)">Cierre Limpio</strong>: +25% de recompensa. Premia al jugador agresivo.</li>
+    <li><strong>Se vence el timer</strong> → Sobreviviste, recompensa base.</li>
+    <li><strong>El Trono cae a 0 HP</strong> → Game Over (en Modo Defensa).</li>
+  </ul>
+  <h3>Cúmulos, no goteo</h3>
+  <p>Los zombis no aparecen de a uno: vienen en <strong>cúmulos</strong> coordinados desde los puntos cardinales (Norte/Sur/Este/Oeste), cada uno con destino común hacia tu Trono. Cada cúmulo se siente como una incursión real. Un <strong>aggro sostenido</strong> (sonido cada 4s desde la base) los mantiene viniendo hacia vos.</p>
+  <h3>Fases de cada oleada</h3>
+  <p><strong>Preparación</strong> (limpieza de zona + countdown) → <strong>Activa</strong> (spawn continuo) → <strong>Pausa</strong> (30s para usar la tienda y curarte) → siguiente oleada.</p>
+  <div class="tip">Los datos exactos de cuántos zombis trae cada oleada por modo están en la sección <a href="#stats">Estadísticas</a>.</div>
+</section>
+
+<section id="trono">
+  <h2><span class="ico">👑</span> El Trono de Hierro</h2>
+  <p>Es tu objetivo: un objeto físico que se planta en el centro de tu base. Los zombis vienen a romperlo. Tiene una barra de <strong>HP que escala con la dificultad</strong> — funciona como un <strong>colchón de emergencia</strong> para cuando se te filtran zombis, no como la barra principal de la pelea (lo ideal es defender con muros y melee en la puerta).</p>
+  <div class="callout"><strong>Modo Defensa</strong> (activado por defecto): si el Trono llega a 0 HP, <strong>perdés la partida</strong>. Si lo desactivás, el Trono puede caer sin game over (modo más relajado).</div>
+  <div class="callout gold"><strong>Importante:</strong> el Trono <strong>debe marcarse a nivel del suelo (planta baja)</strong>. No se puede esconder en un piso superior y romper la escalera — el mod lo rechaza, porque sería ganar sin riesgo.</div>
+</section>
+
+<section id="tienda">
+  <h2><span class="ico">🪙</span> La Tienda</h2>
+  <p>Durante las pausas entre oleadas abrís la tienda y gastás lo que ganaste. Hay <strong>2 tipos de moneda de cambio</strong>:</p>
+  <p><strong>Monedas:</strong> <span class="coin bronze">Bronce</span> <span class="coin silver">Plata</span> <span class="coin gold">Oro</span> &nbsp;—&nbsp; <strong>Materiales:</strong> Cuero · Hierro · Acero · <strong style="color:#c0392b">Valyrio</strong> · <strong style="color:#7fb6d6">Obsidiana</strong></p>
+  <p class="muted">Valyrio (acero valyrio) y Obsidiana (vidriagón) casi no caen — son la "moneda épica" para el equipo top.</p>
+
+  <h3>Las 7 categorías</h3>
+
+  <details>
+    <summary>🩹 Consumibles</summary>
+    <div class="det-body">
+      <p>Todo para mantenerte vivo entre oleadas.</p>
+      <div class="sub">Médico</div>Vendajes, pastillas (dolor/ánimo/pánico), algodón con alcohol, y el <strong>Botiquín del Septon</strong> (kit completo de 10 items).
+      <div class="sub">Comida</div>Sándwiches, sopas, raciones combo y provisiones de 3 días.
+      <div class="sub">Bebidas</div>Vino, cerveza, whisky premium, refresco, jugo, leche.
+    </div>
+  </details>
+
+  <details>
+    <summary>⚔️ Armas</summary>
+    <div class="det-body">
+      <div class="sub">Melee</div>Cuchillo, bate, palanca, machete, hacha, y la <strong>Espada Larga del Norte (Katana)</strong> — la legendaria, forjada en Valyrio (<span class="coin gold">10 Oro</span> + 3 Valyrio).
+      <div class="sub">Armas de fuego</div>Pistola, escopeta y rifle de caza, cada una con su munición.
+    </div>
+  </details>
+
+  <details>
+    <summary>🧥 Vestiduras</summary>
+    <div class="det-body">
+      <p>Sets completos por oficio, con protección real:</p>
+      <div class="sub">Casual</div>Ropa básica + chaleco antibalas civil.
+      <div class="sub">Policía</div>Casco antidisturbios + chaleco antibala mid-tier.
+      <div class="sub">Bombero</div><strong>Casco de bombero = mejor anti-mordida de la cabeza</strong> del juego.
+      <div class="sub">Militar</div><strong>Chaleco antibalas militar = la mejor protección anti-bala</strong> (cuesta Oro + Acero + Valyrio + Obsidiana).
+    </div>
+  </details>
+
+  <details>
+    <summary>🎒 Bolsos del Reino</summary>
+    <div class="det-body">5 mochilas en escala: Morral del Aprendiz (cap. 15) → Bolso del Mercader (18) → Mochila del Viajero (20) → Mochila del Cazador (22) → <strong>Mochila del Vigilante (ALICE, cap. 28, reduce 85% el peso)</strong> — la top.</div>
+  </details>
+
+  <details>
+    <summary>📚 Maestrías</summary>
+    <div class="det-body">
+      <p>Sistema único: comprás <strong>NIVELES enteros</strong> de habilidad (no XP fijo). El precio es dinámico según el XP que te falta.</p>
+      <div class="sub">Físico</div>Estado Físico, Fuerza, Carrera, Destreza, Pies Ligeros, Sigilo.
+      <div class="sub">Armas</div>Hoja Larga, Hoja Corta, Hacha, Mazo, Lanza, Mantenimiento.
+      <div class="sub">Soporte</div>(y más habilidades de apoyo).
+      <div class="tip" style="margin-top:14px"><strong>Ojo con Estado Físico y Fuerza:</strong> son habilidades pasivas y tu <strong>peso corporal</strong> limita el nivel máximo (con sobrepeso, bajo peso u obesidad no podés llegar al tope). La tienda te avisa antes de comprar el nivel 10. Ver <a href="#tips">Tips & FAQ</a>.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>✨ Reliquias del Reino</summary>
+    <div class="det-body">
+      <p>Curaciones MP-safe que arreglan lo que el survival normal no perdona:</p>
+      <ul>
+        <li>Bálsamo del Vidente — cura <strong>rasguños</strong></li>
+        <li>Vendaje del Septon — cura <strong>sangrado</strong></li>
+        <li>Astillas Sagradas — cura <strong>cortes profundos</strong></li>
+        <li>Tablilla del Maestre — cura <strong>fracturas</strong></li>
+        <li>Vidriagón Bendito — cura <strong>mordeduras</strong> (sí, ¡salvás la mordida!)</li>
+        <li><strong style="color:var(--gold)">Beso del Dios de Muchos Rostros</strong> — cura <strong>TODO</strong> el cuerpo. 1 por vida.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>🧱 Materiales</summary>
+    <div class="det-body">
+      <div class="sub">Holdoor</div>Cuero, Hierro, Acero, Valyrio, Obsidiana (los que usás para comprar equipo top).
+      <div class="sub">Comunes (B42)</div>Tabla, Clavos, Tronco, Chapa, Cable, Barra de Metal — para construir y reparar tu base.
+    </div>
+  </details>
+</section>
+
+<section id="milagros">
+  <h2><span class="ico">🔥</span> Milagros del Maestre</h2>
+  <p>Los dos poderes más fuertes del mod. Se compran en la tienda y se activan desde el HUD lateral <strong>cuando vos decidís</strong>.</p>
+  <div class="card">
+    <h3 style="margin-top:0">💋 Beso del Dios de Muchos Rostros</h3>
+    <p>Curación total + escudo: te cura todo el cuerpo (incluida mordedura/infección) y te da unos segundos de invulnerabilidad. <strong>Un uso por vida del personaje.</strong> Para el momento desesperado.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">⚰️ Levántate, John Snow</h3>
+    <p>El seguro de vida definitivo. Si morís, R'hllor te resucita <strong>conservando tus skills, recetas, monedas y materiales</strong>. Tu cuerpo queda en el lugar de muerte para que recuperes tus pertenencias (con un radio de zombis despejado alrededor para que no se lo coman).</p>
+    <p class="muted">Cómo se usa: lo comprás y queda armado. Al morir y reaparecer, aparece un botón dorado <strong>"RAISE UP — Recuperá tu legado"</strong> en el HUD. Lo apretás → animación épica + te teletransporta a tu cuerpo + restaura todo tu progreso.</p>
+  </div>
+</section>
+
+<section id="modos">
+  <h2><span class="ico">🎚️</span> Modos de juego</h2>
+  <p>5 modos. La dificultad se siente sobre todo en <strong>la cantidad y el daño de los zombis</strong>, no en un Trono frágil — la vida del Trono de hecho <em>sube</em> en los modos duros para compensar.</p>
+  <div class="tw">
+    <table>
+      <tr><th>Modo</th><th>Oleadas</th><th>HP Trono</th><th>Daño / zombi*</th><th>Recompensa</th></tr>
+      <tr><td class="m-facil">Fácil</td><td>5</td><td>700</td><td>1</td><td>×0.7</td></tr>
+      <tr><td class="m-normal">Normal</td><td>5</td><td>800</td><td>2</td><td>×1.0</td></tr>
+      <tr><td class="m-dificil">Difícil</td><td>5</td><td>900</td><td>4</td><td>×1.5</td></tr>
+      <tr><td class="m-pesadilla">Pesadilla</td><td>5</td><td>1000</td><td>8</td><td>×2.2</td></tr>
+      <tr><td class="m-test">Test</td><td>3</td><td>700</td><td>5</td><td>—</td></tr>
+    </table>
+  </div>
+  <p class="muted">*Daño al Trono por cada zombi adyacente, cada 2 segundos. Por eso Pesadilla "pega" mucho más fuerte aunque el Trono tenga más vida.</p>
+</section>
+
+<section id="stats">
+  <h2><span class="ico">📊</span> Estadísticas y datos</h2>
+  <p class="muted">Para los que quieren optimizar. Todos estos números salen directo del código del mod (v0.9.0).</p>
+
+  <h3>Zombis por oleada</h3>
+  <p>Cada oleada dura <strong>5 minutos</strong> y los cúmulos llegan al ritmo indicado. La meta (target) es cuántas bajas necesitás para el Cierre Limpio.</p>
+  <div class="tw">
+    <table>
+      <tr><th>Oleada</th><th class="m-facil">Fácil</th><th class="m-normal">Normal</th><th class="m-dificil">Difícil</th><th class="m-pesadilla">Pesadilla</th></tr>
+      <tr><td>1</td><td>6 z / 30s · meta 25</td><td>12 z / 30s · meta 35</td><td>20 z / 25s · meta 50</td><td>24 z / 22s · meta 70</td></tr>
+      <tr><td>2</td><td>9 z / 30s · meta 35</td><td>16 z / 30s · meta 50</td><td>24 z / 25s · meta 70</td><td>32 z / 20s · meta 100</td></tr>
+      <tr><td>3</td><td>12 z / 30s · meta 45</td><td>20 z / 25s · meta 70</td><td>28 z / 22s · meta 95</td><td>36 z / 18s · meta 130</td></tr>
+      <tr><td>4</td><td>16 z / 30s · meta 60</td><td>24 z / 25s · meta 90</td><td>32 z / 20s · meta 120</td><td>44 z / 16s · meta 170</td></tr>
+      <tr><td>5</td><td>20 z / 30s · meta 75</td><td>28 z / 20s · meta 110</td><td>40 z / 18s · meta 150</td><td>48 z / 15s · meta 220</td></tr>
+    </table>
+  </div>
+  <p class="muted">"6 z / 30s" = llegan 6 zombis (en cúmulos) cada 30 segundos durante los 5 minutos de la oleada. Pausa de 30s entre oleadas.</p>
+
+  <h3>Drops por kill (probabilidad por zombi)</h3>
+  <div class="tw">
+    <table>
+      <tr><th>Modo</th><th>Bronce</th><th>Plata</th><th>Oro</th><th>Ítem real</th></tr>
+      <tr><td class="m-facil">Fácil</td><td>20%</td><td>1.2%</td><td>0.03%</td><td>0.3%</td></tr>
+      <tr><td class="m-normal">Normal</td><td>25%</td><td>3.0%</td><td>0.15%</td><td>0.7%</td></tr>
+      <tr><td class="m-dificil">Difícil</td><td>30%</td><td>4.8%</td><td>0.45%</td><td>1.2%</td></tr>
+      <tr><td class="m-pesadilla">Pesadilla</td><td>35%</td><td>7.2%</td><td>0.90%</td><td>2.0%</td></tr>
+    </table>
+  </div>
+  <p class="muted">El Bronce da 1–3 monedas por drop. El Oro es rarísimo por kill — el premio gordo de Oro llega al <strong>ganar las 5 oleadas</strong> (hasta 5 Oro en Pesadilla).</p>
+
+  <h3>Materiales por kill (base, sube con el modo)</h3>
+  <div class="tw">
+    <table>
+      <tr><th>Material</th><th>Cuero</th><th>Hierro</th><th>Acero</th><th>Valyrio</th><th>Obsidiana</th></tr>
+      <tr><td>Chance base</td><td>5%</td><td>2%</td><td>1%</td><td>0.1%</td><td>0.1%</td></tr>
+    </table>
+  </div>
+
+  <h3>Bonus de recompensa</h3>
+  <ul>
+    <li><strong style="color:var(--gold)">Cierre Limpio</strong> — matás la meta antes del timer: <strong>+25%</strong> monedas y materiales.</li>
+    <li><strong>Rendimiento</strong> — matás ≥70% de los zombis de la oleada: <strong>+10%</strong> en monedas.</li>
+    <li><strong>Defensa Perfecta</strong> — el Trono termina la oleada con HP completo: <strong>+25%</strong> monedas, +15% materiales.</li>
+  </ul>
+</section>
+
+<section id="mp">
+  <h2><span class="ico">👥</span> Multiplayer</h2>
+  <p>Co-op total con el Trono <strong>compartido</strong>:</p>
+  <ul>
+    <li>Cada jugador acumula <strong>sus propias</strong> monedas y materiales, y puede <strong>transferírselas</strong> a otro desde el HUD lateral.</li>
+    <li>El <strong>host</strong> configura e inicia las oleadas (<strong>/holdoor</strong>); los demás defienden. En MP el F10 está deshabilitado a propósito.</li>
+    <li>Todos ven el mismo Trono, su HP en tiempo real, las oleadas y los drops.</li>
+    <li>El milagro <strong>Levántate John Snow</strong> funciona para todos, no solo el host.</li>
+  </ul>
+  <div class="tip">Si terminan oleadas mientras estás desconectado, los <strong>pagos pendientes</strong> te esperan para cuando vuelvas. Y tu saldo se preserva si morís (Seguro de Monedas).</div>
+</section>
+
+<section id="tips">
+  <h2><span class="ico">💡</span> Tips & FAQ</h2>
+  <h3>¿Por qué no me sube Estado Físico / Fuerza?</h3>
+  <p>Son habilidades <strong>pasivas</strong>. Sí suben (¡y mucho cuesta!), pero tu <strong>peso corporal</strong> limita el nivel máximo: con sobrepeso o bajo peso te capea, y obeso/desnutrido te traba alrededor del nivel 6 hasta que normalices tu peso. No es un bug del mod: es del juego base. Por eso la tienda te avisa antes de comprar el salto al nivel 10.</p>
+  <h3>¿Conviene campear o salir a matar?</h3>
+  <p>Salir a matar. El <strong>Cierre Limpio</strong> (+25%) premia llegar a la meta de kills antes de que se acabe el tiempo. Pero ojo con dejar el Trono solo.</p>
+  <h3>¿Cómo consigo Valyrio y Obsidiana?</h3>
+  <p>Son rarísimos por kill (0.1% base). Suben mucho su chance en <strong>Difícil y Pesadilla</strong>. Son la moneda para el equipo top (Katana, chalecos antibalas premium).</p>
+  <h3>Me mordieron, ¿estoy muerto?</h3>
+  <p>No necesariamente: el <strong>Vidriagón Bendito</strong> cura mordeduras, y el <strong>Beso del Dios</strong> cura todo (1 por vida). Y si igual caés, <strong>Levántate John Snow</strong> te trae de vuelta con tu progreso.</p>
+</section>
+
+</main>
+
+<footer>
+  <div class="hodor">Hold the door... Hodor.</div>
+  <p class="muted">Holdoor — Wave Defense GoT · creado por Nahuel Scioro</p>
+  <p>
+    <a href="https://github.com/nadascio/Holdoor_PZ" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://github.com/nadascio/Holdoor_PZ/issues" target="_blank" rel="noopener">Reportar un bug</a>
+  </p>
+</footer>
+
+</body>
+</html>
