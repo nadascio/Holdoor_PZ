@@ -259,29 +259,29 @@ function HoldoorPanel:crearContenido()
     local y   = 10
 
     -- Titulo
-    self.lblTitulo = ISLabel:new(pad, y, 30, "HOLDOOR -- Sistema de Oleadas", 0.95, 0.75, 0.3, 1, UIFont.Medium, true)
+    self.lblTitulo = ISLabel:new(pad, y, 30, getText("UI_Holdoor_panel_titulo"), 0.95, 0.75, 0.3, 1, UIFont.Medium, true)
     self:addChild(self.lblTitulo)
     self.lblVersion = ISLabel:new(PANEL_W - 55, y + 5, 20, "v" .. HoldoorConfig.VERSION, 0.4, 0.4, 0.3, 1, UIFont.Small, true)
     self:addChild(self.lblVersion)
     y = y + 34
 
     -- Estado actual
-    local lblSecEst = ISLabel:new(pad, y + 3, 18, "Estado actual", 0.7, 0.55, 0.2, 1, UIFont.Small, true)
+    local lblSecEst = ISLabel:new(pad, y + 3, 18, getText("UI_Holdoor_panel_estadoactual"), 0.7, 0.55, 0.2, 1, UIFont.Small, true)
     self:addChild(lblSecEst)
     y = y + 20
 
-    self.lblEstado = ISLabel:new(pad, y, 18, "Estado: Inactivo", 0.7, 0.7, 0.7, 1, UIFont.Small, true)
+    self.lblEstado = ISLabel:new(pad, y, 18, getText("UI_Holdoor_panel_estadolbl") .. ": " .. getText("UI_Holdoor_fase_inactivo"), 0.7, 0.7, 0.7, 1, UIFont.Small, true)
     self:addChild(self.lblEstado)
-    self.lblOleada = ISLabel:new(pad + 210, y, 18, "Oleada: -", 0.7, 0.7, 0.7, 1, UIFont.Small, true)
+    self.lblOleada = ISLabel:new(pad + 210, y, 18, getText("UI_Holdoor_panel_oleadalbl") .. ": -", 0.7, 0.7, 0.7, 1, UIFont.Small, true)
     self:addChild(self.lblOleada)
     y = y + 18
 
-    self.lblBase = ISLabel:new(pad, y, 18, "Base: No definida", 0.7, 0.7, 0.7, 1, UIFont.Small, true)
+    self.lblBase = ISLabel:new(pad, y, 18, getText("UI_Holdoor_panel_baselbl") .. ": " .. getText("UI_Holdoor_panel_basenodef"), 0.7, 0.7, 0.7, 1, UIFont.Small, true)
     self:addChild(self.lblBase)
     y = y + 28
 
     -- Modo de juego
-    local lblSecModo = ISLabel:new(pad, y + 3, 18, "Modo de juego", 0.7, 0.55, 0.2, 1, UIFont.Small, true)
+    local lblSecModo = ISLabel:new(pad, y + 3, 18, getText("UI_Holdoor_panel_modojuego"), 0.7, 0.55, 0.2, 1, UIFont.Small, true)
     self:addChild(lblSecModo)
     y = y + 20
 
@@ -292,7 +292,7 @@ function HoldoorPanel:crearContenido()
 
     for i, modo in ipairs(HoldoorConfig.modos) do
         local bx  = pad + (i - 1) * (nbw + 4)
-        local btn = ISButton:new(bx, y, nbw, 30, modo.nombre, self, HoldoorPanel.onSeleccionarModo)
+        local btn = ISButton:new(bx, y, nbw, 30, getText("UI_Holdoor_modo_" .. modo.id .. "_nombre"), self, HoldoorPanel.onSeleccionarModo)
         btn.holdoorModoIdx    = i
         btn.backgroundColor   = { r = modo.cr * 0.22, g = modo.cg * 0.22, b = modo.cb * 0.22, a = 1 }
         btn.borderColor       = { r = modo.cr * 0.60, g = modo.cg * 0.60, b = modo.cb * 0.60, a = 1 }
@@ -332,7 +332,7 @@ function HoldoorPanel:crearContenido()
     y = y + 22
 
     -- Radio de spawn customizable (se inicializa con el valor del modo)
-    local lblRadio = ISLabel:new(pad, y + 3, 16, "Radio de spawn:", 0.75, 0.65, 0.40, 1, UIFont.Small, true)
+    local lblRadio = ISLabel:new(pad, y + 3, 16, getText("UI_Holdoor_panel_radiospawn"), 0.75, 0.65, 0.40, 1, UIFont.Small, true)
     self:addChild(lblRadio)
 
     self.radioSpawnVal = 20
@@ -353,7 +353,7 @@ function HoldoorPanel:crearContenido()
     self:addChild(self.btnRadioP)
     y = y + 28
 
-    self.lblJugadores = ISLabel:new(pad, y, 16, "Jugadores: 1  (multiplicador x1.0)", 0.65, 0.70, 0.55, 1, UIFont.Small, true)
+    self.lblJugadores = ISLabel:new(pad, y, 16, getText("UI_Holdoor_panel_juginit"), 0.65, 0.70, 0.55, 1, UIFont.Small, true)
     self:addChild(self.lblJugadores)
     y = y + 24
 
@@ -362,25 +362,25 @@ function HoldoorPanel:crearContenido()
     self.tickDefensa = ISTickBox:new(pad, y, 220, 22, "", self, HoldoorPanel.onToggleDefensa)
     self.tickDefensa:initialise()
     self.tickDefensa:instantiate()
-    self.tickDefensa:addOption("Modo Defensa: defender el Trono de Hierro")
+    self.tickDefensa:addOption(getText("UI_Holdoor_panel_defensa"))
     self.tickDefensa.choicesColor = { r=0.95, g=0.85, b=0.55, a=1 }
     self.tickDefensa.selected[1] = true
     self:addChild(self.tickDefensa)
 
     -- Status label al lado del check
-    self.lblDefensaStatus = ISLabel:new(pad + 280, y + 4, 16, "DESACTIVADO", 0.55, 0.55, 0.45, 1, UIFont.Small, true)
+    self.lblDefensaStatus = ISLabel:new(pad + 280, y + 4, 16, getText("UI_Holdoor_panel_activado"), 1.00, 0.40, 0.20, 1, UIFont.Small, true)
     self:addChild(self.lblDefensaStatus)
     y = y + 28
 
     -- Sub-texto explicativo
     self.lblDefensaDesc = ISLabel:new(pad, y, 14,
-        "Si esta activado, el Trono cae si los zombis lo rompen. Perdes la partida.",
+        getText("UI_Holdoor_panel_defensadesc"),
         0.55, 0.50, 0.40, 1, UIFont.Small, true)
     self:addChild(self.lblDefensaDesc)
     y = y + 18
 
     -- Acciones
-    local lblSecAcc = ISLabel:new(pad, y + 3, 18, "Acciones", 0.7, 0.55, 0.2, 1, UIFont.Small, true)
+    local lblSecAcc = ISLabel:new(pad, y + 3, 18, getText("UI_Holdoor_panel_acciones"), 0.7, 0.55, 0.2, 1, UIFont.Small, true)
     self:addChild(lblSecAcc)
     y = y + 20
 
@@ -388,31 +388,31 @@ function HoldoorPanel:crearContenido()
     local bh = 32
 
     -- FILA 1: Acciones de BASE (Marcar / Quitar)
-    self.btnBase = ISButton:new(pad, y, bw, bh, "Marcar mi base", self, self.onMarcarBase)
+    self.btnBase = ISButton:new(pad, y, bw, bh, getText("UI_Holdoor_panel_btnmarcar"), self, self.onMarcarBase)
     self.btnBase.backgroundColor = COLOR_BOTON_BASE
     self.btnBase.borderColor = { r=0.3, g=0.5, b=0.8, a=1 }
     self:addChild(self.btnBase)
 
-    self.btnQuitarBase = ISButton:new(pad + bw + 8, y, bw, bh, "Quitar base / Trono", self, self.onQuitarBase)
+    self.btnQuitarBase = ISButton:new(pad + bw + 8, y, bw, bh, getText("UI_Holdoor_panel_btnquitar"), self, self.onQuitarBase)
     self.btnQuitarBase.backgroundColor = { r=0.35, g=0.15, b=0.20, a=1 }
     self.btnQuitarBase.borderColor     = { r=0.65, g=0.30, b=0.30, a=1 }
     self:addChild(self.btnQuitarBase)
     y = y + bh + 8
 
     -- FILA 2: Control de OLEADAS (Iniciar / Detener)
-    self.btnIniciar = ISButton:new(pad, y, bw, bh, "INICIAR OLEADAS", self, self.onIniciar)
+    self.btnIniciar = ISButton:new(pad, y, bw, bh, getText("UI_Holdoor_panel_btniniciar"), self, self.onIniciar)
     self.btnIniciar.backgroundColor = COLOR_BOTON_OK
     self.btnIniciar.borderColor = { r=0.3, g=0.7, b=0.3, a=1 }
     self:addChild(self.btnIniciar)
 
-    self.btnDetener = ISButton:new(pad + bw + 8, y, bw, bh, "DETENER OLEADAS", self, self.onDetener)
+    self.btnDetener = ISButton:new(pad + bw + 8, y, bw, bh, getText("UI_Holdoor_panel_btndetener"), self, self.onDetener)
     self.btnDetener.backgroundColor = COLOR_BOTON_STOP
     self.btnDetener.borderColor = { r=0.7, g=0.2, b=0.2, a=1 }
     self:addChild(self.btnDetener)
     y = y + bh + 8
 
     -- FILA 3: Forzar oleada (manual override, secundario → full ancho)
-    self.btnOnda = ISButton:new(pad, y, PANEL_W - pad * 2, bh, "Forzar oleada (manual)", self, self.onOleadaManual)
+    self.btnOnda = ISButton:new(pad, y, PANEL_W - pad * 2, bh, getText("UI_Holdoor_panel_btnforzar"), self, self.onOleadaManual)
     self.btnOnda.backgroundColor = COLOR_BOTON_ONDA
     self.btnOnda.borderColor = { r=0.7, g=0.4, b=0.1, a=1 }
     self:addChild(self.btnOnda)
@@ -420,14 +420,14 @@ function HoldoorPanel:crearContenido()
 
     -- BOTON TESTING: da monedas + materiales + items a uno mismo (para probar la tienda)
     self.btnTest = ISButton:new(pad, y, PANEL_W - pad * 2, 26,
-        "[TEST] DARME MONEDAS + MATERIALES + ITEMS",
+        getText("UI_Holdoor_panel_btntest"),
         self, self.onTestDarme)
     self.btnTest.backgroundColor = { r=0.30, g=0.15, b=0.40, a=1 }
     self.btnTest.borderColor     = { r=0.7,  g=0.4,  b=0.85, a=1 }
     self:addChild(self.btnTest)
     y = y + 26 + 8
 
-    self.btnCerrar = ISButton:new(pad, y, PANEL_W - pad * 2, 26, "Cerrar  (F10)", self, self.onCerrar)
+    self.btnCerrar = ISButton:new(pad, y, PANEL_W - pad * 2, 26, getText("UI_Holdoor_panel_btncerrar"), self, self.onCerrar)
     self.btnCerrar.backgroundColor = { r=0.1, g=0.1, b=0.1, a=1 }
     self.btnCerrar.borderColor = { r=0.3, g=0.3, b=0.3, a=1 }
     self:addChild(self.btnCerrar)
@@ -482,10 +482,10 @@ function HoldoorPanel:onToggleDefensa(idx, selected)
     self.modoDefensa = (selected == true)
     if self.lblDefensaStatus then
         if self.modoDefensa then
-            self.lblDefensaStatus:setName("ACTIVADO")
+            self.lblDefensaStatus:setName(getText("UI_Holdoor_panel_activado"))
             self.lblDefensaStatus:setColor(1.00, 0.40, 0.20, 1)
         else
-            self.lblDefensaStatus:setName("DESACTIVADO")
+            self.lblDefensaStatus:setName(getText("UI_Holdoor_panel_desactivado"))
             self.lblDefensaStatus:setColor(0.55, 0.55, 0.45, 1)
         end
     end
@@ -528,9 +528,9 @@ function HoldoorPanel:_actualizarInfoModo(idx, forzarRadio)
         end
     end
 
-    self.lblModoNombre:setName(modo.nombre)
+    self.lblModoNombre:setName(getText("UI_Holdoor_modo_" .. modo.id .. "_nombre"))
     self.lblModoNombre:setColor(modo.cr, modo.cg, modo.cb, 1)
-    self.lblModoDesc:setName(modo.descripcion or "")
+    self.lblModoDesc:setName(getText("UI_Holdoor_modo_" .. modo.id .. "_desc"))
 
     -- v0.7 #18: Sincronizar radioSpawn con el default del modo SOLO si:
     --   a) forzarRadio=true (llamada explicita: cambio de modo o init), o
@@ -542,29 +542,29 @@ function HoldoorPanel:_actualizarInfoModo(idx, forzarRadio)
         self.lblRadioVal:setTitle(tostring(modo.radioSpawn))
     end
 
-    local l1, l2 = splitLoreText(modo.lore or "")
+    local l1, l2 = splitLoreText(getText("UI_Holdoor_modo_" .. modo.id .. "_lore"))
     self.lblLore1:setName(l1)
     self.lblLore2:setName(l2)
 
-    self.lblModoDetalle:setName(modo.detalle or "")
+    self.lblModoDetalle:setName(getText("UI_Holdoor_modo_" .. modo.id .. "_detalle"))
 
     -- Mostrar HP del Trono para este modo
     if self.lblModoHP then
         local hpModo = (HoldoorConfig.tronoHPPorModo or {})[modo.id] or 1500
-        self.lblModoHP:setName("Vida del Trono: " .. hpModo .. " HP")
+        self.lblModoHP:setName(getText("UI_Holdoor_panel_vidatrono", tostring(hpModo)))
     end
 
     local record = HoldoorClient.obtenerRecord(modo.id)
     local maxOl  = modo.maxOleadas or 0
     if record > 0 then
-        self.lblModoRecord:setName("Record: oleada " .. record .. " / " .. maxOl)
+        self.lblModoRecord:setName(getText("UI_Holdoor_panel_recordfmt", tostring(record), tostring(maxOl)))
         if record >= maxOl then
             self.lblModoRecord:setColor(1.0, 0.85, 0.20, 1)
         else
             self.lblModoRecord:setColor(0.30, 0.85, 0.45, 1)
         end
     else
-        self.lblModoRecord:setName("Record: ninguno todavia")
+        self.lblModoRecord:setName(getText("UI_Holdoor_panel_recordnone"))
         self.lblModoRecord:setColor(0.50, 0.50, 0.40, 1)
     end
 end
@@ -582,18 +582,18 @@ function HoldoorPanel:actualizarEstado()
             local faseLabel
             if fase == "preparacion" then
                 local segsLeft = math.max(0, math.ceil(est.countdownFinLocal - os.time()))
-                faseLabel = "PREPARACION (" .. segsLeft .. "s)"
+                faseLabel = getText("UI_Holdoor_fase_preparacion", segsLeft)
             elseif fase == "activa" then
-                faseLabel = "EN COMBATE"
+                faseLabel = getText("UI_Holdoor_fase_combate")
             elseif fase == "pausa" then
-                faseLabel = "PAUSA"
+                faseLabel = getText("UI_Holdoor_fase_pausa")
             else
-                faseLabel = "ACTIVO"
+                faseLabel = getText("UI_Holdoor_fase_activo")
             end
-            self.lblEstado:setName("Estado: " .. faseLabel)
+            self.lblEstado:setName(getText("UI_Holdoor_panel_estadolbl") .. ": " .. faseLabel)
             self.lblEstado:setColor(COLOR_VERDE.r, COLOR_VERDE.g, COLOR_VERDE.b, 1)
         else
-            self.lblEstado:setName("Estado: Inactivo")
+            self.lblEstado:setName(getText("UI_Holdoor_panel_estadolbl") .. ": " .. getText("UI_Holdoor_fase_inactivo"))
             self.lblEstado:setColor(0.7, 0.7, 0.7, 1)
         end
     end
@@ -603,18 +603,18 @@ function HoldoorPanel:actualizarEstado()
         local maxOl  = cfg.maxOleadas or 0
         local oleada = est.oleadaActual or 0
         if oleada > 0 then
-            self.lblOleada:setName("Oleada: " .. oleada .. "/" .. maxOl)
+            self.lblOleada:setName(getText("UI_Holdoor_panel_oleadalbl") .. ": " .. oleada .. "/" .. maxOl)
         else
-            self.lblOleada:setName("Oleada: - / " .. maxOl)
+            self.lblOleada:setName(getText("UI_Holdoor_panel_oleadalbl") .. ": - / " .. maxOl)
         end
     end
 
     if self.lblBase then
         if est.baseDefinida then
-            self.lblBase:setName("Base: " .. est.baseX .. ", " .. est.baseY)
+            self.lblBase:setName(getText("UI_Holdoor_panel_baselbl") .. ": " .. est.baseX .. ", " .. est.baseY)
             self.lblBase:setColor(0.4, 0.8, 1, 1)
         else
-            self.lblBase:setName("Base: No definida -- marcala primero")
+            self.lblBase:setName(getText("UI_Holdoor_panel_baselbl") .. ": " .. getText("UI_Holdoor_panel_basenodef"))
             self.lblBase:setColor(COLOR_ROJO.r, COLOR_ROJO.g, COLOR_ROJO.b, 1)
         end
     end
@@ -623,10 +623,10 @@ function HoldoorPanel:actualizarEstado()
         local nj  = est.numJugadores or 1
         local mx  = est.playerMultiplier or 1.0
         if est.activo then
-            self.lblJugadores:setName("Jugadores: " .. nj .. "  (multiplicador x" .. mx .. ")")
+            self.lblJugadores:setName(getText("UI_Holdoor_panel_jugfmt", tostring(nj), tostring(mx)))
             self.lblJugadores:setColor(0.75, 0.95, 0.55, 1)
         else
-            self.lblJugadores:setName("Jugadores: se detectan al iniciar")
+            self.lblJugadores:setName(getText("UI_Holdoor_panel_juginit"))
             self.lblJugadores:setColor(0.55, 0.55, 0.45, 1)
         end
     end
@@ -672,11 +672,17 @@ end
 
 function HoldoorPanel:onQuitarBase()
     if not HoldoorClient.estado.baseDefinida then
-        HoldoorClient.chat("[HOLDOOR] No hay base marcada todavia.", 1, 0.6, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_nobase"), 1, 0.6, 0.2)
+        return
+    end
+    -- v0.9.x: no permitir quitar base con oleadas en curso. Hay que detenerlas primero
+    -- (STOP WAVES) para poder quitar la base / destruir el Trono.
+    if HoldoorClient.estado.activo then
+        HoldoorClient.chat(getText("UI_Holdoor_chat_quitaroleadaactiva"), 1, 0.6, 0.2)
         return
     end
     -- Confirmacion — destruye el Trono fisico, no es reversible
-    local txt = "Vas a quitar la base y DESTRUIR el Trono actual.\n\nVas a perder el progreso visual de la base (HP del Trono se pierde tambien).\n\nNO se puede hacer durante una oleada activa.\n\nConfirmas?"
+    local txt = getText("UI_Holdoor_modal_quitarbase")
     local modal = ISModalDialog:new(0, 0, 380, 220, txt, true, self, HoldoorPanel.onConfirmQuitarBase)
     modal:initialise()
     modal:addToUIManager()
@@ -698,7 +704,7 @@ end
 function HoldoorPanel:onIniciar()
     if not HoldoorClient.estado.baseDefinida then
         if self.lblBase then
-            self.lblBase:setName("Primero marca tu base!")
+            self.lblBase:setName(getText("UI_Holdoor_panel_primeromarca"))
             self.lblBase:setColor(1, 0.3, 0.2, 1)
         end
         return
@@ -1407,7 +1413,7 @@ function HoldoorHUD:actualizarHUD()
     local modoLbl = nil
     if est.config and est.config.modoId then
         for _, m in ipairs(HoldoorConfig.modos) do
-            if m.id == est.config.modoId then modoLbl = m.nombre; break end
+            if m.id == est.config.modoId then modoLbl = getText("UI_Holdoor_modo_" .. m.id .. "_nombre"); break end
         end
     end
     if oleada > 0 then

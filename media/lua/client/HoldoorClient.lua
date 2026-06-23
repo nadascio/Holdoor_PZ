@@ -770,11 +770,11 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
     -- v0.7 #39: SEGURO DE MONEDAS — server avisa que el seguro esta activo al iniciar oleada.
     -- Snapshot del saldo se hace AL MORIR (no aca), asi que aca solo es un aviso generico.
     if comando == "seguroActivado" then
-        local msg = "SEGURO DE MONEDAS ACTIVADO"
+        local msg = getText("UI_Holdoor_toast_seguro")
         if HoldoorToast and HoldoorToast.mostrar then
             pcall(function() HoldoorToast.mostrar(msg, 0.4, 0.9, 1.0) end)
         end
-        HoldoorClient.chat("[HOLDOOR] Seguro de monedas activado. Si moris en la oleada, tu saldo se conserva.", 0.4, 0.9, 1.0)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_seguroon"), 0.4, 0.9, 1.0)
         return
     end
 
@@ -947,7 +947,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         if args.config    then HoldoorClient.estado.config           = args.config    end
         if args.numPlayers then HoldoorClient.estado.numJugadores    = args.numPlayers end
         if args.multiplier then HoldoorClient.estado.playerMultiplier = args.multiplier end
-        HoldoorClient.chat("[HOLDOOR] Sistema de oleadas ACTIVADO! Preparate...", 1, 0.4, 0.1)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_sistemaon"), 1, 0.4, 0.1)
         if HoldoorUI then HoldoorUI.actualizarTodo() end
 
     elseif comando == "detenido" then
@@ -959,7 +959,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         HoldoorClient.estado.fase            = "inactivo"
         HoldoorClient.estado.zombiesRestantes = 0
         HoldoorClient.estado.zombiesTotal     = 0
-        HoldoorClient.chat("[HOLDOOR] Sistema de oleadas detenido.", 0.7, 0.7, 0.7)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_sistemaoff"), 0.7, 0.7, 0.7)
         if HoldoorUI then HoldoorUI.actualizarTodo() end
 
     elseif comando == "completado" then
@@ -1248,7 +1248,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             local md = ModData.getOrCreate("Holdoor")
             if md then md.baseX, md.baseY, md.baseZ, md.baseDefinida = nil, nil, nil, false end
         end)
-        HoldoorClient.chat("[HOLDOOR] Base quitada. Trono destruido.", 0.6, 0.8, 1)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_basequitada"), 0.6, 0.8, 1)
         if HoldoorUI then HoldoorUI.actualizarTodo() end
 
     elseif comando == "tronoHP" or comando == "braseroHP" then
@@ -1558,7 +1558,15 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         end
 
     elseif comando == "aviso" then
-        HoldoorClient.chat("[HOLDOOR] " .. (args.mensaje or ""), 1, 0.8, 0.2)
+        -- i18n: el server manda clave+args (no texto armado) → el cliente traduce a SU idioma.
+        -- Fallback a args.mensaje crudo por si algún aviso legacy no manda clave.
+        local txt
+        if args.clave then
+            txt = getText(args.clave, tostring(args.segs or ""))
+        else
+            txt = "[HOLDOOR] " .. (args.mensaje or "")
+        end
+        HoldoorClient.chat(txt, 1, 0.8, 0.2)
 
     elseif comando == "mensaje" then
         HoldoorClient.chat("[HOLDOOR] " .. (args.texto or ""), 1, 0.6, 0.2)
@@ -1831,7 +1839,7 @@ function HoldoorClient.setBase()
     if HoldoorUI and HoldoorUI.overlay and HoldoorUI.instancia and HoldoorUI.instancia:isVisible() then
         HoldoorUI.overlay:setVisible(true)
     end
-    HoldoorClient.chat("[HOLDOOR] Base marcada en " .. x .. ", " .. y, 0.4, 0.8, 1)
+    HoldoorClient.chat(getText("UI_Holdoor_chat_basemarcada", tostring(x), tostring(y)), 0.4, 0.8, 1)
 
     -- v0.8.7: ver iniciar.
     if esSinglePlayer() then

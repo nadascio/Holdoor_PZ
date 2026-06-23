@@ -3146,7 +3146,8 @@ function HoldoorServer.onTick()
         if not estado.avisoDado and restante <= 30 and restante > 0 then
             estado.avisoDado = true
             HoldoorServer.notificarTodos("aviso", {
-                mensaje = "Proxima oleada en " .. math.ceil(restante) .. " segundos!"
+                clave = "UI_Holdoor_aviso_proximaoleada",
+                segs  = math.ceil(restante)
             })
         end
 
