@@ -2526,9 +2526,10 @@ end
 --  ABRIR PANEL CON F10
 -- ─────────────────────────────────────────────
 
--- F10 funciona EXCLUSIVAMENTE en single player.
--- En MULTIPLAYER (tanto host como cliente) F10 es no-op.
--- El unico acceso al panel en MP es el comando /holdoor en el chat, admin-only.
+-- F10 abre el panel si el player es admin. esAdmin() reconoce: SP / host hosted
+-- (isServer=true) / accessLevel staff. Funciona en SP siempre y en MP para el host/admin.
+-- /holdoor (comando de chat) hace exactamente lo mismo, es una alternativa. Cliente MP
+-- no-admin: ni F10 ni /holdoor abren el panel (toast naranja "solo el host").
 function HoldoorClient.onKeyPressed(key)
     if key ~= Keyboard.KEY_F10 then return end
     -- F10 funciona en SP siempre, y en MP solo si el player es admin (host o staff).
