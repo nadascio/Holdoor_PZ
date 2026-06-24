@@ -2560,6 +2560,73 @@ function HoldoorClient.comprar(categoriaId, itemId)
     end
 end
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- VENTA (Mercader Oscuro). REMOCION SERVER-AUTORITATIVA (fix dupe CoopHost):
+-- el client-ctx del HOST NO es autoritario sobre el inventario -> remover ahi NO
+-- persiste en el save (las monedas si, por ModData+transmitModData) -> dupe. Por
+-- eso el cliente NO remueve: solo arma la lista de IDs EXACTOS a vender (instancias
+-- NO equipadas, via scanVendibles) y se la manda al SERVER, que las resuelve por ID
+-- (patron vanilla getItemById(it:getID())) y las remueve en SU contexto autoritario
+-- (persiste) + acredita sobre lo realmente removido. Anti-footgun: scanVendibles
+-- excluye mano + ropa puesta. Anti-dupe: el server remueve PRIMERO y paga DESPUES,
+-- y no hay remocion client-side que pueda doblar. cart = { {fullType, cantidad}, ... }.
+-- ════════════════════════════════════════════════════════════════════════════
+function HoldoorClient.vender(cart)
+    if not cart or #cart == 0 then return end
+    local p = getSpecificPlayer(0)
+    if not p then return end
+
+    -- Barrido de VENDIBLES (excluye equipado en mano + ropa puesta; incluye mochilas).
+    local vend = HoldoorVentaCatalog.scanVendibles(p)
+
+    -- Armamos la lista de IDs EXACTOS a vender (no removemos nada aca). El server
+    -- los resuelve y remueve en su contexto autoritario -> persiste en CoopHost.
+    local items       = {}   -- { {id=N, fullType="Base.X"}, ... }
+    local brutoBronce = 0
+    local unidades    = 0
+    for _, linea in ipairs(cart) do
+        local ft    = linea.fullType
+        local pedir = math.floor(tonumber(linea.cantidad) or 0)
+        local venta = ft and HoldoorVentaCatalog.ventaDe(ft) or nil
+        local lista = vend[ft]
+        if venta and lista and pedir > 0 then
+            if pedir > #lista then pedir = #lista end
+            for k = 1, pedir do
+                local it = lista[k]
+                local id = nil
+                if it then pcall(function() id = it:getID() end) end
+                if id then
+                    table.insert(items, { id = id, fullType = ft })
+                    brutoBronce = brutoBronce + HoldoorVentaCatalog.valorBronceEquiv(venta)
+                    unidades    = unidades + 1
+                end
+            end
+        end
+    end
+
+    if unidades <= 0 or brutoBronce <= 0 then
+        HoldoorClient.chat(getText("UI_Holdoor_venta_sinitem"), 1, 0.6, 0.2)
+        return
+    end
+
+    -- El SERVER remueve los items (autoritario -> PERSISTE en CoopHost) y acredita
+    -- sobre lo realmente removido. Sin remocion client-side -> imposible dupe.
+    local args = { items = items }
+    if esSinglePlayer() then
+        local ok, err = pcall(HoldoorServer._vender, p, args)
+        if not ok then print("[Holdoor] vender ERROR: " .. tostring(err)) end
+    else
+        sendClientCommand(HoldoorConfig.MODULE, "vender", args)
+    end
+
+    -- Feedback (preview): el saldo REAL lo confirma el server via monedasActualizadas.
+    local r = HoldoorVentaCatalog.calcularVenta(brutoBronce, unidades)
+    HoldoorClient.chat(getText("UI_Holdoor_venta_ok", tostring(unidades), HoldoorShopCatalog.precioStr(r.credito)), 0.55, 0.85, 0.45)
+    if HoldoorUI and HoldoorUI.actualizarTodo then pcall(HoldoorUI.actualizarTodo) end
+
+    return r
+end
+
 function HoldoorClient.transferir(toUser, tipo, cantidad)
     local args = { to=toUser, tipo=tipo, cantidad=cantidad }
     -- v0.8.7: host local directo, remoto via sendClientCommand.

@@ -4,6 +4,7 @@
 -- ============================================================
 
 require "HoldoorShopCatalog"
+require "HoldoorVentaCatalog"
 require "HoldoorClient"
 
 HoldoorShop = HoldoorShop or {}
@@ -95,6 +96,10 @@ function HoldoorShopPanel:new(x, y, w, h)
     o.scrollOffset       = 0   -- indice del primer item visible (paginacion)
     o.filasItems         = {}  -- guarda referencias a las filas para destruirlas al cambiar de cat
     o.botonesSubcat      = {}  -- botones de sub-pestañas (se recrean por categoria)
+    -- v0.9 Mercader Oscuro (modo VENTA)
+    o.modoVenta          = false -- true => el panel muestra la seccion Vender
+    o.ventaSubcatActual  = 1     -- sub-tab activa dentro del modo venta
+    o.ventaCart          = {}    -- carrito: [fullType] = cantidad seleccionada
     return o
 end
 
@@ -140,6 +145,16 @@ function HoldoorShopPanel:_crearContenido()
         self.botonesCat[i] = btn
         cy = cy + 34
     end
+
+    -- v0.9 Mercader Oscuro: boton VENDER al pie del sidebar (verde-dinero, separado
+    -- por un divider para distinguirlo de las categorias de COMPRA).
+    self:_addDivider(pad, cy + 4, SIDEBAR_W, 1)
+    local btnV = ISButton:new(pad, cy + 12, SIDEBAR_W, 32, getText("UI_Holdoor_venta_btn"), self, HoldoorShopPanel.onSelectVender)
+    btnV.backgroundColor = { r=0.12, g=0.30, b=0.14, a=1 }
+    btnV.borderColor     = { r=0.40, g=0.70, b=0.30, a=1 }
+    btnV.textColor       = { r=0.75, g=0.95, b=0.65, a=1 }
+    self:addChild(btnV)
+    self.btnVender = btnV
 
     -- Linea divisoria vertical
     self:_addDivider(pad + SIDEBAR_W + 6, HEADER_H + 6, 1, SHOP_H - HEADER_H - 20)
@@ -206,9 +221,25 @@ function HoldoorShopPanel:_refrescarSaldo()
 end
 
 function HoldoorShopPanel:onSelectCat(button)
+    self.modoVenta          = false   -- salir del modo venta al elegir una categoria de compra
     self.categoriaActual    = button.holdoorCatIdx
     self.subcategoriaActual = 1   -- reset al cambiar de categoria
     self.scrollOffset       = 0
+    self:_renderCategoria()
+end
+
+-- v0.9 Mercader Oscuro: entrar al modo VENTA.
+function HoldoorShopPanel:onSelectVender(button)
+    self.modoVenta         = true
+    self.ventaSubcatActual = 1
+    self.scrollOffset      = 0
+    self:_renderCategoria()
+end
+
+-- v0.9: cambiar de sub-tab (tipo de item) dentro del modo venta.
+function HoldoorShopPanel:onSelectVentaSubcat(button)
+    self.ventaSubcatActual = button.holdoorSubIdx
+    self.scrollOffset      = 0
     self:_renderCategoria()
 end
 
@@ -245,14 +276,25 @@ function HoldoorShopPanel:_renderCategoria()
     self:_destruirFilas()
     self:_refrescarSaldo()
 
-    -- Marcar boton activo
+    -- Marcar boton activo (categorias de compra) y el boton VENDER
     for i, btn in ipairs(self.botonesCat) do
         local cat = HoldoorShopCatalog.categorias[i]
-        if i == self.categoriaActual then
+        if (not self.modoVenta) and i == self.categoriaActual then
             btn.borderColor = { r=0.95, g=0.82, b=0.20, a=1 }
         else
             btn.borderColor = { r=cat.cr*0.55, g=cat.cg*0.55, b=cat.cb*0.55, a=1 }
         end
+    end
+    if self.btnVender then
+        self.btnVender.borderColor = self.modoVenta
+            and { r=0.95, g=0.82, b=0.20, a=1 }
+            or  { r=0.40, g=0.70, b=0.30, a=1 }
+    end
+
+    -- v0.9 Mercader Oscuro: si estamos en modo venta, render dedicado.
+    if self.modoVenta then
+        self:_renderVenta()
+        return
     end
 
     local cat = HoldoorShopCatalog.categorias[self.categoriaActual]
@@ -610,6 +652,261 @@ function HoldoorShopPanel:onConfirmComprar(button, categoriaId, itemId)
     if button.internal == "YES" then
         HoldoorClient.comprar(categoriaId, itemId)
     end
+end
+
+-- ─────────────────────────────────────────────
+--  MERCADER OSCURO — RENDER DE VENTA (carrito)
+-- ─────────────────────────────────────────────
+
+local VENTA_ROW_H    = 34   -- fila compacta (nombre + tenés + selector + precio)
+local VENTA_ROWS_VIS = 8    -- filas visibles antes de paginar
+
+-- Nombre legible del item desde el JUEGO (coincide con el inventario del jugador).
+local function _nombreItem(ft)
+    local n = nil
+    pcall(function() n = getItemNameFromFullType(ft) end)
+    if n and n ~= "" then return n end
+    return ft
+end
+
+-- Proximo tier de volumen por encima de 'unidades' (para el hint "juntá X para Y%").
+local function _proximoTierVolumen(unidades)
+    local best = nil
+    for _, t in ipairs(HoldoorVentaCatalog.tiersVolumen) do
+        if t.minUnidades > (unidades or 0) then
+            if (not best) or t.minUnidades < best.minUnidades then best = t end
+        end
+    end
+    return best
+end
+
+function HoldoorShopPanel:_renderVenta()
+    self.ventaCart = self.ventaCart or {}
+    -- Defensivo: asegura que TODO lo comprable en la tienda este en la whitelist
+    -- de venta (40%), por si el orden de carga shared no lo hizo al boot. Idempotente.
+    if HoldoorVentaCatalog.mergeShopItems then pcall(HoldoorVentaCatalog.mergeShopItems) end
+    local areaX = PAD + SIDEBAR_W + 18
+    local areaY = HEADER_H + 12
+
+    -- Titulo + linea de personaje del Mercader
+    local lblTit = ISLabel:new(areaX, areaY, 22, getText("UI_Holdoor_venta_titulo"), 0.80, 0.72, 0.35, 1, UIFont.Medium, true)
+    self:addChild(lblTit); table.insert(self.filasItems, { _hijos = { lblTit } })
+    areaY = areaY + 26
+    local lblFlavor = ISLabel:new(areaX, areaY, 14, getText("UI_Holdoor_venta_flavor"), 0.62, 0.56, 0.46, 1, UIFont.Small, true)
+    self:addChild(lblFlavor); table.insert(self.filasItems, { _hijos = { lblFlavor } })
+    areaY = areaY + 24
+
+    -- Conteo de VENDIBLES (un solo barrido): excluye lo equipado en mano y la
+    -- ropa puesta; incluye el contenido de mochilas. Mismo criterio que la venta.
+    local vend = HoldoorVentaCatalog.scanVendibles(getSpecificPlayer(0))
+    local conteo = {}   -- [fullType] = unidades vendibles
+    for ft, lista in pairs(vend) do
+        if #lista > 0 then conteo[ft] = #lista end
+    end
+
+    -- Sub-tabs: solo categorias con >=1 item poseido.
+    local catsConItems = {}
+    for _, cat in ipairs(HoldoorVentaCatalog.categorias) do
+        for _, it in ipairs(cat.items) do
+            if conteo[it.fullType] then table.insert(catsConItems, cat); break end
+        end
+    end
+
+    if #catsConItems == 0 then
+        local lblVacio = ISLabel:new(areaX, areaY + 24, 18, getText("UI_Holdoor_venta_vacio"), 0.62, 0.60, 0.54, 1, UIFont.Medium, true)
+        self:addChild(lblVacio); table.insert(self.filasItems, { _hijos = { lblVacio } })
+        return
+    end
+
+    if (self.ventaSubcatActual or 1) > #catsConItems then self.ventaSubcatActual = 1 end
+    local subActiva = self.ventaSubcatActual or 1
+
+    -- Render de sub-tabs (con wrapping: pueden ser hasta 8).
+    self.botonesSubcat = {}
+    local subW, subH = 110, 22
+    local subX = areaX
+    local rightEdge = SHOP_W - PAD
+    for i, cat in ipairs(catsConItems) do
+        if subX + subW > rightEdge then
+            subX = areaX
+            areaY = areaY + subH + 4
+        end
+        local b = ISButton:new(subX, areaY, subW, subH, HoldoorVentaCatalog.subtabLabel(cat), self, HoldoorShopPanel.onSelectVentaSubcat)
+        b.holdoorSubIdx = i
+        if i == subActiva then
+            b.backgroundColor = { r=0.28, g=0.34, b=0.18, a=1 }
+            b.borderColor     = { r=0.95, g=0.82, b=0.20, a=1 }
+        else
+            b.backgroundColor = { r=0.14, g=0.17, b=0.11, a=1 }
+            b.borderColor     = { r=0.38, g=0.45, b=0.28, a=1 }
+        end
+        self:addChild(b); self.botonesSubcat[i] = b
+        table.insert(self.filasItems, { _hijos = { b } })
+        subX = subX + subW + 6
+    end
+    areaY = areaY + subH + 12
+
+    -- Filas de la sub-tab activa: solo items poseidos.
+    local cat = catsConItems[subActiva]
+    local filas = {}
+    for _, it in ipairs(cat.items) do
+        if conteo[it.fullType] then table.insert(filas, it) end
+    end
+
+    -- Paginacion.
+    local total = #filas
+    local maxScroll = math.max(0, total - VENTA_ROWS_VIS)
+    if (self.scrollOffset or 0) > maxScroll then self.scrollOffset = maxScroll end
+    if (self.scrollOffset or 0) < 0 then self.scrollOffset = 0 end
+    local startIdx = (self.scrollOffset or 0) + 1
+    local endIdx   = math.min(total, startIdx + VENTA_ROWS_VIS - 1)
+
+    if total > VENTA_ROWS_VIS then
+        local lblPag = ISLabel:new(SHOP_W - PAD - 110, areaY - 24, 14,
+            "(" .. startIdx .. "-" .. endIdx .. " / " .. total .. ")",
+            0.65, 0.65, 0.60, 1, UIFont.Small, true)
+        self:addChild(lblPag); table.insert(self.filasItems, { _hijos = { lblPag } })
+        local btnUp = ISButton:new(SHOP_W - PAD - 52, areaY - 26, 24, 20, "^", self, HoldoorShopPanel.onScrollUp)
+        btnUp.backgroundColor = { r=0.20, g=0.25, b=0.18, a=1 }; btnUp.borderColor = { r=0.5, g=0.7, b=0.4, a=1 }
+        self:addChild(btnUp); table.insert(self.filasItems, { _hijos = { btnUp } })
+        local btnDn = ISButton:new(SHOP_W - PAD - 26, areaY - 26, 24, 20, "v", self, HoldoorShopPanel.onScrollDown)
+        btnDn.backgroundColor = { r=0.20, g=0.25, b=0.18, a=1 }; btnDn.borderColor = { r=0.5, g=0.7, b=0.4, a=1 }
+        self:addChild(btnDn); table.insert(self.filasItems, { _hijos = { btnDn } })
+    end
+
+    for i = startIdx, endIdx do
+        local it    = filas[i]
+        local ft    = it.fullType
+        local owned = conteo[ft] or 0
+        local sel   = math.min(math.max(0, self.ventaCart[ft] or 0), owned)
+        self.ventaCart[ft] = sel   -- re-clamp por si el inventario bajo
+        local hijos = {}
+
+        -- Nombre + (tenés N)
+        local lblN = ISLabel:new(areaX, areaY + 6, 16, _nombreItem(ft), 0.92, 0.86, 0.60, 1, UIFont.Medium, true)
+        self:addChild(lblN); table.insert(hijos, lblN)
+        local lblTen = ISLabel:new(areaX + 215, areaY + 8, 13, "(" .. getText("UI_Holdoor_venta_tenes", tostring(owned)) .. ")", 0.60, 0.62, 0.55, 1, UIFont.Small, true)
+        self:addChild(lblTen); table.insert(hijos, lblTen)
+
+        -- Selector cantidad:  [-]  N  [+]  [Máx]
+        local selX = areaX + 300
+        local btnMin = ISButton:new(selX, areaY + 4, 22, 22, "-", self, HoldoorShopPanel.onVentaMenos)
+        btnMin.holdoorFullType = ft
+        btnMin.backgroundColor = { r=0.25, g=0.18, b=0.18, a=1 }; btnMin.borderColor = { r=0.6, g=0.4, b=0.4, a=1 }
+        self:addChild(btnMin); table.insert(hijos, btnMin)
+
+        local lblQty = ISLabel:new(selX + 30, areaY + 8, 14, tostring(sel), 1.0, 0.95, 0.7, 1, UIFont.Medium, true)
+        self:addChild(lblQty); table.insert(hijos, lblQty)
+
+        local btnMas = ISButton:new(selX + 52, areaY + 4, 22, 22, "+", self, HoldoorShopPanel.onVentaMas)
+        btnMas.holdoorFullType = ft; btnMas.holdoorOwned = owned
+        btnMas.backgroundColor = { r=0.18, g=0.28, b=0.18, a=1 }; btnMas.borderColor = { r=0.4, g=0.7, b=0.4, a=1 }
+        self:addChild(btnMas); table.insert(hijos, btnMas)
+
+        local btnMax = ISButton:new(selX + 80, areaY + 4, 40, 22, getText("UI_Holdoor_venta_max"), self, HoldoorShopPanel.onVentaMax)
+        btnMax.holdoorFullType = ft; btnMax.holdoorOwned = owned
+        btnMax.backgroundColor = { r=0.20, g=0.22, b=0.30, a=1 }; btnMax.borderColor = { r=0.5, g=0.6, b=0.8, a=1 }
+        self:addChild(btnMax); table.insert(hijos, btnMax)
+
+        -- Precio unitario
+        local lblU = ISLabel:new(selX + 132, areaY + 8, 13, "-> " .. getText("UI_Holdoor_venta_unidad", HoldoorVentaCatalog.precioStr(it.venta)), 0.78, 0.70, 0.45, 1, UIFont.Small, true)
+        self:addChild(lblU); table.insert(hijos, lblU)
+
+        table.insert(self.filasItems, { _hijos = hijos })
+        areaY = areaY + VENTA_ROW_H
+    end
+
+    -- ── RESUMEN EN VIVO (fijo abajo) ──
+    local bruto, unidades = 0, 0
+    for fft, q in pairs(self.ventaCart) do
+        local own = conteo[fft] or 0
+        local qq  = math.min(q or 0, own)
+        if qq > 0 then
+            local venta = HoldoorVentaCatalog.ventaDe(fft)
+            bruto    = bruto + HoldoorVentaCatalog.valorBronceEquiv(venta) * qq
+            unidades = unidades + qq
+        end
+    end
+    local r = HoldoorVentaCatalog.calcularVenta(bruto, unidades)
+    local pctInt = math.floor(r.pct * 100 + 0.5)
+
+    local sumY = SHOP_H - 134
+
+    local lblV = ISLabel:new(areaX, sumY, 15,
+        getText("UI_Holdoor_venta_res_vendes", tostring(unidades)) .. "   -   " ..
+        getText("UI_Holdoor_venta_res_valor", HoldoorVentaCatalog.precioStr(HoldoorVentaCatalog.splitBronce(bruto))),
+        0.85, 0.85, 0.78, 1, UIFont.Small, true)
+    self:addChild(lblV); table.insert(self.filasItems, { _hijos = { lblV } })
+
+    local lblC = ISLabel:new(areaX, sumY + 22, 14,
+        getText("UI_Holdoor_venta_res_comision", HoldoorVentaCatalog.precioStr(HoldoorVentaCatalog.splitBronce(r.feeTotal)), tostring(r.feeFijo), tostring(pctInt)),
+        0.80, 0.55, 0.40, 1, UIFont.Small, true)
+    self:addChild(lblC); table.insert(self.filasItems, { _hijos = { lblC } })
+
+    local prox = _proximoTierVolumen(unidades)
+    local volTxt
+    if prox then
+        volTxt = getText("UI_Holdoor_venta_res_volumen", tostring(pctInt), tostring(prox.minUnidades), tostring(math.floor(prox.pct * 100 + 0.5)))
+    else
+        volTxt = getText("UI_Holdoor_venta_res_volumen_max", tostring(pctInt))
+    end
+    local lblVol = ISLabel:new(areaX, sumY + 42, 13, volTxt, 0.55, 0.75, 0.55, 1, UIFont.Small, true)
+    self:addChild(lblVol); table.insert(self.filasItems, { _hijos = { lblVol } })
+
+    local lblR = ISLabel:new(areaX, sumY + 64, 16,
+        getText("UI_Holdoor_venta_res_recibis", HoldoorVentaCatalog.precioStr(r.credito)),
+        0.55, 0.90, 0.50, 1, UIFont.Medium, true)
+    self:addChild(lblR); table.insert(self.filasItems, { _hijos = { lblR } })
+
+    -- Boton CONFIRMAR VENTA (deshabilitado si no hay nada seleccionado).
+    local puedeVender = unidades > 0
+    local btnSell = ISButton:new(SHOP_W - PAD - 150, sumY + 30, 145, 36,
+        getText("UI_Holdoor_venta_confirmar"), self, HoldoorShopPanel.onConfirmarVenta)
+    if puedeVender then
+        btnSell.backgroundColor = { r=0.16, g=0.42, b=0.18, a=1 }
+        btnSell.borderColor     = { r=0.4, g=0.8, b=0.4, a=1 }
+    else
+        btnSell.backgroundColor = COLOR_BTN_DIS_S
+        btnSell.borderColor     = { r=0.3, g=0.3, b=0.3, a=1 }
+        btnSell.textColor       = { r=0.55, g=0.55, b=0.5, a=1 }
+        -- Deshabilitar con el mismo patron que el resto del shop (no-op handler +
+        -- setEnable) para que se vea inerte y no crashee por la ruta de gamepad.
+        btnSell.onclick = HoldoorShopPanel.doNothing
+        pcall(function() btnSell:setEnable(false) end)
+    end
+    self:addChild(btnSell); table.insert(self.filasItems, { _hijos = { btnSell } })
+end
+
+function HoldoorShopPanel:onVentaMenos(button)
+    local ft = button.holdoorFullType
+    self.ventaCart[ft] = math.max(0, (self.ventaCart[ft] or 0) - 1)
+    self:_renderCategoria()
+end
+
+function HoldoorShopPanel:onVentaMas(button)
+    local ft = button.holdoorFullType
+    local owned = button.holdoorOwned or 0
+    self.ventaCart[ft] = math.min(owned, (self.ventaCart[ft] or 0) + 1)
+    self:_renderCategoria()
+end
+
+function HoldoorShopPanel:onVentaMax(button)
+    local ft = button.holdoorFullType
+    self.ventaCart[ft] = button.holdoorOwned or 0
+    self:_renderCategoria()
+end
+
+function HoldoorShopPanel:onConfirmarVenta(button)
+    local cart = {}
+    for ft, sel in pairs(self.ventaCart or {}) do
+        if sel and sel > 0 then
+            table.insert(cart, { fullType = ft, cantidad = sel })
+        end
+    end
+    if #cart == 0 then return end
+    pcall(HoldoorClient.vender, cart)
+    self.ventaCart = {}      -- carrito limpio tras la venta
+    self:_renderCategoria()  -- re-render: los items vendidos ya no aparecen
 end
 
 function HoldoorShopPanel:onClose()

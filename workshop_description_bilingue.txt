@@ -1,0 +1,94 @@
+⚔ FULLY BILINGUAL — ENGLISH & ESPAÑOL ⚔
+🇬🇧 English version below.   ·   🇪🇸 Versión en ESPAÑOL más abajo.
+
+[h1]HOLDOOR — Wave Defense (Game of Thrones)[/h1]
+[b]Defend the Iron Throne. If it falls, you lose.[/b]
+A Game of Thrones–themed wave-defense mode for Build 42. Mark your base, the Iron Throne physically appears, and the hordes come to smash it. Kill for coins, spend in the shop between waves, hold the line. Solo or co-op, ~30–90 min per run.
+
+📖 [b]FULL GUIDE (EN/ES):[/b] [url=https://nadascio.github.io/Holdoor_PZ]nadascio.github.io/Holdoor_PZ[/url]
+
+[h1]✨ New[/h1]
+[list]
+[*][b]Fully bilingual EN / ES[/b] — the entire mod: UI, shop, waves, miracles.
+[*][b]The Dark Merchant[/b] — a full sell system: turn your loot into coins (cart, volume discounts, sells anything you can buy). Looting finally pays off.
+[/list]
+
+[h1]🔁 The Loop[/h1]
+Mark base ([b]F10[/b]) → the Iron Throne appears → waves attack it → each kill drops coins & materials → spend in the Shop between waves → hold longer. Every wave has a [b]timer AND a kill target[/b]: hit the target early for a [b]Clean Clear (+25%)[/b]. Rewards aggression, not camping.
+
+[h1]🛒 The Shop[/h1]
+[list]
+[*][b]Consumables[/b], [b]Weapons[/b] (knives, the Katana, firearms & ammo), [b]Apparel[/b] (full sets), [b]Realm Bags[/b] (5 backpacks)
+[*][b]Masteries[/b] — buy whole skill LEVELS with dynamic pricing, not fixed XP
+[*][b]Realm Relics[/b] — MP-safe heals: bite, bleeding, fractures, cuts, scratches
+[*][b]Maester's Miracles[/b] — God's Kiss (cure-all + 5s shield), Raise up John Snow, Mark Point
+[*][b]Iron Bank[/b] — currency exchange + forge rare materials
+[/list]
+[b]Cure bites[/b] — yes, in Holdoor you can survive a bite. No other mod does this.
+
+[h1]⚔ Highlights[/h1]
+[list]
+[*][b]Raise up, John Snow[/b] — die and R'hllor revives you where you fell, keeping ALL your progress. Your corpse stays to loot.
+[*][b]Coin insurance[/b] — die mid-wave, keep your balance.
+[*][b]Coordinated hordes[/b] of 2–5 zombies, plus [b]live drops[/b] on every kill.
+[/list]
+
+[h1]👥 Multiplayer (co-op)[/h1]
+Shared Throne. Each player keeps their own coins & materials and can transfer them. The host runs the waves via [b]/holdoor[/b]; everyone else defends.
+
+[h1]🗺 5 Modes[/h1]
+Easy · Normal · Hard (runners) · Nightmare (sprinters) · Test.
+
+[h1]🎮 How to start[/h1]
+Single-player: [b]F10[/b]. Multiplayer: [b]/holdoor[/b] in chat (host/admin only). Mark base → pick difficulty → Start.
+
+[h1]🐛 Bugs & feedback[/h1]
+Leave a comment here or open a [url=https://github.com/nadascio/Holdoor_PZ/issues]GitHub Issue[/url]. Made by Nahuel Scioro (Argentina), a homage to Game of Thrones and PZ nights with friends. Hold the door.
+
+[hr]
+
+⚔ MOD TOTALMENTE BILINGÜE — ESPAÑOL E INGLÉS ⚔
+
+[h1]HOLDOOR — Defensa por Oleadas (Game of Thrones)[/h1]
+[b]Defendé el Trono de Hierro. Si cae, perdés.[/b]
+Un modo de defensa por oleadas con temática Game of Thrones para Build 42. Marcás tu base, el Trono de Hierro aparece físicamente, y las hordas vienen a romperlo. Matás para ganar monedas, gastás en la tienda entre oleadas, aguantás. Solo o cooperativo, ~30–90 min por partida.
+
+📖 [b]GUÍA COMPLETA (EN/ES):[/b] [url=https://nadascio.github.io/Holdoor_PZ]nadascio.github.io/Holdoor_PZ[/url]
+
+[h1]✨ Nuevo[/h1]
+[list]
+[*][b]Totalmente bilingüe EN / ES[/b] — todo el mod: interfaz, tienda, oleadas, milagros.
+[*][b]El Mercader Oscuro[/b] — sistema de venta completo: convertí tu botín en monedas (carrito, descuento por volumen, te compra todo lo que se compra). Lootear por fin sirve.
+[/list]
+
+[h1]🔁 El Loop[/h1]
+Marcás la base ([b]F10[/b]) → aparece el Trono de Hierro → las oleadas lo atacan → cada kill tira monedas y materiales → gastás en la Tienda entre oleadas → aguantás más. Cada oleada tiene [b]tiempo Y meta de bajas[/b]: llegás a la meta antes de tiempo y conseguís un [b]Cierre Limpio (+25%)[/b]. Premia al agresivo, no al que campea.
+
+[h1]🛒 La Tienda[/h1]
+[list]
+[*][b]Consumibles[/b], [b]Armas[/b] (cuchillos, la Katana, armas de fuego y munición), [b]Vestiduras[/b] (sets completos), [b]Bolsos del Reino[/b] (5 mochilas)
+[*][b]Maestrías[/b] — comprás NIVELES enteros de skill con precio dinámico, no XP fijo
+[*][b]Reliquias del Reino[/b] — curaciones MP-safe: mordedura, sangrado, fracturas, cortes, rasguños
+[*][b]Milagros del Maestre[/b] — Beso del Dios (cura todo + escudo 5s), Levántate John Snow, Punto de Retorno
+[*][b]Banco de Hierro[/b] — casa de cambio + forja de materiales raros
+[/list]
+[b]Cura de mordeduras[/b] — sí, en Holdoor podés salvarte de una mordida. Ningún otro mod lo hace.
+
+[h1]⚔ Lo más jugoso[/h1]
+[list]
+[*][b]Levántate, John Snow[/b] — morís y el R'hllor te resucita en el lugar donde caíste, conservando TODO tu progreso. Tu cuerpo queda en el piso para lootear.
+[*][b]Seguro de monedas[/b] — morís en plena oleada y conservás tu saldo.
+[*][b]Hordas coordinadas[/b] de 2 a 5 zombis, más [b]drops al instante[/b] en cada kill.
+[/list]
+
+[h1]👥 Multijugador (co-op)[/h1]
+Trono compartido. Cada jugador acumula sus propias monedas y materiales y puede transferirlas. El host maneja las oleadas con [b]/holdoor[/b]; los demás defienden.
+
+[h1]🗺 5 Modos[/h1]
+Fácil · Normal · Difícil (corredores) · Pesadilla (sprinters) · Test.
+
+[h1]🎮 Cómo empezar[/h1]
+Un jugador: [b]F10[/b]. Multijugador: [b]/holdoor[/b] en el chat (solo host/admin). Marcá la base → elegí dificultad → Iniciar.
+
+[h1]🐛 Bugs y feedback[/h1]
+Dejá un comentario acá o abrí un [url=https://github.com/nadascio/Holdoor_PZ/issues]Issue en GitHub[/url]. Hecho por Nahuel Scioro (Argentina), un homenaje a Game of Thrones y a las tardes de PZ con amigos. Hold the door.

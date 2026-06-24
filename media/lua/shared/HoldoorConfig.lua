@@ -249,8 +249,7 @@ HoldoorConfig.itemDropPool = {
             { item = "Base.TinnedBeans",            rareza = "comun",      qty = {1, 2} },
             { item = "Base.TunaTin",                rareza = "comun",      qty = {1, 1} },
             { item = "Base.Cereal",                 rareza = "comun",      qty = {1, 1} },
-            { item = "Base.Crisps",                 rareza = "comun",      qty = {1, 2} },
-            { item = "Base.Chocolate",              rareza = "comun",      qty = {1, 1} },
+            -- v0.9.x: sacados snacks de relleno (Crisps, Chocolate) — drop de comida solo nutritiva.
             { item = "Base.Steak",                  rareza = "poco_comun", qty = {1, 1} },
             { item = "Base.WaterBottle",            rareza = "comun",      qty = {1, 1} },
             { item = "Base.Wine",                   rareza = "poco_comun", qty = {1, 1} },
@@ -269,26 +268,20 @@ HoldoorConfig.itemDropPool = {
         },
     },
     municion = {
-        nombre = "Munición",
+        nombre = "Munición y Armas de Fuego",
         items = {
             { item = "Base.Bullets9mmBox",          rareza = "poco_comun", qty = {1, 1} },
             { item = "Base.ShotgunShellsBox",       rareza = "poco_comun", qty = {1, 1} },
             { item = "Base.Bullets44Box",           rareza = "poco_comun", qty = {1, 1} },
             { item = "Base.Bullets357Box",          rareza = "poco_comun", qty = {1, 1} },
             { item = "Base.556Bullets",             rareza = "raro",       qty = {5, 10} },
+            -- v0.9.x premium: armas de fuego (la pool tenía munición pero ningún arma).
+            { item = "Base.Pistol",                 rareza = "raro",       qty = {1, 1} },
+            { item = "Base.Shotgun",                rareza = "raro",       qty = {1, 1} },
+            { item = "Base.HuntingRifle",           rareza = "epico",      qty = {1, 1} },
         },
     },
-    libros = {
-        nombre = "Libros / Papel",
-        items = {
-            { item = "Base.Magazine",               rareza = "comun",      qty = {1, 2} },
-            { item = "Base.Newspaper",              rareza = "comun",      qty = {1, 2} },
-            { item = "Base.Book",                   rareza = "comun",      qty = {1, 1} },
-            { item = "Base.CookingMag1",            rareza = "poco_comun", qty = {1, 1} },
-            { item = "Base.FarmingMag1",            rareza = "poco_comun", qty = {1, 1} },
-            { item = "Base.BookCarpentry1",         rareza = "raro",       qty = {1, 1} },
-        },
-    },
+    -- v0.9.x: pool "Libros / Papel" ELIMINADO (Magazine/Newspaper/Book/mags = basura en wave-defense).
     ropa = {
         nombre = "Ropa / Armadura",
         items = {
@@ -296,6 +289,9 @@ HoldoorConfig.itemDropPool = {
             { item = "Base.Hat_Army",               rareza = "poco_comun", qty = {1, 1} },
             { item = "Base.Hat_Police",             rareza = "poco_comun", qty = {1, 1} },
             { item = "Base.Vest_BulletCivilian",    rareza = "raro",       qty = {1, 1} },
+            -- v0.9.x premium: chalecos antibalas mejores (el militar = "casos militares" ~6 oro).
+            { item = "Base.Vest_BulletPolice",      rareza = "raro",       qty = {1, 1} },
+            { item = "Base.Vest_BulletArmy",        rareza = "epico",      qty = {1, 1} },
             { item = "Base.Gloves_LeatherGloves",   rareza = "comun",      qty = {1, 1} },
             { item = "Base.Bag_Schoolbag",          rareza = "poco_comun", qty = {1, 1} },
         },
@@ -323,10 +319,24 @@ HoldoorConfig.itemDropPool = {
 -- y al ampliar el pool a 52 items dejaba ~14 items silenciosos por oleada (bug encontrado).
 -- Targets con pool actual: ~3-5 items por oleada en Normal.
 HoldoorConfig.rarezaChances = {
-    comun       = 0.10,   -- 10%  (27 items * 10% = 2.7 esperados)
-    poco_comun  = 0.05,   --  5%  (18 items * 5% = 0.9)
-    raro        = 0.02,   --  2%  (6 items * 2% = 0.12)
-    epico       = 0.005,  --  0.5% (1 item * 0.5% = 0.005)
+    comun       = 0.10,   -- 10%
+    poco_comun  = 0.05,   --  5%
+    raro        = 0.02,   --  2%  (base, escala con dropPremiumMultPorModo)
+    epico       = 0.005,  --  0.5% (base, escala con dropPremiumMultPorModo)
+}
+
+-- v0.9.x: CAPA DE DIFICULTAD para el PREMIUM (raro/épico) en el drop de fin de oleada.
+-- Los comunes/poco-comunes escalan con dropMultPorModoV6.item (modesto). El PREMIUM escala
+-- con ESTA tabla (más agresivo): terminar Pesadilla => drops premium mucho mejores.
+-- Chance premium final = rarezaChances[rareza] * dropPremiumMultPorModo[modo].
+--   raro 2%  -> Fácil 1% / Normal 2% / Difícil 4%  / Pesadilla 7%
+--   épico 0.5% -> Fácil 0.25% / Normal 0.5% / Difícil 1% / Pesadilla 1.75%
+HoldoorConfig.dropPremiumMultPorModo = {
+    facil     = 0.5,
+    normal    = 1.0,
+    dificil   = 2.0,
+    pesadilla = 3.5,
+    test      = 1.0,
 }
 
 -- ─── MODO CUSTOM (sliders libres) ───────────────────────────

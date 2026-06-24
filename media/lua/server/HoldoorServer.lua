@@ -1593,6 +1593,73 @@ function HoldoorServer._comprar(jugador, args)
     end
 end
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- VENTA (Mercader Oscuro) — REMOCION + ACREDITACION SERVER-AUTORITATIVA.
+-- Fix dupe CoopHost: el client-ctx del host NO persiste la remocion del inventario
+-- (solo ModData cruza/persiste). Por eso la remocion la hace ACA, en server-ctx
+-- autoritario (mismo contexto que ya persiste las monedas). El cliente manda
+-- args.items = { {id=N, fullType="Base.X"}, ... } con los IDs EXACTOS elegidos
+-- (instancias NO equipadas). Resolvemos por ID (patron vanilla getItemById), removemos,
+-- y acreditamos sobre lo REALMENTE removido (credito computado server-side desde el
+-- catalogo -> el cliente no puede inflarlo). Remover PRIMERO, pagar DESPUES -> cero dupe.
+-- ════════════════════════════════════════════════════════════════════════════
+function HoldoorServer._vender(jugador, args)
+    if not jugador or not args then return end
+    local items = args.items
+    if type(items) ~= "table" or #items == 0 then return end
+
+    -- Set de IDs pedidos + fullType esperado (sanity por id).
+    local idSet, wantFt = {}, {}
+    for _, e in ipairs(items) do
+        local id = tonumber(e and e.id)
+        if id then idSet[id] = true; wantFt[id] = e.fullType end
+    end
+
+    -- Resolver las instancias REALES en el inventario autoritario del jugador
+    -- (cada entry trae el CONTENEDOR donde vive: robusto para mochilas anidadas).
+    local resueltos = HoldoorVentaCatalog.resolverPorId(jugador, idSet)
+    local invJ = nil
+    pcall(function() invJ = jugador:getInventory() end)
+
+    local bruto, unidades = 0, 0
+    for _, e in ipairs(resueltos) do
+        local it = e.item
+        local id = nil; pcall(function() id = it:getID() end)
+        local ft = nil; pcall(function() ft = it:getFullType() end)
+        local venta = ft and HoldoorVentaCatalog.ventaDe(ft) or nil
+        -- sanity ESTRICTA: el tipo resuelto debe ser vendible Y coincidir con el que
+        -- mando el cliente para ese id (evita vender algo distinto por id reusado).
+        if venta and wantFt[id] == ft then
+            local c = e.cont or invJ
+            if c then
+                local ok = pcall(function() c:DoRemoveItem(it) end)
+                if ok then
+                    pcall(function() sendRemoveItemFromContainer(c, it) end)
+                    bruto    = bruto + HoldoorVentaCatalog.valorBronceEquiv(venta)
+                    unidades = unidades + 1
+                end
+            end
+        end
+    end
+
+    if unidades <= 0 or bruto <= 0 then return end
+
+    -- Credito computado server-side desde lo REALMENTE removido (anti-cheat + anti-dupe).
+    local r = HoldoorVentaCatalog.calcularVenta(bruto, unidades)
+    -- Acreditar (credita + transmitModData; gotcha #51, sin esto vuelve a 0 al reabrir).
+    darMonedasA(jugador, r.credito.bronze, r.credito.silver, r.credito.gold)
+
+    print(string.format("[Holdoor] Venta: %s  %d items  bruto=%d fee=%d -> +%s",
+        tostring(jugador:getUsername()), unidades, bruto, r.feeTotal,
+        HoldoorShopCatalog.precioStr(r.credito)))
+
+    -- Avisar al cliente para que refresque el HUD (mismo patron dual que _comprar).
+    pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "monedasActualizadas", {})
+    if type(HoldoorClient) == "table" and HoldoorClient.onComandoServidor then
+        pcall(HoldoorClient.onComandoServidor, HoldoorConfig.MODULE, "monedasActualizadas", {})
+    end
+end
+
 -- Entrega monedas a todos los jugadores y les avisa por cliente para que actualicen el HUD.
 -- v0.6.1: helper reutilizable. Busca a un player con privilegios admin online.
 -- Comprueba: (1) accessLevel "admin" explicito, (2) en SP/MP hosted, el primer player
@@ -2953,6 +3020,8 @@ function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugad
 
     -- ── 4) ITEMS REALES ──
     local multItems = mult.items or 1.0
+    -- v0.9.x: el PREMIUM (raro/épico) escala con su propia tabla por dificultad (más agresiva).
+    local multPremium = (HoldoorConfig.dropPremiumMultPorModo or {})[modoId] or 1.0
     local rarezasChances = HoldoorConfig.rarezaChances or {}
     local itemsEntregados = {}   -- lista de strings "Base.X" para el resumen
 
@@ -2961,7 +3030,8 @@ function HoldoorServer._distribuirRecompensaOleada(modoId, numOleada, statsJugad
             -- Por cada item del pool, tirar dado segun su rareza
             for _, def in ipairs(pool.items) do
                 local chanceBase = rarezasChances[def.rareza or "comun"] or 0
-                local chanceFinal = chanceBase * multItems
+                local esPremium  = (def.rareza == "raro" or def.rareza == "epico")
+                local chanceFinal = chanceBase * (esPremium and multPremium or multItems)
                 if ZombRand(1000) < math.floor(chanceFinal * 1000) then
                     local qty = def.qty and def.qty[1] or 1
                     local maxQ = def.qty and def.qty[2] or qty
@@ -5198,6 +5268,9 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
 
     elseif comando == "comprar" then
         HoldoorServer._comprar(jugador, args)
+
+    elseif comando == "vender" then
+        HoldoorServer._vender(jugador, args)
 
     elseif comando == "activarBeso" then
         -- v0.7 #35: el jugador apreto el boton del HUD lateral para activar Beso del Dios.
