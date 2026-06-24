@@ -5,6 +5,7 @@
 
 **⚔ FULLY BILINGUAL — ENGLISH & ESPAÑOL ⚔**
 🇬🇧 English version below.   ·   🇪🇸 Versión en ESPAÑOL más abajo.
+**Version 0.10.0 · Build 42**
 
 ## HOLDOOR — Wave Defense (Game of Thrones)
 
