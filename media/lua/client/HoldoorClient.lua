@@ -231,7 +231,7 @@ function HoldoorClient._activarBesoDelDios()
         end)
     end
     if not necesitaCura then
-        HoldoorClient.chat("[HOLDOOR] Estas sano. El Beso del Dios no tiene a quien curar — no lo quemes en vano.", 1, 0.6, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_beso_sano"), 1, 0.6, 0.2)
         return
     end
 
@@ -241,7 +241,7 @@ function HoldoorClient._activarBesoDelDios()
     -- 2) Elevar a admin (godmode auto activa → cura todo + escudo + invulnerabilidad)
     -- v0.8 #23: si soy cliente remoto, delegar al host admin.
     HoldoorClient._setAccessLevelDelegado(username, "admin")
-    HoldoorClient.chat("[HOLDOOR] Beso del Dios INVOCADO. 5 segundos de proteccion divina.", 0.85, 0.55, 0.95)
+    HoldoorClient.chat(getText("UI_Holdoor_chat_beso_invocado"), 0.85, 0.55, 0.95)
 
     -- 3) Watchdog: apagar SOLO NoClip cada frame por 150 frames (toda la duracion del Beso).
     -- Antes era 30 frames pero el admin dura 5s = 150 frames; entre frame 30 y 150 PZ podia
@@ -307,11 +307,11 @@ function HoldoorClient._ejecutarPuntoRetorno(coordsObjetivo)
 
     print(string.format("[Holdoor][PuntoRetorno] Iniciando countdown 5s -> (%d,%d,%d)",
         coordsObjetivo.x, coordsObjetivo.y, coordsObjetivo.z))
-    HoldoorClient.chat("[HOLDOOR] Teletransporte iniciado. Mantente vivo 5 segundos...", 0.95, 0.75, 0.20)
+    HoldoorClient.chat(getText("UI_Holdoor_chat_tp_iniciado"), 0.95, 0.75, 0.20)
 
     -- Countdown 5s visible sobre la cabeza (setHaloNote validado en B42)
     local segundosRestantes = 5
-    pcall(function() me:setHaloNote("Teletransporte: " .. segundosRestantes .. "s", 255, 200, 80, 1200) end)
+    pcall(function() me:setHaloNote(getText("UI_Holdoor_tp_contador", tostring(segundosRestantes)), 255, 200, 80, 1200) end)
 
     local FRAMES_POR_SEG = 30
     local frameCounter = 0
@@ -322,11 +322,11 @@ function HoldoorClient._ejecutarPuntoRetorno(coordsObjetivo)
         frameCounter = 0
         segundosRestantes = segundosRestantes - 1
         if segundosRestantes > 0 then
-            pcall(function() me:setHaloNote("Teletransporte: " .. segundosRestantes .. "s", 255, 200, 80, 1200) end)
+            pcall(function() me:setHaloNote(getText("UI_Holdoor_tp_contador", tostring(segundosRestantes)), 255, 200, 80, 1200) end)
         else
             -- ===== FIN COUNTDOWN: admin + teleport + 3s post-teleport admin =====
             Events.OnTick.Remove(countdownHandler)
-            pcall(function() me:setHaloNote("Teletransportado!", 100, 255, 150, 1500) end)
+            pcall(function() me:setHaloNote(getText("UI_Holdoor_tp_hecho"), 100, 255, 150, 1500) end)
 
             -- v0.8 #23: si soy cliente remoto, delegar al host admin. Si soy host, ejecutar directo.
             HoldoorClient._setAccessLevelDelegado(username, "admin")
@@ -402,9 +402,9 @@ function HoldoorClient._activarRaiseUpJohnSnow(coordsObjetivo)
         pcall(function() HoldoorRaiseUpFade.mostrar() end)
     end
     if esRevive then
-        HoldoorClient.chat("[HOLDOOR] John Snow ha sido levantado por el R'hllor! Recupera tus pertenencias del cadaver.", 0.95, 0.75, 0.20)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_jon_cadaver"), 0.95, 0.75, 0.20)
     else
-        HoldoorClient.chat("[HOLDOOR] John Snow ha sido levantado por el R'hllor!", 0.95, 0.75, 0.20)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_jon_simple"), 0.95, 0.75, 0.20)
     end
 
     -- 2) Elevar a admin (godmode auto activa → cura todo + escudo + invulnerabilidad)
@@ -686,7 +686,7 @@ function HoldoorClient.aplicarTraitLocal(traitId)
     local traitEnum = _resolverTraitEnum(traitId)
     if not traitEnum then
         print("[Holdoor] aplicarTraitLocal: no se pudo resolver '" .. tostring(traitId) .. "' (ID invalido)")
-        HoldoorClient.chat("[HOLDOOR] Rasgo desconocido: '" .. tostring(traitId) .. "'. Reportar bug.", 1, 0.3, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_rasgo_desc_id", tostring(traitId)), 1, 0.3, 0.2)
         return false
     end
 
@@ -701,9 +701,9 @@ function HoldoorClient.aplicarTraitLocal(traitId)
 
     if not ok then
         print("[Holdoor] aplicarTraitLocal FAIL: '" .. tostring(traitId) .. "'")
-        HoldoorClient.chat("[HOLDOOR] No se pudo aplicar el rasgo. Reportar bug.", 1, 0.3, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_rasgo_falla"), 1, 0.3, 0.2)
     else
-        HoldoorClient.chat("[HOLDOOR] Rasgo heroico aplicado!", 0.3, 1, 0.5)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_rasgo_ok"), 0.3, 1, 0.5)
     end
     return ok
 end
@@ -715,7 +715,7 @@ function HoldoorClient.curarTraitLocal(traitId)
     local traitEnum = _resolverTraitEnum(traitId)
     if not traitEnum then
         print("[Holdoor] curarTraitLocal: no se pudo resolver '" .. tostring(traitId) .. "'")
-        HoldoorClient.chat("[HOLDOOR] Rasgo desconocido. Reportar bug.", 1, 0.3, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_rasgo_desc"), 1, 0.3, 0.2)
         return false
     end
 
@@ -730,9 +730,9 @@ function HoldoorClient.curarTraitLocal(traitId)
 
     if not ok then
         print("[Holdoor] curarTraitLocal FAIL: '" .. tostring(traitId) .. "'")
-        HoldoorClient.chat("[HOLDOOR] No se pudo curar el rasgo. Reportar bug.", 1, 0.3, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_rasgo_curar_falla"), 1, 0.3, 0.2)
     else
-        HoldoorClient.chat("[HOLDOOR] Milagro del Maestre obrado!", 0.5, 1, 0.8)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_milagro_obrado"), 0.5, 1, 0.8)
     end
     return ok
 end
@@ -788,7 +788,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         if HoldoorToast and HoldoorToast.mostrar then
             pcall(function() HoldoorToast.mostrar(msg, 1.0, 0.85, 0.3) end)
         end
-        HoldoorClient.chat("[HOLDOOR] El banco te devuelve " .. b .. "B / " .. s .. "P / " .. g .. "O" .. besoStr .. ".", 1.0, 0.85, 0.3)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_banco_devuelve", tostring(b), tostring(s), tostring(g), besoStr), 1.0, 0.85, 0.3)
         return
     end
 
@@ -813,7 +813,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             pcall(function() HoldoorToast.mostrar(msg, 1.0, 0.85, 0.3) end)
         end
         local matsTxt = hayMats and (" + " .. table.concat(matStr, ", ")) or ""
-        HoldoorClient.chat("[HOLDOOR] Recibis recompensas de oleadas pasadas (estabas offline): " .. b .. "B / " .. s .. "P / " .. g .. "O" .. matsTxt .. ".", 1.0, 0.85, 0.3)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_recompensas_offline", tostring(b), tostring(s), tostring(g), matsTxt), 1.0, 0.85, 0.3)
         return
     end
 
@@ -823,9 +823,9 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
     --          → cliente ejecuta countdown 5s + admin trampoline + teleport al final.
     if comando == "puntoRetornoMarcado" then
         if args and args.esReemplazo then
-            HoldoorClient.chat("[HOLDOOR] Punto de Retorno REEMPLAZADO. Marca nueva: ahora aqui.", 0.40, 0.85, 0.95)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_punto_reemplazado"), 0.40, 0.85, 0.95)
         else
-            HoldoorClient.chat("[HOLDOOR] Punto de Retorno marcado. Usa Teletransportar para volver.", 0.40, 0.85, 0.95)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_punto_marcado"), 0.40, 0.85, 0.95)
         end
         if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
             pcall(function() HoldoorHUD.instance:actualizarHUD() end)
@@ -877,9 +877,9 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
     if comando == "raiseUpToggleConfirmado" then
         local activo = args.activo and true or false
         if activo then
-            HoldoorClient.chat("[HOLDOOR] Raise up John Snow ACTIVO. Si moris, el R'hllor te resucita.", 0.30, 1.00, 0.40)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_raise_activo"), 0.30, 1.00, 0.40)
         else
-            HoldoorClient.chat("[HOLDOOR] ⚠️ Raise up John Snow DESACTIVADO. Moriras sin revive automatico.", 1.00, 0.55, 0.20)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_raise_off"), 1.00, 0.55, 0.20)
         end
         if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
             HoldoorHUD.instance:actualizarHUD()
@@ -970,18 +970,18 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
 
         -- Armar linea de premio final
         local parts = {}
-        if (args.silver or 0) > 0 then table.insert(parts, args.silver .. " Plata") end
-        if (args.gold   or 0) > 0 then table.insert(parts, args.gold   .. " Oro")   end
+        if (args.silver or 0) > 0 then table.insert(parts, args.silver .. " " .. getText("UI_Holdoor_moneda_plata")) end
+        if (args.gold   or 0) > 0 then table.insert(parts, args.gold   .. " " .. getText("UI_Holdoor_moneda_oro")) end
         local premioStr = #parts > 0 and ("[ +" .. table.concat(parts, ", ") .. " ]") or ""
 
-        HoldoorClient.chat("[HOLDOOR] Victoria! Sobreviviste " .. oleadas .. " oleadas." .. (premioStr ~= "" and ("  " .. premioStr) or ""), 0.2, 1, 0.4)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_victoria", tostring(oleadas)) .. (premioStr ~= "" and ("  " .. premioStr) or ""), 0.2, 1, 0.4)
 
         -- Narrativa de fortuna: si el oro era probabilistico Y cayo, destacar
         local goldChance = args.goldChance or 1.0
         if (args.gold or 0) > 0 and goldChance < 1.0 then
-            HoldoorClient.chat("[HOLDOOR] *** Los dioses te sonrien: " .. args.gold .. " ORO !!! ***", 1.0, 0.85, 0.15)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_diossonrien", tostring(args.gold)), 1.0, 0.85, 0.15)
         elseif (args.gold or 0) == 0 and goldChance < 1.0 then
-            HoldoorClient.chat("[HOLDOOR] La fortuna no estuvo de tu lado esta vez (sin oro).", 0.6, 0.6, 0.55)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_fortuna"), 0.6, 0.6, 0.55)
         end
 
         -- Fanfarria de victoria: 3 dings encadenados + alarma final
@@ -997,8 +997,8 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             local killsStr = args.killsStr or ""
             local subLine  = premioStr ~= "" and premioStr or (killsStr ~= "" and ("RANKING -- " .. killsStr) or "")
             HoldoorAnnounce.mostrar(
-                "!LA GUARDIA NOCTURNA PREVALECE!",
-                "Valar Morghulis.  Hold the door.",
+                getText("UI_Holdoor_anuncio_victoria_tit"),
+                getText("UI_Holdoor_anuncio_victoria_sub"),
                 0.95, 0.80, 0.18,
                 420,
                 subLine
@@ -1069,6 +1069,24 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             elseif args.material == "obsidiana" then r, g, b = 0.65, 0.30, 0.85
             end
         end
+        -- i18n: el texto flotante se arma en el CLIENTE (cada quien en su idioma).
+        -- El server manda tipo/cantidad/material; fallback a args.texto (ES) si tipo desconocido.
+        local cant = args.cantidad or 1
+        local txt = args.texto
+        if args.tipo == "gold" then
+            txt = "+" .. cant .. " " .. getText("UI_Holdoor_moneda_oro") .. " !!!"
+        elseif args.tipo == "silver" then
+            txt = "+" .. cant .. " " .. getText("UI_Holdoor_moneda_plata")
+        elseif args.tipo == "bronce" then
+            txt = "+" .. cant .. " Br"
+        elseif args.tipo == "material" and args.material and HoldoorShopCatalog then
+            txt = "+" .. cant .. " " .. HoldoorShopCatalog.labelOf(args.material)
+        elseif args.tipo == "item" then
+            local nm = (args.items and args.items[1] and getItemNameFromFullType and getItemNameFromFullType(args.items[1]))
+                       or (args.items and args.items[1] and tostring(args.items[1]):gsub("^Base%.", ""))
+                       or ""
+            txt = getText("UI_Holdoor_drop_lootraro") .. ": " .. ((cant > 1) and (cant .. "x ") or "") .. nm
+        end
         -- Sobre la cabeza del personaje (player:Say) — el user lo quiere asi
         -- v0.8.8: solo el cliente del matador hace Say + toast. Si args.matador no viene,
         -- fallback al comportamiento viejo (todos hacen Say) por safety.
@@ -1076,10 +1094,10 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         local miUsername = p and p:getUsername() or nil
         local esParaMi = (not args.matador) or (miUsername and args.matador == miUsername)
         if esParaMi then
-            if p and args.texto then pcall(function() p:Say(args.texto) end) end
+            if p and txt then pcall(function() p:Say(txt) end) end
             -- Tambien toast arriba (salvo bronce que es muy frecuente)
-            if args.tipo ~= "bronce" and HoldoorToast and args.texto then
-                pcall(HoldoorToast.mostrar, args.texto, r, g, b)
+            if args.tipo ~= "bronce" and HoldoorToast and txt then
+                pcall(HoldoorToast.mostrar, txt, r, g, b)
             end
         end
         -- Sonido para gold/item/material premium (plata y materiales bajos silenciosos por no spammear).
@@ -1126,19 +1144,20 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
 
         -- Armar linea de monedas: bronce siempre, plata/oro solo si hubo lucky drop
         local parts = {}
-        if (args.bronze or 0) > 0 then table.insert(parts, args.bronze .. " Bronce") end
-        if (args.silver or 0) > 0 then table.insert(parts, args.silver .. " Plata") end
-        if (args.gold   or 0) > 0 then table.insert(parts, args.gold   .. " Oro")   end
+        if (args.bronze or 0) > 0 then table.insert(parts, args.bronze .. " " .. getText("UI_Holdoor_moneda_bronce")) end
+        if (args.silver or 0) > 0 then table.insert(parts, args.silver .. " " .. getText("UI_Holdoor_moneda_plata")) end
+        if (args.gold   or 0) > 0 then table.insert(parts, args.gold   .. " " .. getText("UI_Holdoor_moneda_oro")) end
         local monStr = #parts > 0 and ("[ +" .. table.concat(parts, ", ") .. " ]") or ""
 
-        HoldoorClient.chat("[HOLDOOR] Oleada " .. (args.numero or "?") .. " completada! Proxima en " .. pausaSeg .. "s..." .. (monStr ~= "" and ("  " .. monStr) or ""), 0.2, 1, 0.4)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_oleadacompletada", tostring(args.numero or "?"), tostring(pausaSeg)) .. (monStr ~= "" and ("  " .. monStr) or ""), 0.2, 1, 0.4)
 
         -- v0.6.1: resumen de items entregados (antes era silencioso → bug confundia con drops sin notif)
         if args.items and #args.items > 0 then
             local conteos = {}
             local orden = {}
             for _, full in ipairs(args.items) do
-                local nm = tostring(full):gsub("^Base%.", "")
+                -- i18n: nombre legible/traducido del item (antes salia el tipo crudo "Gloves_LeatherGloves")
+                local nm = getItemNameFromFullType(full) or (tostring(full):gsub("^Base%.", ""))
                 if conteos[nm] == nil then table.insert(orden, nm); conteos[nm] = 0 end
                 conteos[nm] = conteos[nm] + 1
             end
@@ -1147,7 +1166,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
                 local c = conteos[nm]
                 table.insert(partsI, (c > 1 and (c .. "x ") or "") .. nm)
             end
-            local botinStr = "Botin: " .. table.concat(partsI, ", ")
+            local botinStr = getText("UI_Holdoor_chat_botin", table.concat(partsI, ", "))
             HoldoorClient.chat("[HOLDOOR] " .. botinStr, 0.80, 0.55, 1.0)
             if HoldoorToast then
                 pcall(HoldoorToast.mostrar, botinStr, 0.80, 0.55, 1.0)
@@ -1177,9 +1196,9 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         -- Si cayo un drop raro: avisar destacado en chat
         if args.lucky then
             if (args.gold or 0) > 0 then
-                HoldoorClient.chat("[HOLDOOR] *** JACKPOT! Cayo " .. args.gold .. " Oro ***", 1.0, 0.85, 0.15)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_jackpot", tostring(args.gold)), 1.0, 0.85, 0.15)
             elseif (args.silver or 0) > 0 then
-                HoldoorClient.chat("[HOLDOOR] !!! SUERTE! Drop extra de " .. args.silver .. " Plata", 0.75, 0.85, 1.0)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_suerte", tostring(args.silver)), 0.75, 0.85, 1.0)
             end
         end
 
@@ -1188,8 +1207,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         -- v0.6: si fue CIERRE LIMPIO (kills >= target antes del timer), toast épico
         if args.cierreLimpio and HoldoorToast then
             HoldoorToast.mostrar(
-                string.format("CIERRE LIMPIO! +25%% recompensa  (%d/%d kills)",
-                    args.kills or 0, args.target or 0),
+                getText("UI_Holdoor_toast_cierrelimpio", tostring(args.kills or 0), tostring(args.target or 0)),
                 1.0, 0.85, 0.30
             )
             -- v0.6 fix: usar helper playUISound (con guards) en vez de pcall directo a
@@ -1203,8 +1221,8 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             local killsStr = args.killsStr or ""
             local subLine  = killsStr ~= "" and killsStr or monStr
             HoldoorAnnounce.mostrar(
-                "OLEADA " .. (args.numero or "?") .. " COMPLETADA",
-                "La guardia aguanta. Proxima en " .. pausaSeg .. "s...",
+                getText("UI_Holdoor_anuncio_olcompleta_tit", tostring(args.numero or "?")),
+                getText("UI_Holdoor_anuncio_olcompleta_sub", tostring(pausaSeg)),
                 0.22, 1.0, 0.38,
                 210,
                 subLine
@@ -1260,11 +1278,12 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         local r, g, b = 1.0, 0.85, 0.20  -- amarillo default
         if args.color == "rojo" then r, g, b = 1.0, 0.45, 0.20 end
         if args.color == "critico" then r, g, b = 1.0, 0.15, 0.15 end
-        HoldoorClient.chat("[HOLDOOR] !!! " .. (args.msg or "ALERTA") .. " !!!", r, g, b)
+        local msgT = args.msgKey and getText(args.msgKey) or (args.msg or "ALERTA")
+        HoldoorClient.chat("[HOLDOOR] !!! " .. msgT .. " !!!", r, g, b)
         if HoldoorAnnounce then
             HoldoorAnnounce.mostrar(
-                "!!! " .. (args.msg or "ALERTA") .. " !!!",
-                "HP del Trono al " .. (args.pct or "?") .. "%",
+                "!!! " .. msgT .. " !!!",
+                getText("UI_Holdoor_anuncio_trono_hp", tostring(args.pct or "?")),
                 r, g, b, 240
             )
         end
@@ -1272,21 +1291,21 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
     elseif comando == "tronoCayo" then
         HoldoorClient.estado.activo = false
         HoldoorClient.estado.fase   = "derrotado"
-        HoldoorClient.chat("[HOLDOOR] !!! EL TRONO DE HIERRO HA CAIDO !!!", 1, 0.10, 0.10)
-        HoldoorClient.chat("[HOLDOOR] La defensa fue rota. Las oleadas se detienen.", 1, 0.30, 0.20)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_tronocayo1"), 1, 0.10, 0.10)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_tronocayo2"), 1, 0.30, 0.20)
         if HoldoorAnnounce then
             -- v0.6.1 fix off-by-one: oleadas-1 porque caiste EN la oleada actual,
             -- no la sobreviviste. Ej: si moriste en la 3ra, sobreviviste 2.
             local sobrevividas = math.max(0, (args.oleadas or 1) - 1)
             local subline
             if sobrevividas == 0 then
-                subline = "Caiste en la primera oleada."
+                subline = getText("UI_Holdoor_derrota_sub0")
             elseif sobrevividas == 1 then
-                subline = "Sobreviviste 1 oleada. Caiste en la 2da."
+                subline = getText("UI_Holdoor_derrota_sub1")
             else
-                subline = "Sobreviviste " .. sobrevividas .. " oleadas. Caiste en la " .. (sobrevividas + 1) .. "."
+                subline = getText("UI_Holdoor_derrota_subN", tostring(sobrevividas), tostring(sobrevividas + 1))
             end
-            HoldoorAnnounce.mostrar("EL TRONO HA CAIDO", subline, 1.0, 0.10, 0.10, 480)
+            HoldoorAnnounce.mostrar(getText("UI_Holdoor_anuncio_tronocayo"), subline, 1.0, 0.10, 0.10, 480)
         end
 
     elseif comando == "monedasActualizadas" then
@@ -1330,16 +1349,17 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         -- Mensaje al user para que sepa que tiene que levantarlo del piso
         local nItems = (args.item and 1 or 0) + (args.items and #args.items or 0)
         if nItems > 0 then
-            HoldoorClient.chat("[HOLDOOR] +" .. nItems .. " item" .. (nItems > 1 and "s" or "") .. " a tus pies (click derecho → Levantar)", 0.5, 1, 0.6)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_items_pies", tostring(nItems)), 0.5, 1, 0.6)
         end
 
     elseif comando == "transferOK" then
-        local tipoLbl = ({bronze="Bronce", silver="Plata", gold="Oro"})[args.tipo] or args.tipo
-        HoldoorClient.chat("[HOLDOOR] Enviaste " .. (args.cantidad or 0) .. " " .. tipoLbl .. " a " .. (args.to or "?") .. ".", 0.4, 1, 0.6)
+        local tipoMap = { bronze="UI_Holdoor_moneda_bronce", silver="UI_Holdoor_moneda_plata", gold="UI_Holdoor_moneda_oro" }
+        local tipoLbl = (tipoMap[args.tipo] and getText(tipoMap[args.tipo])) or args.tipo
+        HoldoorClient.chat(getText("UI_Holdoor_chat_enviaste", tostring(args.cantidad or 0), tipoLbl, tostring(args.to or "?")), 0.4, 1, 0.6)
         playUISound("LevelPerk")
 
     elseif comando == "compraOK" then
-        HoldoorClient.chat("[HOLDOOR] Compraste: " .. (args.nombre or "?"), 0.5, 1, 0.6)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_compraste", tostring(args.nombre or "?")), 0.5, 1, 0.6)
         if HoldoorShop and HoldoorShop.refrescar then HoldoorShop.refrescar() end
 
     elseif comando == "compraFail" then
@@ -1347,17 +1367,18 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
 
 
     elseif comando == "transferRecibido" then
-        local tipoLbl = ({bronze="Bronce", silver="Plata", gold="Oro"})[args.tipo] or args.tipo
+        local tipoMap = { bronze="UI_Holdoor_moneda_bronce", silver="UI_Holdoor_moneda_plata", gold="UI_Holdoor_moneda_oro" }
+        local tipoLbl = tipoMap[args.tipo] and getText(tipoMap[args.tipo]) or tostring(args.tipo)
         local cantR   = args.cantidad or 0
         local fromR   = args.from or "?"
-        HoldoorClient.chat("[HOLDOOR] Recibiste " .. cantR .. " " .. tipoLbl .. " de " .. fromR .. "!", 1, 0.85, 0.3)
+        HoldoorClient.chat(getText("UI_Holdoor_tm_chat_recibiste", tostring(cantR), tipoLbl, fromR), 1, 0.85, 0.3)
         playUISound("LevelPerk")
         -- v0.8.x: feedback VISIBLE (el chat solo no se notaba). Texto flotante arriba de la cabeza
         -- + toast, como pidio Nahuel.
         local meR = getSpecificPlayer(0)
         if meR then pcall(function() meR:Say("+" .. cantR .. " " .. tipoLbl) end) end
         if HoldoorToast and HoldoorToast.mostrar then
-            pcall(function() HoldoorToast.mostrar(fromR .. " te envio " .. cantR .. " " .. tipoLbl, 1.0, 0.85, 0.3) end)
+            pcall(function() HoldoorToast.mostrar(getText("UI_Holdoor_tm_recibido", fromR, tostring(cantR), tipoLbl), 1.0, 0.85, 0.3) end)
         end
 
     elseif comando == "aplicarTrait" then
@@ -1481,9 +1502,46 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
         -- no impacta el render del host (gotcha #62). Coords EXPLICITAS en args porque el estado
         -- del client-ctx no esta sincronizado bajo OPCION B. Solo el host local lo procesa.
         if tieneServidorLocal() and args.bx and args.by then
+            local vistos = 0
             pcall(function()
-                HoldoorServer._reAggroZombies(args.bx, args.by, args.bz, args.radioSpawn)
+                vistos = HoldoorServer._reAggroZombies(args.bx, args.by, args.bz, args.radioSpawn) or 0
             end)
+            -- DIAG (v0.9.x): cuenta REAL de zombies que el host VE (client-ctx = la verdad).
+            -- La verificacion del server cuenta server-ctx y ve fantasmas; ESTE es el numero real.
+            print(string.format("[Holdoor][DIAG] host VE %d zombies en radio (bx=%s by=%s)",
+                vistos, tostring(args.bx), tostring(args.by)))
+
+            -- RESEGURO (v0.9.x): si el host NO ve un solo zombie durante una oleada activa por
+            -- ~16s, el spawn fallo silencioso (/createhorde2 logueo "Spawning" pero no materializo
+            -- en el cliente). Forzamos un spawn en los 4 cardinales para que nunca haya gaps muertos.
+            local e = HoldoorClient.estado
+            if vistos > 0 then
+                e._reaseguroTicks = 0
+            else
+                e._reaseguroTicks = (e._reaseguroTicks or 0) + 1
+                -- v0.9.x: cooldown 60s para que el reaseguro sea red de seguridad, no una bomba de
+                -- acumulacion (antes podia disparar cada 16s y apilar backlog -> bursts gigantes).
+                if e._reaseguroTicks >= 4 and os.time() >= (e._reaseguroUltimoSec or 0) + 60 then
+                    e._reaseguroTicks = 0
+                    e._reaseguroUltimoSec = os.time()
+                    local dist = args.radioSpawn or 15
+                    local bz   = args.bz or 0
+                    local pts = {
+                        { x = args.bx,        y = args.by - dist, l = "N" },
+                        { x = args.bx + dist, y = args.by,        l = "E" },
+                        { x = args.bx,        y = args.by + dist, l = "S" },
+                        { x = args.bx - dist, y = args.by,        l = "O" },
+                    }
+                    e._pendienteHordaAdmin = e._pendienteHordaAdmin or {}
+                    for _, p in ipairs(pts) do
+                        table.insert(e._pendienteHordaAdmin, {
+                            x = p.x, y = p.y, z = bz, count = 4, radius = 3, label = "RESEGURO-" .. p.l,
+                        })
+                    end
+                    print("[Holdoor][RESEGURO] 0 zombies vistos por ~16s en oleada activa -> forzando spawn en 4 cardinales")
+                end
+            end
+
             print(string.format("[Holdoor] ejecutarReAggroLocal ejecutado (bx=%s, by=%s, radioSpawn=%s)",
                 tostring(args.bx), tostring(args.by), tostring(args.radioSpawn)))
         end
@@ -1554,7 +1612,7 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
             -- v0.6 fix: ignorar por TIEMPO no por contador. Ventana de 2s para que los
             -- setHealth(0) async procesen y NO confundir con kills reales del user.
             HoldoorClient.estado._killsIgnorarHasta = os.time() + 2
-            HoldoorClient.chat("[HOLDOOR] Zona despejada: " .. n .. " caminantes eliminados.", 0.4, 0.8, 1)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_zona_despejada", tostring(n)), 0.4, 0.8, 1)
         end
 
     elseif comando == "aviso" then
@@ -1570,6 +1628,23 @@ function HoldoorClient.onComandoServidor(modulo, comando, args)
 
     elseif comando == "mensaje" then
         HoldoorClient.chat("[HOLDOOR] " .. (args.texto or ""), 1, 0.6, 0.2)
+
+    elseif comando == "hordaSorpresa" then
+        -- v0.9.x: evento Horda Sorpresa. Reusa HoldoorAnnounce (mismo cartel que las oleadas,
+        -- MP-safe -> tu friend lo ve) + chat. SIN sonido. Cada cliente lo muestra en su idioma.
+        if args.fase == "aviso" then
+            if HoldoorAnnounce then
+                HoldoorAnnounce.mostrar(getText("UI_Holdoor_sorpresa_tit"),
+                    getText("UI_Holdoor_sorpresa_sub"), 1.0, 0.45, 0.05, 360)
+            end
+        elseif args.fase == "impacto" then
+            if HoldoorAnnounce then
+                HoldoorAnnounce.mostrar(getText("UI_Holdoor_sorpresa_impacto_tit"),
+                    getText("UI_Holdoor_sorpresa_impacto_sub"), 1.0, 0.15, 0.05, 300)
+            end
+        elseif args.fase == "premio" then
+            HoldoorClient.chat(getText("UI_Holdoor_sorpresa_premio", tostring(args.oro or 0)), 1, 0.85, 0.2)
+        end
 
     elseif comando == "ejecutarHordaAdmin" then
         -- v0.7 #13: bridge para spawnear hordas via /createhorde2 admin.
@@ -1622,9 +1697,13 @@ function HoldoorClient.mostrarOleada(args)
     local total    = args.total or args.cantidad or 0
     local esUltima = args.esUltima or false
 
-    HoldoorClient.chat("=================================", 0.6, 0.3, 0.1)
+    -- v0.9.x: los separadores "=====" van SOLO en la ultima oleada (envuelven el texto
+    -- ULTIMA OLEADA). En oleadas normales se quitaron: dejaban un marco verde vacio (el
+    -- cartel central ya informa) — bug visual reportado por Nahuel.
     if esUltima then
-        HoldoorClient.chat("!!! ULTIMA OLEADA !!!", 1, 0.1, 0.05)
+        HoldoorClient.chat("=================================", 0.6, 0.3, 0.1)
+        HoldoorClient.chat(getText("UI_Holdoor_anuncio_ultima"), 1, 0.1, 0.05)
+        HoldoorClient.chat("=================================", 0.6, 0.3, 0.1)
         -- Alarma de ultima oleada: sube la tension
         playUISound("BurglarAlarm1")
     end
@@ -1632,39 +1711,34 @@ function HoldoorClient.mostrarOleada(args)
     -- decia "0 en camino" siempre. El cartel grande centrado de HoldoorAnnounce ya tiene la info.
     -- Frase epica (Valar Morghulis, etc): SOLO al toast superior, no sobre la cabeza
     -- (sino se tapa con el cartel grande centrado y otras UIs).
-    if args.frase and HoldoorToast then
-        local txt = args.frase
-        if args.autor then txt = txt .. "  --  " .. args.autor end
+    if args.fraseIdx and HoldoorToast then
+        local txt = getText("UI_Holdoor_frase_" .. args.fraseIdx)
+        local autor = getText("UI_Holdoor_frase_" .. args.fraseIdx .. "_autor")
+        if autor and autor ~= "" then txt = txt .. "   " .. autor end
         HoldoorToast.mostrar(txt, 0.95, 0.85, 0.45)
     end
-    HoldoorClient.chat("=================================", 0.6, 0.3, 0.1)
 
     -- Anuncio épico centrado
     -- v0.7 #17: si el server mando subtituloEpico (flow hordasMP), usarlo tal cual.
     -- Sino caer al texto viejo "Amenaza: X -- Aguanta la puerta" (flow legacy).
     if HoldoorAnnounce then
+        -- i18n: subtitulo traducido segun los indices que mando el server (o fallback si subVariante=0)
+        local subText
+        if args.subVariante and args.subVariante > 0 and args.subModo then
+            subText = getText("UI_Holdoor_sub_" .. args.subModo .. "_" .. tostring(args.subOleada) .. "_" .. tostring(args.subVariante))
+        else
+            subText = getText("UI_Holdoor_sub_fallback")
+        end
         if esUltima then
-            local subText
-            if args.subtituloEpico and args.subtituloEpico ~= "" then
-                subText = args.subtituloEpico
-            else
-                subText = (args.amenaza and ("Amenaza: " .. args.amenaza) or "") .. "  -- Aguanta la puerta."
-            end
             HoldoorAnnounce.mostrar(
-                "!!! ULTIMA OLEADA !!!",
+                getText("UI_Holdoor_anuncio_ultima"),
                 subText,
                 1.0, 0.08, 0.05,
                 360
             )
         else
-            local subText
-            if args.subtituloEpico and args.subtituloEpico ~= "" then
-                subText = args.subtituloEpico
-            else
-                subText = args.amenaza and ("Amenaza: " .. args.amenaza) or ""
-            end
             HoldoorAnnounce.mostrar(
-                "-- OLEADA " .. args.numero .. " --",
+                getText("UI_Holdoor_anuncio_oleada", tostring(args.numero)),
                 subText,
                 1.0, 0.22, 0.08,
                 270
@@ -1783,7 +1857,7 @@ function HoldoorClient.iniciar(config, modoId)
             local ok, err = pcall(HoldoorServer.iniciar, player, config)
             if not ok then
                 print("[Holdoor] iniciar ERROR: " .. tostring(err))
-                HoldoorClient.chat("[HOLDOOR] Error al iniciar: " .. tostring(err), 1, 0.2, 0.2)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_error_iniciar", tostring(err)), 1, 0.2, 0.2)
             end
         end
     else
@@ -1817,7 +1891,7 @@ function HoldoorClient.setBase()
     -- el server, el cliente ya seteo baseDefinida + mostro el toast "Base marcada" antes de que el
     -- server alcance a rechazar. (La validacion del server queda igual como respaldo.)
     if z ~= 0 then
-        HoldoorClient.chat("[HOLDOOR] El Trono debe marcarse a NIVEL DEL SUELO (planta baja). Baja a la planta baja para marcar la base.", 1, 0.45, 0.45)
+        HoldoorClient.chat(getText("UI_Holdoor_aviso_nivelsuelo"), 1, 0.45, 0.45)
         return
     end
 
@@ -1873,21 +1947,21 @@ function HoldoorClient.oleadaManual()
     -- v0.8.7: ver iniciar. Validaciones v0.7.
     if esSinglePlayer() then
         if not HoldoorServer.estado.activo then
-            HoldoorClient.chat("[HOLDOOR] El sistema de oleadas no esta activo.", 1, 0.3, 0.2)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_sistema_no_activo"), 1, 0.3, 0.2)
             return
         end
         if not HoldoorServer.estado.baseDefinida then
-            HoldoorClient.chat("[HOLDOOR] Primero marca tu base!", 1, 0.3, 0.2)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_primero_marca"), 1, 0.3, 0.2)
             return
         end
         if HoldoorServer.estado.fase == "activa" then
-            HoldoorClient.chat("[HOLDOOR] Ya hay una oleada en curso. Termina primero.", 1, 0.6, 0.1)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_ya_oleada"), 1, 0.6, 0.1)
             return
         end
         local ok, err = pcall(HoldoorServer._lanzarOleada)
         if not ok then
             print("[Holdoor] oleadaManual ERROR: " .. tostring(err))
-            HoldoorClient.chat("[HOLDOOR] Error al forzar oleada: " .. tostring(err), 1, 0.2, 0.2)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_error_forzar", tostring(err)), 1, 0.2, 0.2)
         end
     else
         sendClientCommand(HoldoorConfig.MODULE, "oleadaManual", {})
@@ -2064,7 +2138,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
         if itemDef.accion.tipo == "trait" then
             local yaLoTiene = _playerTieneTrait(itemDef.accion.trait)
             if yaLoTiene == true then
-                HoldoorClient.chat("[HOLDOOR] Ya tenes ese rasgo. No hace falta invocarlo.", 1, 0.6, 0.2)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_ya_tenes_rasgo"), 1, 0.6, 0.2)
                 return
             end
         end
@@ -2072,7 +2146,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
         if itemDef.accion.tipo == "cura_trait" then
             local loTiene = _playerTieneTrait(itemDef.accion.trait)
             if loTiene == false then
-                HoldoorClient.chat("[HOLDOOR] No tenes ese rasgo, no hay nada que curar.", 1, 0.6, 0.2)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_no_tenes_rasgo"), 1, 0.6, 0.2)
                 return
             end
         end
@@ -2106,7 +2180,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
                 end)
             end
             if not necesitaCura then
-                HoldoorClient.chat("[HOLDOOR] No tenes heridas fisicas. La Sanacion del Septon no tiene a quien curar.", 1, 0.6, 0.2)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_no_heridas"), 1, 0.6, 0.2)
                 return
             end
         end
@@ -2152,7 +2226,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
                 end)
             end
             if not necesitaCura then
-                HoldoorClient.chat("[HOLDOOR] Estas sano. El Beso del Dios no tiene a quien curar.", 1, 0.6, 0.2)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_beso_sano"), 1, 0.6, 0.2)
                 return
             end
         end
@@ -2186,7 +2260,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
                 end)
             end
             if not tiene then
-                HoldoorClient.chat("[HOLDOOR] No tenes " .. cfg.msg .. ". Nada que curar.", 1, 0.6, 0.2)
+                HoldoorClient.chat(getText("UI_Holdoor_chat_no_tenes_x", cfg.msg), 1, 0.6, 0.2)
                 return
             end
         end
@@ -2198,11 +2272,11 @@ function HoldoorClient.comprar(categoriaId, itemId)
     if itemDef and itemDef.accion and itemDef.accion.tipo == "subir_nivel" then
         infoNivel = HoldoorClient.calcSubirNivel(itemDef.accion.perk, itemDef.accion.tier)
         if not infoNivel then
-            HoldoorClient.chat("[HOLDOOR] No se pudo calcular el nivel. Reportar bug.", 1, 0.3, 0.2)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_no_calcular_nivel"), 1, 0.3, 0.2)
             return
         end
         if infoNivel.max then
-            HoldoorClient.chat("[HOLDOOR] Ya tenes esa habilidad al maximo (nivel 10).", 1, 0.6, 0.2)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_ya_maximo"), 1, 0.6, 0.2)
             return
         end
     end
@@ -2250,7 +2324,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
         -- El server ya marco md.Holdoor_BesoDios_Bolsa = true al cobrar.
         -- Aca solo confirmamos visualmente que la compra entro a la bolsa.
         if accion.tipo == "reliquia_godmode_flash" and targetUser then
-            HoldoorClient.chat("[HOLDOOR] Beso del Dios guardado. Activalo desde el HUD lateral cuando lo necesites.", 0.85, 0.55, 0.95)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_beso_guardado"), 0.85, 0.55, 0.95)
             -- Refrescar HUD para que aparezca el boton nuevo
             if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
                 HoldoorHUD.instance:actualizarHUD()
@@ -2260,7 +2334,7 @@ function HoldoorClient.comprar(categoriaId, itemId)
         -- v0.8 #4: Raise up John Snow — guardado en bolsa con seguro ACTIVO por default.
         -- El jugador puede togglearlo desde el HUD lateral (boton verde/rojo).
         if accion.tipo == "raise_up" and targetUser then
-            HoldoorClient.chat("[HOLDOOR] Levanten a John Snow guardado. Si tu HP llega a 0 con el seguro activo, el R'hllor te revive.", 0.95, 0.75, 0.20)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_raise_guardado"), 0.95, 0.75, 0.20)
             if HoldoorHUD and HoldoorHUD.instance and HoldoorHUD.instance.actualizarHUD then
                 HoldoorHUD.instance:actualizarHUD()
             end
@@ -2546,7 +2620,7 @@ function HoldoorClient.onKeyPressed(key)
     if HoldoorClient.esAdmin() then
         HoldoorUI.abrir()
     else
-        HoldoorClient.chat("[HOLDOOR] Solo el host del servidor puede abrir el panel.", 1, 0.4, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_solo_host_panel"), 1, 0.4, 0.2)
     end
 end
 
@@ -2585,7 +2659,7 @@ function HoldoorClient.instalarComandoChat()
                 if HoldoorClient.esAdmin() then
                     HoldoorUI.abrir()
                 else
-                    HoldoorClient.chat("[HOLDOOR] Solo el host del servidor puede usar /holdoor.", 1, 0.4, 0.2)
+                    HoldoorClient.chat(getText("UI_Holdoor_chat_solo_host_comando"), 1, 0.4, 0.2)
                 end
                 return  -- corto el flujo original
             end

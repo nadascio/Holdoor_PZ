@@ -172,6 +172,15 @@ function HoldoorServer._aplicarRefundAJugador(jugador)
     if not jugador then return end
     local username = jugador:getUsername()
     if not username then return end
+    -- v0.9.x DIAG friend: en qué contexto corre el RESTORE + si encontró el seguro pendiente.
+    -- Combinado con el DIAG de MUERTE (qué ctx guardó), revela si el friend necesita bridge.
+    pcall(function()
+        local s, c, ch = false, false, false
+        pcall(function() s = isServer() end); pcall(function() c = isClient() end); pcall(function() ch = isCoopHost() end)
+        local tiene = (HoldoorServer.seguros and HoldoorServer.seguros[username]) and true or false
+        print(string.format("[Holdoor][Seguro-DIAG] RESTORE %s ctx(S=%s C=%s CH=%s) seguroEncontrado=%s",
+            tostring(username), tostring(s), tostring(c), tostring(ch), tostring(tiene)))
+    end)
     -- v0.8 fix: guard defensivo. OnCreatePlayer puede disparar ANTES que init() en el primer
     -- spawn de SP → HoldoorServer.seguros es nil → "attempted index of non-table". Early exit.
     if not HoldoorServer.seguros then return end
@@ -956,24 +965,52 @@ function HoldoorServer.iniciar(jugador, config)
     estado.killsOleada  = {}
     estado.killsTotal   = {}
 
-    -- v0.6.1: registrar participantes activos (vivos + en zona) para detectar derrota
-    -- por muerte total. Cuando todos mueren / se desconectan → oleada se da por perdida.
-    estado.participantes = {}   -- { [username] = true }
+    -- v0.9.x MODELO DERROTA (Nahuel): partícipes = jugadores online DENTRO de (base + radioSpawn + 15
+    -- tiles) al arrancar oleadas. Cada uno arranca con toggle vivo=true. Al morir → false. Cuando
+    -- TODOS están en false → cae el Trono (ver _registrarMuerteParticipante).
+    estado.participantes = {}   -- { [username] = true(vivo) / false(muerto) }
     pcall(function()
-        local ok, ps = pcall(getOnlinePlayers)
-        if ok and ps then
-            local oks, np = pcall(function() return ps:size() end)
-            if oks and np then
-                for i = 0, np - 1 do
-                    local okp, p = pcall(function() return ps:get(i) end)
-                    if okp and p then
-                        local u
-                        pcall(function() u = p:getUsername() end)
-                        if u then estado.participantes[u] = true end
+        local bx, by = estado.baseX, estado.baseY
+        local radioPart = ((estado.config and estado.config.radioSpawn) or 15) + 15
+        local ps = getOnlinePlayers()
+        if not ps then return end
+        local np = ps:size()
+        for i = 0, np - 1 do
+            local p = ps:get(i)
+            if p then
+                local u, px, py
+                pcall(function() u = p:getUsername() end)
+                pcall(function() px = p:getX(); py = p:getY() end)
+                if u then
+                    local dentro = true
+                    if bx and by and px and py then
+                        local dx, dy = px - bx, py - by
+                        dentro = (dx * dx + dy * dy) <= (radioPart * radioPart)
+                    end
+                    if dentro then
+                        estado.participantes[u] = true
+                        print("[Holdoor][Participantes] " .. u .. " ENTRA (vivo) — radio " .. radioPart)
+                    else
+                        print("[Holdoor][Participantes] " .. u .. " fuera de zona — NO participa")
                     end
                 end
             end
         end
+    end)
+    -- Fallback anti-edge: si el filtro de radio dejó la lista vacía, registrar a todos los online
+    -- (para que la derrota nunca quede "muerta" por una lista vacía).
+    pcall(function()
+        local hay = false
+        for _ in pairs(estado.participantes) do hay = true; break end
+        if hay then return end
+        local ps = getOnlinePlayers()
+        if not ps then return end
+        for i = 0, ps:size() - 1 do
+            local p = ps:get(i)
+            local u; pcall(function() u = p and p:getUsername() end)
+            if u then estado.participantes[u] = true end
+        end
+        print("[Holdoor][Participantes] fallback: lista vacía → registrados todos los online")
     end)
 
     -- v0.8.x FIX TRONO MP: fijar el HP del Trono al valor del MODO al iniciar.
@@ -2024,6 +2061,47 @@ function HoldoorServer._aggroSostenido()
     })
 end
 
+-- v0.9.x HORDA SORPRESA: procesa telegraph + impacto (mega-horda) en su momento.
+-- Reusa ejecutarHordaAdmin (/createhorde2) para el spike y notificarTodos("hordaSorpresa")
+-- para el cartel (HoldoorAnnounce en cada cliente, MP-safe). Llamado en el tick de fase activa.
+function HoldoorServer._procesarHordaSorpresa()
+    local estado = HoldoorServer.estado
+    local hs = estado.hordaSorpresa
+    if not hs then return end
+    local ahora = os.time()
+
+    -- 1) Telegraph (cartel de aviso)
+    if not hs.telegrafiado and ahora >= hs.telegraphSec then
+        hs.telegrafiado = true
+        HoldoorServer.notificarTodos("hordaSorpresa", { fase = "aviso" })
+        print("[Holdoor] HORDA SORPRESA: telegraph enviado")
+    end
+
+    -- 2) Impacto: mega-horda por los cardinales + cartel de impacto
+    if not hs.impactada and ahora >= hs.impactoSec then
+        hs.impactada = true
+        estado.hordaSorpresaSobrevivir = true   -- flag para el premio al cerrar la oleada
+        local cfg  = HoldoorConfig.hordaSorpresa[hs.modoId] or {}
+        local dist = (estado.config and estado.config.radioSpawn) or 15
+        local bx, by, bz = estado.baseX, estado.baseY, estado.baseZ or 0
+        local card = {
+            { x = bx,        y = by - dist },
+            { x = bx + dist, y = by        },
+            { x = bx,        y = by + dist },
+            { x = bx - dist, y = by        },
+        }
+        local nPts = math.min(cfg.puntos or 3, #card)
+        local cnt  = cfg.zPorPunto or 6
+        for i = 1, nPts do
+            HoldoorServer.notificarTodos("ejecutarHordaAdmin", {
+                x = card[i].x, y = card[i].y, z = bz, count = cnt, radius = 3, label = "SORPRESA",
+            })
+        end
+        HoldoorServer.notificarTodos("hordaSorpresa", { fase = "impacto" })
+        print(string.format("[Holdoor] HORDA SORPRESA: IMPACTO! %d puntos x %d zombies", nPts, cnt))
+    end
+end
+
 -- v0.6 — Check de cierre de oleada (timer Y/O target kills, lo que pase primero).
 function HoldoorServer._chequearCierreOleada()
     local estado = HoldoorServer.estado
@@ -2134,13 +2212,36 @@ function HoldoorServer._lanzarOleada()
     estado.cierreLimpio        = false
     estado.aggroUltimoSec      = 0
 
+    -- v0.9.x HORDA SORPRESA: roll 1x por oleada (solo modos con hordasMP). Si sale, el spike
+    -- cae en momento random (30-70% de la oleada), telegrafiado 6s antes. Reusa el spawn normal.
+    estado.hordaSorpresa = nil
+    estado.hordaSorpresaSobrevivir = false
+    if hordasMPOleadaCfg then
+        local hs = HoldoorConfig.hordaSorpresa and HoldoorConfig.hordaSorpresa[modoId]
+        if hs and hs.chance and ZombRand(100) < (hs.chance * 100) then
+            local frac    = 0.30 + (ZombRand(41) / 100)            -- 0.30 .. 0.70
+            local spikeEn = math.max(10, math.floor(duracion * frac))
+            local teleSeg = HoldoorConfig.hordaSorpresaTelegraphSeg or 6
+            estado.hordaSorpresa = {
+                modoId       = modoId,
+                telegraphSec = os.time() + spikeEn,
+                impactoSec   = os.time() + spikeEn + teleSeg,
+                telegrafiado = false,
+                impactada    = false,
+            }
+            print(string.format("[Holdoor] HORDA SORPRESA rolada: telegraph en %ds, impacto en %ds (modo=%s)",
+                spikeEn, spikeEn + teleSeg, modoId))
+        end
+    end
+
     -- Compatibilidad: codigo viejo lee zombiesTotal/Restantes. En modelo C no hay
     -- total fijo. Los seteamos a 0 (no se usan para counter de oleada).
     estado.zombiesTotal     = 0
     estado.zombiesRestantes = 0
 
     -- Frases épicas + flag de ultima oleada
-    local frase    = HoldoorConfig.frases[ZombRand(#HoldoorConfig.frases) + 1]
+    -- i18n: mandamos el INDICE de la frase (no el texto) → cada cliente traduce a su idioma.
+    local fraseIdx = ZombRand(#HoldoorConfig.frases) + 1
     local esUltima = (oleada >= (modoCfg.maxOleadas or 8))
 
     -- v0.7 #17: en hordasMP, NO hay corredores (createhorde2 no acepta -speed).
@@ -2151,12 +2252,12 @@ function HoldoorServer._lanzarOleada()
 
     -- v0.7 #17: subtitulo epico random por oleada (solo modos en hordasMP).
     -- Reemplaza "Amenaza: Muertos + corredores -- Aguanta la puerta" en el anuncio.
-    local subtituloEpico = nil
+    -- i18n: mandamos el INDICE de variante (no el texto) → cada cliente lo traduce.
+    local subVariante = 0
     if hordasMPOleadaCfg then
         local subts = (HoldoorConfig.subtitulosOleada or {})[modoId]
         if subts and subts[oleada] and #subts[oleada] > 0 then
-            local opciones = subts[oleada]
-            subtituloEpico = opciones[ZombRand(#opciones) + 1]
+            subVariante = ZombRand(#subts[oleada]) + 1
         end
     end
 
@@ -2174,10 +2275,10 @@ function HoldoorServer._lanzarOleada()
         spawnInicio    = spawnInicio,
         spawnFin       = spawnFin,
         pctCorredores  = pctCorredores,
-        frase          = frase.texto,
-        autor          = frase.autor,
-        amenaza        = pctCorredores > 0 and "Muertos + corredores" or "Muertos vivientes",
-        subtituloEpico = subtituloEpico,   -- v0.7 #17: si presente, el cliente lo usa en vez de "Amenaza:"
+        fraseIdx       = fraseIdx,
+        subModo        = modoId,
+        subOleada      = oleada,
+        subVariante    = subVariante,   -- 0 = sin subtitulo → cliente usa fallback
         esUltima       = esUltima,
     })
 
@@ -2535,6 +2636,7 @@ function HoldoorServer._reAggroZombies(bxArg, byArg, bzArg, radioSpawnArg)
     if repathed > 0 then
         print("[Holdoor] Re-aggro: " .. repathed .. " zombies re-pathed hacia la base")
     end
+    return repathed   -- v0.9.x: cuantos zombies VE el host en radio (verdad client-ctx, para reaseguro)
 end
 
 -- ─────────────────────────────────────────────
@@ -3025,6 +3127,22 @@ function HoldoorServer._oleadaCompletada()
         estado.killsOleada or {}
     )
 
+    -- v0.9.x: PREMIO por sobrevivir una Horda Sorpresa (flag seteado en _procesarHordaSorpresa).
+    if estado.hordaSorpresaSobrevivir then
+        estado.hordaSorpresaSobrevivir = false
+        local hsCfg = HoldoorConfig.hordaSorpresa and HoldoorConfig.hordaSorpresa[(estado.config and estado.config.modoId) or "normal"]
+        if hsCfg then
+            local oro = hsCfg.oroBase or 0
+            if hsCfg.oroChance  and ZombRand(100) < (hsCfg.oroChance  * 100) then oro = oro + 1 end
+            if hsCfg.oro2Chance and ZombRand(100) < (hsCfg.oro2Chance * 100) then oro = oro + 1 end
+            if oro > 0 then
+                HoldoorServer._distribuirMonedas(0, 0, oro, nil)
+                HoldoorServer.notificarTodos("hordaSorpresa", { fase = "premio", oro = oro })
+                print("[Holdoor] HORDA SORPRESA sobrevivida: +" .. oro .. " oro de premio")
+            end
+        end
+    end
+
     -- Si fue la ultima oleada: ir directo a victoria, sin los 10s de pausa
     local esUltima = (estado.oleadaActual >= (estado.config.maxOleadas or 0))
     if esUltima then
@@ -3102,6 +3220,38 @@ end
 --  TICK — timer de tiempo real (no depende de game speed)
 -- ─────────────────────────────────────────────
 
+-- v0.9.x MODELO DERROTA (Nahuel, event-based): cada partícipe registrado al iniciar oleadas
+-- (online + dentro de base+radio) tiene un toggle vivo. Al MORIR → false. Cuando TODOS los
+-- toggles están en false → cae el Trono (sin importar John Snow). Es por MOMENTO de muerte,
+-- no por "cuántos vivos hay ahora" (que el respawn rompía). Corre en SERVER-ctx (donde vive
+-- estado.participantes); en client-ctx estado está vacío → no-opea. La muerte se delega aca
+-- vía OnClientCommand "holdoorMuerteParticipante".
+function HoldoorServer._registrarMuerteParticipante(username)
+    local estado = HoldoorServer.estado
+    if not estado or not estado.activo then return end          -- client-ctx (estado vacío) → no-op
+    if not estado.participantes then return end
+    if not username then return end
+    if estado.participantes[username] == nil then return end    -- no es partícipe de esta sesión
+    if estado.participantes[username] == false then return end  -- ya estaba muerto → no re-disparar
+
+    estado.participantes[username] = false
+    print("[Holdoor][Derrota] " .. tostring(username) .. " murio -> toggle vivo=false")
+
+    -- ¿TODOS los partícipes en false?
+    local hayAlguien, todosMuertos = false, true
+    for _, vivo in pairs(estado.participantes) do
+        hayAlguien = true
+        if vivo then todosMuertos = false; break end
+    end
+
+    if hayAlguien and todosMuertos and estado.fase ~= "derrotado"
+       and estado.config and estado.config.modoDefensa then
+        print("[Holdoor][Derrota] TODOS los partícipes en false -> CAE EL TRONO")
+        HoldoorServer.notificarTodos("derrotaColectiva", { oleadas = estado.oleadaActual or 0 })
+        HoldoorServer._tronoCayo()
+    end
+end
+
 function HoldoorServer.onTick()
     local estado = HoldoorServer.estado
 
@@ -3170,7 +3320,8 @@ function HoldoorServer.onTick()
         else
             HoldoorServer._spawnTick()                  -- legacy modelo C
         end
-        HoldoorServer._aggroSostenido()      -- addSound cada 4s desde base (radio 120)
+        HoldoorServer._aggroSostenido()       -- addSound cada 4s desde base (radio 120)
+        HoldoorServer._procesarHordaSorpresa() -- v0.9.x evento Horda Sorpresa (telegraph + spike)
         HoldoorServer._chequearCierreOleada() -- cierre por target kills o timer
 
         -- v0.7 #14b: si flow continuo MP (Facil+) activo, NO limpiar cadaveres durante
@@ -3467,7 +3618,7 @@ function HoldoorServer.setBase(jugador, x, y, z)
     -- nunca pathean hasta el -> victoria gratis. Sotanos (Z<0) tambien quedan bloqueados.
     if math.floor(z or 0) ~= 0 then
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "aviso",
-              { mensaje = "El Trono debe marcarse a nivel del suelo (planta baja). Baja a la planta baja para marcar la base." })
+              { clave = "UI_Holdoor_aviso_nivelsuelo" })
         print("[Holdoor] setBase RECHAZADO: Z=" .. tostring(z) .. " no es planta baja (jugador "
               .. (jugador and jugador:getUsername() or "?") .. ")")
         return
@@ -3490,12 +3641,12 @@ function HoldoorServer.quitarBase(jugador)
     local estado = HoldoorServer.estado
     if not estado.baseDefinida then
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "aviso",
-              { mensaje = "No hay base marcada todavia." })
+              { clave = "UI_Holdoor_chat_nobase" })
         return
     end
     if estado.activo and estado.fase == "activa" then
         pcall(sendClientCommand, jugador, HoldoorConfig.MODULE, "aviso",
-              { mensaje = "No podes quitar la base con una oleada en curso. Deten las oleadas primero." })
+              { clave = "UI_Holdoor_chat_quitaroleadaactiva" })
         return
     end
 
@@ -4841,9 +4992,9 @@ end
 -- ─────────────────────────────────────────────
 
 HoldoorServer._warningThresholds = {
-    { pct = 60, msg = "EL TRONO ESTA SIENDO ATACADO",          color = "amarillo" },
-    { pct = 30, msg = "PELIGRO! EL TRONO ESTA POR CAER",       color = "rojo" },
-    { pct = 10, msg = "ULTIMA LINEA DE DEFENSA! EL TRONO RESISTE", color = "critico" },
+    { pct = 60, msg = "EL TRONO ESTA SIENDO ATACADO",          color = "amarillo", key = "UI_Holdoor_warning_60" },
+    { pct = 30, msg = "PELIGRO! EL TRONO ESTA POR CAER",       color = "rojo",     key = "UI_Holdoor_warning_30" },
+    { pct = 10, msg = "ULTIMA LINEA DE DEFENSA! EL TRONO RESISTE", color = "critico", key = "UI_Holdoor_warning_10" },
 }
 
 function HoldoorServer._checkWarningsHP(prevHp, currentHp, maxHp)
@@ -4854,7 +5005,7 @@ function HoldoorServer._checkWarningsHP(prevHp, currentHp, maxHp)
     for _, t in ipairs(HoldoorServer._warningThresholds) do
         if prevPct > t.pct and currPct <= t.pct then
             HoldoorServer.notificarTodos("warningTrono", {
-                msg = t.msg,
+                msgKey = t.key,
                 pct = t.pct,
                 color = t.color,
                 hp = currentHp,
@@ -5134,6 +5285,12 @@ function HoldoorServer.onComandoCliente(modulo, comando, jugador, args)
                 args.deathCoords.x, args.deathCoords.y, args.deathCoords.z))
         end
 
+    elseif comando == "holdoorMuerteParticipante" then
+        -- v0.9.x MODELO DERROTA: el cliente (host o friend) avisa que su jugador murió. Corre en
+        -- SERVER-ctx (estado real) → togglear vivo=false + check "todos muertos → cae el Trono".
+        local u = (args and args.username) or (jugador and jugador:getUsername())
+        if u then pcall(function() HoldoorServer._registrarMuerteParticipante(u) end) end
+
     elseif comando == "reportarTronoHP" then
         -- v0.8.x FIX TRONO MP: el host (que tiene el Trono en su client-ctx) nos reporta el HP de
         -- su forja tras aplicar el daño. Aca el server hace la LOGICA: warnings + broadcast del HP +
@@ -5372,58 +5529,38 @@ function HoldoorServer._onPlayerMuerto(jugador)
         end
     end)
 
-    local estado = HoldoorServer.estado
-    if not estado.activo then return end
-    if not estado.participantes then return end
+    -- v0.9.x FIX SEGURO COOPHOST: el snapshot del seguro de monedas DEBE correr aunque
+    -- OnPlayerDeath corra en client-ctx (en CoopHost es asi, y ahi HoldoorServer.estado esta
+    -- vacio → el early-return de abajo lo salteaba → las monedas NO se aseguraban al morir).
+    -- Check de oleada CONTEXT-SAFE: estado del server (dedicated) O estado del HUD cliente
+    -- (CoopHost, que SI esta poblado en client-ctx). pcall: jamas romper el handler de muerte.
+    pcall(function()
+        local waveOn = (HoldoorServer.estado and HoldoorServer.estado.activo)
+                    or (HoldoorClient and HoldoorClient.estado and HoldoorClient.estado.activo)
+                    or false
+        local u = (jugador and jugador:getUsername()) or "?"
+        local s, c, ch = false, false, false
+        pcall(function() s = isServer() end); pcall(function() c = isClient() end); pcall(function() ch = isCoopHost() end)
+        print(string.format("[Holdoor][Seguro-DIAG] MUERTE %s waveOn=%s ctx(S=%s C=%s CH=%s)",
+            tostring(u), tostring(waveOn), tostring(s), tostring(c), tostring(ch)))
+        if waveOn then HoldoorServer._marcarMuerteEnOleada(jugador) end
+    end)
 
+    -- v0.9.x MODELO DERROTA (Nahuel): señalar la muerte del partícipe al SERVER-ctx (donde vive
+    -- estado.participantes). El toggle vivo=false + el check "todos muertos" lo hace
+    -- _registrarMuerteParticipante. NO depende de estado acá (en CoopHost client-ctx está vacío).
     local username
     pcall(function() username = jugador:getUsername() end)
     if not username then return end
-
     print("[Holdoor] Player muerto: " .. tostring(username))
-    estado.participantes[username] = nil  -- removerlo del registro
 
-    -- v0.7 #39: snapshot del saldo ACTUAL del jugador al morir. Cuando el nuevo
-    -- personaje spawnee (OnCreatePlayer abajo), se le aplica al ModData fresh.
-    pcall(function() HoldoorServer._marcarMuerteEnOleada(jugador) end)
-
-    -- Chequear si quedan participantes vivos y conectados
-    local quedanVivos = 0
+    -- CoopHost host/friend: este handler corre en client-ctx → delegar al server-ctx vía command.
     pcall(function()
-        local ok, ps = pcall(getOnlinePlayers)
-        if ok and ps then
-            local oks, np = pcall(function() return ps:size() end)
-            if oks and np then
-                for i = 0, np - 1 do
-                    local okp, p = pcall(function() return ps:get(i) end)
-                    if okp and p then
-                        local u, dead
-                        pcall(function() u = p:getUsername() end)
-                        pcall(function() dead = p:isDead() end)
-                        if u and not dead and estado.participantes[u] then
-                            quedanVivos = quedanVivos + 1
-                        end
-                    end
-                end
-            end
-        end
+        sendClientCommand(HoldoorConfig.MODULE, "holdoorMuerteParticipante", { username = username })
     end)
-
-    if quedanVivos == 0 then
-        print("[Holdoor] TODOS los participantes muertos/desconectados → oleada perdida")
-        HoldoorServer.notificarTodos("derrotaColectiva", {
-            oleadas = estado.oleadaActual or 0,
-            mensaje = "El Trono ha caido. Todos los defensores han caido.",
-        })
-        -- Reusar la logica de derrota del Trono
-        HoldoorServer._tronoCayo()
-    else
-        HoldoorServer.notificarTodos("playerCaido", {
-            username = username,
-            vivos = quedanVivos,
-        })
-        print("[Holdoor] Quedan " .. quedanVivos .. " defensores vivos")
-    end
+    -- Dedicated (server-ctx) / cualquier ctx con estado real: llamar directo (no-opea en el ctx
+    -- equivocado porque estado.activo es false; idempotente porque ignora toggles ya en false).
+    pcall(function() HoldoorServer._registrarMuerteParticipante(username) end)
 end
 
 Events.OnGameStart.Add(HoldoorServer.init)

@@ -111,7 +111,7 @@ function HoldoorShopPanel:_crearContenido()
     local pad = PAD
 
     -- Header: titulo + saldo + close
-    self.lblTit = ISLabel:new(pad, 12, 24, "TIENDA HOLDOOR", 0.95, 0.78, 0.30, 1, UIFont.Medium, true)
+    self.lblTit = ISLabel:new(pad, 12, 24, getText("UI_Holdoor_shop_titulo"), 0.95, 0.78, 0.30, 1, UIFont.Medium, true)
     self:addChild(self.lblTit)
 
     -- Saldo y materiales se dibujan en :render() con colores por moneda/material.
@@ -131,7 +131,7 @@ function HoldoorShopPanel:_crearContenido()
     self.botonesCat = {}
     local cy = HEADER_H + 12
     for i, cat in ipairs(HoldoorShopCatalog.categorias) do
-        local lbl = cat.nombre .. (cat.proximamente and "  (proximamente)" or "")
+        local lbl = HoldoorShopCatalog.t("cat_" .. cat.id, "nombre", cat.nombre) .. (cat.proximamente and ("  " .. getText("UI_Holdoor_shop_proximamente")) or "")
         local btn = ISButton:new(pad, cy, SIDEBAR_W, 30, lbl, self, HoldoorShopPanel.onSelectCat)
         btn.holdoorCatIdx    = i
         btn.backgroundColor  = { r=cat.cr*0.20, g=cat.cg*0.20, b=cat.cb*0.20, a=1 }
@@ -146,7 +146,7 @@ function HoldoorShopPanel:_crearContenido()
 
     -- Footer info
     self.lblFooter = ISLabel:new(pad, SHOP_H - 22, 14,
-        "Las monedas son personales -- las compras se entregan al inventario al instante.",
+        getText("UI_Holdoor_shop_footer"),
         0.55, 0.50, 0.40, 1, UIFont.Small, true)
     self:addChild(self.lblFooter)
 
@@ -173,13 +173,13 @@ function HoldoorShopPanel:render()
         local b, s, g = HoldoorClient.getSaldo()
         local y = self._yMonedasHeader or 14
         local x = 220
-        self:drawText("Saldo: ",      x,        y, COLOR_HEADER_LBL.r, COLOR_HEADER_LBL.g, COLOR_HEADER_LBL.b, 1, UIFont.Small)
+        self:drawText(getText("UI_Holdoor_shop_h_saldo") .. " ", x, y, COLOR_HEADER_LBL.r, COLOR_HEADER_LBL.g, COLOR_HEADER_LBL.b, 1, UIFont.Small)
         x = x + 50
-        self:drawText(b .. " Bronce", x,        y, COLOR_BRONCE.r,     COLOR_BRONCE.g,     COLOR_BRONCE.b,     1, UIFont.Small)
+        self:drawText(b .. " " .. getText("UI_Holdoor_moneda_bronce"), x, y, COLOR_BRONCE.r, COLOR_BRONCE.g, COLOR_BRONCE.b, 1, UIFont.Small)
         x = x + 110
-        self:drawText(s .. " Plata",  x,        y, COLOR_PLATA.r,      COLOR_PLATA.g,      COLOR_PLATA.b,      1, UIFont.Small)
+        self:drawText(s .. " " .. getText("UI_Holdoor_moneda_plata"),  x, y, COLOR_PLATA.r,  COLOR_PLATA.g,  COLOR_PLATA.b,  1, UIFont.Small)
         x = x + 100
-        self:drawText(g .. " Oro",    x,        y, COLOR_ORO.r,        COLOR_ORO.g,        COLOR_ORO.b,        1, UIFont.Small)
+        self:drawText(g .. " " .. getText("UI_Holdoor_moneda_oro"),    x, y, COLOR_ORO.r,    COLOR_ORO.g,    COLOR_ORO.b,    1, UIFont.Small)
     end
 
     -- Linea de MATERIALES con colores por material
@@ -187,17 +187,17 @@ function HoldoorShopPanel:render()
         local m = HoldoorClient.getMateriales()
         local y = self._yMaterialesHeader or 38
         local x = 220
-        self:drawText("Materiales: ",        x,         y, COLOR_HEADER_LBL.r, COLOR_HEADER_LBL.g, COLOR_HEADER_LBL.b, 1, UIFont.Small)
+        self:drawText(getText("UI_Holdoor_shop_h_materiales") .. " ", x, y, COLOR_HEADER_LBL.r, COLOR_HEADER_LBL.g, COLOR_HEADER_LBL.b, 1, UIFont.Small)
         x = x + 80
-        self:drawText(m.cuero .. " Cuero",    x,         y, COLOR_CUERO.r,      COLOR_CUERO.g,      COLOR_CUERO.b,      1, UIFont.Small)
+        self:drawText(m.cuero .. " " .. getText("UI_Holdoor_material_cuero"),         x, y, COLOR_CUERO.r,     COLOR_CUERO.g,     COLOR_CUERO.b,     1, UIFont.Small)
         x = x + 90
-        self:drawText(m.hierro .. " Hierro",  x,         y, COLOR_HIERRO.r,     COLOR_HIERRO.g,     COLOR_HIERRO.b,     1, UIFont.Small)
+        self:drawText(m.hierro .. " " .. getText("UI_Holdoor_material_hierro"),       x, y, COLOR_HIERRO.r,    COLOR_HIERRO.g,    COLOR_HIERRO.b,    1, UIFont.Small)
         x = x + 95
-        self:drawText(m.acero .. " Acero",    x,         y, COLOR_ACERO.r,      COLOR_ACERO.g,      COLOR_ACERO.b,      1, UIFont.Small)
+        self:drawText(m.acero .. " " .. getText("UI_Holdoor_material_acero"),         x, y, COLOR_ACERO.r,     COLOR_ACERO.g,     COLOR_ACERO.b,     1, UIFont.Small)
         x = x + 90
-        self:drawText(m.valyrio .. " Valyrio", x,        y, COLOR_VALYRIO.r,    COLOR_VALYRIO.g,    COLOR_VALYRIO.b,    1, UIFont.Small)
+        self:drawText(m.valyrio .. " " .. getText("UI_Holdoor_material_valyrio"),     x, y, COLOR_VALYRIO.r,   COLOR_VALYRIO.g,   COLOR_VALYRIO.b,   1, UIFont.Small)
         x = x + 95
-        self:drawText(m.obsidiana .. " Obsidiana", x,    y, COLOR_OBSIDIANA.r,  COLOR_OBSIDIANA.g,  COLOR_OBSIDIANA.b,  1, UIFont.Small)
+        self:drawText(m.obsidiana .. " " .. getText("UI_Holdoor_material_obsidiana"), x, y, COLOR_OBSIDIANA.r, COLOR_OBSIDIANA.g, COLOR_OBSIDIANA.b, 1, UIFont.Small)
     end
 end
 
@@ -262,7 +262,7 @@ function HoldoorShopPanel:_renderCategoria()
     local areaY = HEADER_H + 12
 
     -- Header de categoria
-    local lblTitCat = ISLabel:new(areaX, areaY, 22, cat.nombre, cat.cr, cat.cg, cat.cb, 1, UIFont.Medium, true)
+    local lblTitCat = ISLabel:new(areaX, areaY, 22, HoldoorShopCatalog.t("cat_" .. cat.id, "nombre", cat.nombre), cat.cr, cat.cg, cat.cb, 1, UIFont.Medium, true)
     self:addChild(lblTitCat)
     table.insert(self.filasItems, { _hijos = { lblTitCat } })
     areaY = areaY + 30
@@ -284,7 +284,7 @@ function HoldoorShopPanel:_renderCategoria()
         local subW = 110
         local subH = 24
         for i, sub in ipairs(cat.subcategorias) do
-            local b = ISButton:new(subX, subY, subW, subH, sub.nombre, self, HoldoorShopPanel.onSelectSubcat)
+            local b = ISButton:new(subX, subY, subW, subH, HoldoorShopCatalog.t("sub_" .. sub.id, "nombre", sub.nombre), self, HoldoorShopPanel.onSelectSubcat)
             b.holdoorSubIdx = i
             if i == self.subcategoriaActual then
                 b.backgroundColor = { r=cat.cr*0.35, g=cat.cg*0.35, b=cat.cb*0.35, a=1 }
@@ -361,7 +361,7 @@ function HoldoorShopPanel:_renderCategoria()
         -- v0.6.2: para items "subir_nivel", calcular precio dinamico + nivel actual.
         -- Sobrescribe item.precio y item.contenido en variables locales (no muta el catalogo).
         local precioEfectivo = item.precio
-        local contenidoTxt   = item.contenido
+        local contenidoTxt   = HoldoorShopCatalog.t(item.id, "contenido", item.contenido)
         local xpFaltanteTxt  = nil   -- linea extra "XP faltante: X" para subir_nivel
         local levelMaxFlag   = false
         if item.accion and item.accion.tipo == "subir_nivel" and HoldoorClient and HoldoorClient.calcSubirNivel then
@@ -372,21 +372,21 @@ function HoldoorShopPanel:_renderCategoria()
                 or item.accion.perk
             if info and info.max then
                 levelMaxFlag = true
-                contenidoTxt = perkLbl .. ": NIVEL MAXIMO (10)"
+                contenidoTxt = perkLbl .. ": " .. getText("UI_Holdoor_shop_nivelmax")
                 precioEfectivo = {}
             elseif info then
-                contenidoTxt = perkLbl .. ": nivel " .. info.nivelActual .. " -> " .. info.nivelObjetivo
-                xpFaltanteTxt = "XP faltante: " .. tostring(info.xpFaltante)
+                contenidoTxt = perkLbl .. ": " .. getText("UI_Holdoor_shop_nivelfmt", tostring(info.nivelActual), tostring(info.nivelObjetivo))
+                xpFaltanteTxt = getText("UI_Holdoor_shop_xpfaltante", tostring(info.xpFaltante))
                 precioEfectivo = info.precio
             else
                 -- error calculando (perk no resuelve) → mostrar como info no disponible
-                contenidoTxt = perkLbl .. ": (info no disponible)"
+                contenidoTxt = perkLbl .. ": " .. getText("UI_Holdoor_shop_infonodisp")
                 precioEfectivo = {}
             end
         end
 
         -- Nombre (linea 1 - epico)
-        local lblN = ISLabel:new(areaX, areaY + 2, 18, item.nombre, 0.95, 0.85, 0.55, 1, UIFont.Medium, true)
+        local lblN = ISLabel:new(areaX, areaY + 2, 18, HoldoorShopCatalog.t(item.id, "nombre", item.nombre), 0.95, 0.85, 0.55, 1, UIFont.Medium, true)
         self:addChild(lblN); table.insert(hijos, lblN)
 
         -- Contenido (linea 2 - lo que recibis): amarillo claro destacado
@@ -398,7 +398,7 @@ function HoldoorShopPanel:_renderCategoria()
 
         -- Descripcion (linea 3): para items "subir_nivel" mostramos "XP faltante: N"
         -- en lugar de la descripcion (que seria redundante "Sube tu X 1 nivel").
-        local lineaInferior = xpFaltanteTxt or item.desc or ""
+        local lineaInferior = xpFaltanteTxt or HoldoorShopCatalog.t(item.id, "desc", item.desc) or ""
         local lineaR, lineaG, lineaB = 0.70, 0.65, 0.50
         if xpFaltanteTxt then
             lineaR, lineaG, lineaB = 0.55, 0.85, 0.85   -- celeste claro para XP faltante
@@ -457,16 +457,16 @@ function HoldoorShopPanel:_renderCategoria()
                     elseif item.accion.tipo == "reliquia_godmode_flash" and (md.Holdoor_BesoDios or md.Holdoor_BesoDios_Bolsa) then
                         consumido    = true
                         consumidoTxt = md.Holdoor_BesoDios
-                            and "Ya invocado por este personaje"
-                            or  "En tu bolsa — activalo desde el HUD"
+                            and getText("UI_Holdoor_shop_yainvocado")
+                            or  getText("UI_Holdoor_shop_bolsa_beso")
                     elseif item.accion.tipo == "raise_up" and md.Holdoor_RaiseUp_Bolsa then
                         -- v0.8 #7: si ya tenes uno en bolsa, no se puede comprar otro
                         consumido    = true
-                        consumidoTxt = "En tu bolsa — togglealo desde el HUD"
+                        consumidoTxt = getText("UI_Holdoor_shop_bolsa_raise")
                     elseif item.accion.tipo == "punto_retorno" and md.Holdoor_PuntoRetorno_Bolsa then
                         -- v0.8 #22: si ya tenes uno en bolsa, no se puede comprar otro
                         consumido    = true
-                        consumidoTxt = "En tu bolsa — usalo desde el HUD"
+                        consumidoTxt = getText("UI_Holdoor_shop_bolsa_punto")
                     end
                 end
             end
@@ -486,25 +486,25 @@ function HoldoorShopPanel:_renderCategoria()
         -- Boton: prioridad 1) consumido => YA USADO  2) nivel max => MAX  3) sin saldo  4) COMPRAR
         local btnTexto, btnHandler, btnBg, btnBorder, btnTextColor
         if consumido then
-            btnTexto     = "YA USADO"
+            btnTexto     = getText("UI_Holdoor_shop_btn_usado")
             btnHandler   = HoldoorShopPanel.doNothing
             btnBg        = COLOR_BTN_DIS_S
             btnBorder    = { r=0.50, g=0.25, b=0.25, a=1 }
             btnTextColor = { r=0.85, g=0.45, b=0.45, a=1 }
         elseif levelMaxFlag then
-            btnTexto     = "MAX"
+            btnTexto     = getText("UI_Holdoor_shop_btn_max")
             btnHandler   = HoldoorShopPanel.doNothing
             btnBg        = COLOR_BTN_DIS_S
             btnBorder    = { r=0.50, g=0.50, b=0.20, a=1 }
             btnTextColor = { r=0.85, g=0.85, b=0.45, a=1 }
         elseif puede then
-            btnTexto     = "COMPRAR"
+            btnTexto     = getText("UI_Holdoor_shop_btn_comprar")
             btnHandler   = HoldoorShopPanel.onComprar
             btnBg        = COLOR_BTN_OK_S
             btnBorder    = { r=0.4, g=0.75, b=0.4, a=1 }
             btnTextColor = nil
         else
-            btnTexto     = "Sin saldo"
+            btnTexto     = getText("UI_Holdoor_shop_btn_sinsaldo")
             btnHandler   = HoldoorShopPanel.doNothing
             btnBg        = COLOR_BTN_DIS_S
             btnBorder    = { r=0.3, g=0.3, b=0.3, a=1 }
@@ -558,19 +558,17 @@ function HoldoorShopPanel:onComprar(button)
             tieneTrait = HoldoorClient.tieneTrait(itemDef.accion.trait)
         end
         if itemDef.accion.tipo == "trait" and tieneTrait == true then
-            HoldoorClient.chat("[HOLDOOR] Ya tenes ese rasgo. No hace falta invocarlo.", 1, 0.6, 0.2)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_ya_tenes_rasgo"), 1, 0.6, 0.2)
             return
         end
         if itemDef.accion.tipo == "cura_trait" and tieneTrait == false then
-            HoldoorClient.chat("[HOLDOOR] No tenes ese rasgo, no hay nada que curar.", 1, 0.6, 0.2)
+            HoldoorClient.chat(getText("UI_Holdoor_chat_no_tenes_rasgo"), 1, 0.6, 0.2)
             return
         end
 
         -- 2) Validacion pasada → pedir confirmacion antes de gastar las monedas.
-        local etiqueta = itemDef.accion.tipo == "trait" and "RASGO HEROICO" or "MILAGRO DEL MAESTRE"
-        local txt = "ATENCION: solo podes invocar UN " .. etiqueta .. " por vida del personaje.\n\n"
-                 .. "Vas a comprar: " .. (itemDef.nombre or "?") .. "\n\n"
-                 .. "Pensalo bien. Confirmas?"
+        local etiqueta = itemDef.accion.tipo == "trait" and getText("UI_Holdoor_shop_etiqueta_rasgo") or getText("UI_Holdoor_shop_etiqueta_milagro")
+        local txt = getText("UI_Holdoor_shop_modal_usounico", etiqueta, HoldoorShopCatalog.t(itemDef.id, "nombre", itemDef.nombre or "?"))
         local modal = ISModalDialog:new(0, 0, 380, 200, txt, true, self,
             HoldoorShopPanel.onConfirmComprar, 0, categoriaId, itemId)
         modal:initialise()
@@ -591,11 +589,7 @@ function HoldoorShopPanel:onComprar(button)
        and itemDef.accion.tier == "pasiva" and HoldoorClient and HoldoorClient.calcSubirNivel then
         local info = HoldoorClient.calcSubirNivel(itemDef.accion.perk, itemDef.accion.tier)
         if info and not info.max and info.nivelActual == 9 then
-            local txt = "ATENCION: vas a subir " .. (itemDef.nombre or "esta habilidad") .. " al NIVEL 10.\n\n"
-                     .. "Es una habilidad PASIVA: tu PESO corporal (sobrepeso, bajo peso u obesidad) "
-                     .. "puede impedir el salto al 10. Si tu peso no es el adecuado, podrias gastar las "
-                     .. "monedas y NO subir de nivel.\n\n"
-                     .. "Comprar la experiencia igual?"
+            local txt = getText("UI_Holdoor_shop_modal_pasiva", HoldoorShopCatalog.t(itemDef.id, "nombre", itemDef.nombre or "esta habilidad"))
             local modal = ISModalDialog:new(0, 0, 420, 230, txt, true, self,
                 HoldoorShopPanel.onConfirmComprar, 0, categoriaId, itemId)
             modal:initialise()

@@ -157,9 +157,9 @@ function HoldoorOverlay:render()
     local lx, ly = self:worldToScreen(bx + radio * 0.7, by - radio * 0.7, bz)
     if lx and ly then
         -- Sombra negra desplazada 1px (legibilidad sobre cualquier fondo)
-        self:drawText(tostring(radio) .. " celdas", lx + 1, ly + 1, 0.0, 0.0, 0.0, 1.0, UIFont.Small)
+        self:drawText(getText("UI_Holdoor_hud_celdas", tostring(radio)), lx + 1, ly + 1, 0.0, 0.0, 0.0, 1.0, UIFont.Small)
         -- Texto naranja brillante encima
-        self:drawText(tostring(radio) .. " celdas", lx,     ly,     1.0, 0.55, 0.10, 1.0, UIFont.Small)
+        self:drawText(getText("UI_Holdoor_hud_celdas", tostring(radio)), lx,     ly,     1.0, 0.55, 0.10, 1.0, UIFont.Small)
     end
 end
 
@@ -782,13 +782,13 @@ local COLOR_HUD_RED  = { r=1.00, g=0.25, b=0.15, a=1    }
 local function amenazaInfo(oleada)
     local prox = (oleada or 0) + 1
     if prox <= 3 then
-        return "Muertos vivientes", 0.70, 0.70, 0.70, "I"
+        return getText("UI_Holdoor_amenaza_1"), 0.70, 0.70, 0.70, "I"
     elseif prox <= 5 then
-        return "Muertos + Arrastradores", 0.80, 0.75, 0.30, "II"
+        return getText("UI_Holdoor_amenaza_2"), 0.80, 0.75, 0.30, "II"
     elseif prox <= 8 then
-        return "Mixto + Rapidos", 1.00, 0.65, 0.15, "III"
+        return getText("UI_Holdoor_amenaza_3"), 1.00, 0.65, 0.15, "III"
     else
-        return "Horda completa", 1.00, 0.20, 0.15, "!!!"
+        return getText("UI_Holdoor_amenaza_4"), 1.00, 0.20, 0.15, "!!!"
     end
 end
 
@@ -911,27 +911,27 @@ function HoldoorHUD:_crearContenido()
     -- Body
     local y = HUD_H_HEAD + 8
 
-    self.lblEstHUD = ISLabel:new(pad, y, 16, "Inactivo", 0.55, 0.55, 0.55, 1, UIFont.Small, true)
+    self.lblEstHUD = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_est_inactivo"), 0.55, 0.55, 0.55, 1, UIFont.Small, true)
     self:addChild(self.lblEstHUD); y = y + 15
 
-    self.lblOlHUD = ISLabel:new(pad, y, 16, "Oleada: --", COLOR_HUD_ORO.r, COLOR_HUD_ORO.g, COLOR_HUD_ORO.b, 1, UIFont.Small, true)
+    self.lblOlHUD = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_ol_none"), COLOR_HUD_ORO.r, COLOR_HUD_ORO.g, COLOR_HUD_ORO.b, 1, UIFont.Small, true)
     self:addChild(self.lblOlHUD); y = y + 15
 
-    self.lblTimHUD = ISLabel:new(pad, y, 16, "Proxima: --", 0.55, 0.55, 0.55, 1, UIFont.Small, true)
+    self.lblTimHUD = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_tim_none"), 0.55, 0.55, 0.55, 1, UIFont.Small, true)
     self:addChild(self.lblTimHUD); y = y + 15
 
-    self.lblFzaHUD = ISLabel:new(pad, y, 16, "Siguiente: --", 0.85, 0.70, 0.40, 1, UIFont.Small, true)
+    self.lblFzaHUD = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_sig_none"), 0.85, 0.70, 0.40, 1, UIFont.Small, true)
     self:addChild(self.lblFzaHUD); y = y + 15
 
-    self.lblAmenHUD = ISLabel:new(pad, y, 16, "Amenaza: --", 0.55, 0.55, 0.55, 1, UIFont.Small, true)
+    self.lblAmenHUD = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_amen_none"), 0.55, 0.55, 0.55, 1, UIFont.Small, true)
     self:addChild(self.lblAmenHUD); y = y + 15
 
     -- Brujula a la base (direccion cardinal + distancia categorica)
-    self.lblBaseDir = ISLabel:new(pad, y, 16, "Base: no marcada", 0.55, 0.55, 0.50, 1, UIFont.Small, true)
+    self.lblBaseDir = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_base_none"), 0.55, 0.55, 0.50, 1, UIFont.Small, true)
     self:addChild(self.lblBaseDir); y = y + 15
 
     -- HP del Trono de Hierro
-    self.lblTronoHP = ISLabel:new(pad, y, 16, "Trono: --", 0.55, 0.55, 0.50, 1, UIFont.Small, true)
+    self.lblTronoHP = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_trono_none"), 0.55, 0.55, 0.50, 1, UIFont.Small, true)
     self:addChild(self.lblTronoHP); y = y + 15
 
     self.lblNotifHUD = ISLabel:new(pad, y, 16, "", 1, 0.85, 0.3, 1, UIFont.Small, true)
@@ -942,11 +942,11 @@ function HoldoorHUD:_crearContenido()
     -- v0.8.8 (revisado): stats kills formato compacto 1 linea.
     -- SP: "Bajas (oleada): 5"
     -- MP: "Bajas (oleada): 5 / 8"  (yo / equipo)
-    self.lblKillsHUD = ISLabel:new(pad, y, 16, "Bajas (oleada): --", 0.70, 0.90, 0.55, 1, UIFont.Small, true)
+    self.lblKillsHUD = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_bajas_none"), 0.70, 0.90, 0.55, 1, UIFont.Small, true)
     self:addChild(self.lblKillsHUD)
     y = y + 14
 
-    self.lblKillsPartidaHUD = ISLabel:new(pad, y, 16, "Total partida: --", 0.55, 0.70, 0.45, 1, UIFont.Small, true)
+    self.lblKillsPartidaHUD = ISLabel:new(pad, y, 16, getText("UI_Holdoor_hud_total_none"), 0.55, 0.70, 0.45, 1, UIFont.Small, true)
     self:addChild(self.lblKillsPartidaHUD)
     y = y + 16
 
@@ -966,13 +966,13 @@ function HoldoorHUD:_crearContenido()
     self:addChild(self.btnZone)
 
     -- Boton enviar monedas a otro jugador — coords RELATIVAS a btnZone (y=0)
-    self.btnEnviar = ISButton:new(pad, 0, HUD_W - pad * 2, 24, "Enviar monedas a otro jugador", self, HoldoorHUD.onEnviar)
+    self.btnEnviar = ISButton:new(pad, 0, HUD_W - pad * 2, 24, getText("UI_Holdoor_hud_btn_enviar"), self, HoldoorHUD.onEnviar)
     self.btnEnviar.backgroundColor = { r=0.20, g=0.30, b=0.18, a=1 }
     self.btnEnviar.borderColor     = { r=0.40, g=0.65, b=0.25, a=1 }
     self.btnZone:addChild(self.btnEnviar)
 
     -- Boton tienda — coords RELATIVAS a btnZone (y=30)
-    self.btnTienda = ISButton:new(pad, 30, HUD_W - pad * 2, 26, "TIENDA", self, HoldoorHUD.onTienda)
+    self.btnTienda = ISButton:new(pad, 30, HUD_W - pad * 2, 26, getText("UI_Holdoor_hud_btn_tienda"), self, HoldoorHUD.onTienda)
     self.btnTienda.backgroundColor = { r=0.25, g=0.12, b=0.35, a=1 }
     self.btnTienda.borderColor     = { r=0.70, g=0.30, b=0.95, a=1 }
     self.btnZone:addChild(self.btnTienda)
@@ -987,7 +987,7 @@ function HoldoorHUD:_crearContenido()
     self.besoZone = HoldoorHUDInputZone:new(0, y, HUD_W, 26)
     self.besoZone:initialise()
     self:addChild(self.besoZone)
-    self.btnBeso = ISButton:new(pad, 0, HUD_W - pad * 2, 26, "INVOCAR BESO DEL DIOS", self, HoldoorHUD.onBesoDelDios)
+    self.btnBeso = ISButton:new(pad, 0, HUD_W - pad * 2, 26, getText("UI_Holdoor_hud_beso_invocar"), self, HoldoorHUD.onBesoDelDios)
     self.btnBeso.backgroundColor = { r=0.55, g=0.45, b=0.10, a=1 }
     self.btnBeso.borderColor     = { r=0.95, g=0.85, b=0.30, a=1 }
     self.besoZone:addChild(self.btnBeso)
@@ -1002,7 +1002,7 @@ function HoldoorHUD:_crearContenido()
     self.raiseZone = HoldoorHUDInputZone:new(0, y, HUD_W, 26)
     self.raiseZone:initialise()
     self:addChild(self.raiseZone)
-    self.btnRaiseUp = ISButton:new(pad, 0, HUD_W - pad * 2, 26, "RAISE: ACTIVO", self, HoldoorHUD.onRaiseUpToggle)
+    self.btnRaiseUp = ISButton:new(pad, 0, HUD_W - pad * 2, 26, getText("UI_Holdoor_hud_raise_activo"), self, HoldoorHUD.onRaiseUpToggle)
     self.btnRaiseUp.backgroundColor = { r=0.10, g=0.45, b=0.15, a=1 }   -- verde default (activo)
     self.btnRaiseUp.borderColor     = { r=0.30, g=0.95, b=0.40, a=1 }
     self.raiseZone:addChild(self.btnRaiseUp)
@@ -1020,12 +1020,12 @@ function HoldoorHUD:_crearContenido()
     local btnGap = 4
     local btnW   = math.floor((HUD_W - pad * 2 - btnGap) / 2)
     -- Boton IZQUIERDO: Marcar / Reemplazar punto
-    self.btnMarcarPunto = ISButton:new(pad, 0, btnW, 26, "Marcar Punto", self, HoldoorHUD.onMarcarPuntoClick)
+    self.btnMarcarPunto = ISButton:new(pad, 0, btnW, 26, getText("UI_Holdoor_hud_punto_marcar"), self, HoldoorHUD.onMarcarPuntoClick)
     self.btnMarcarPunto.backgroundColor = { r=0.30, g=0.30, b=0.50, a=1 }
     self.btnMarcarPunto.borderColor     = { r=0.55, g=0.55, b=0.85, a=1 }
     self.teleportZone:addChild(self.btnMarcarPunto)
     -- Boton DERECHO: Teletransportar
-    self.btnTeleportBase = ISButton:new(pad + btnW + btnGap, 0, btnW, 26, "Teletransportar", self, HoldoorHUD.onTeleportBaseClick)
+    self.btnTeleportBase = ISButton:new(pad + btnW + btnGap, 0, btnW, 26, getText("UI_Holdoor_hud_tp_teleport"), self, HoldoorHUD.onTeleportBaseClick)
     self.btnTeleportBase.backgroundColor = { r=0.10, g=0.30, b=0.55, a=1 }
     self.btnTeleportBase.borderColor     = { r=0.30, g=0.60, b=0.95, a=1 }
     self.teleportZone:addChild(self.btnTeleportBase)
@@ -1072,7 +1072,7 @@ function HoldoorHUD:onBesoDelDios()
     local md = me:getModData()
     -- v0.8 #9: si esta grisado (no comprado), avisar donde comprarlo
     if not (md and md.Holdoor_BesoDios_Bolsa) then
-        HoldoorClient.chat("[HOLDOOR] No tenes Beso del Dios. Compralo en TIENDA → Milagros del Maestre.", 0.85, 0.65, 0.30)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_beso_nocomprado"), 0.85, 0.65, 0.30)
         return
     end
     if HoldoorClient and HoldoorClient._activarBesoDelDios then
@@ -1090,7 +1090,7 @@ function HoldoorHUD:onRaiseUpToggle()
     -- v0.8.17: si hay LEGADO disponible (murio con Raise activo y revivio) → recuperar (prioridad).
     -- Dispara el flujo completo on-demand: animacion + godmode + restore + teleport + matar zombies.
     if md and md.Holdoor_RaiseUp_LegadoDisponible then
-        HoldoorClient.chat("[HOLDOOR] Levantate, Jon Snow. El R'hllor te devuelve a la vida...", 0.95, 0.75, 0.20)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_jon_revive"), 0.95, 0.75, 0.20)
         -- v0.8.19: ejecutar EN CLIENT-CTX (donde _onPlayerMuerto guardó el snapshot al morir).
         -- Mandarlo a server-ctx via sendClientCommand NO veria el snapshot (contextos separados en
         -- CoopHost — medido 2026-06-22). El host ejecuta directo en su client-ctx. Remoto delega
@@ -1111,7 +1111,7 @@ function HoldoorHUD:onRaiseUpToggle()
     end
     -- v0.8 #9: si esta grisado (no comprado), avisar donde comprarlo
     if not (md and md.Holdoor_RaiseUp_Bolsa) then
-        HoldoorClient.chat("[HOLDOOR] No tenes Raise up John Snow. Compralo en TIENDA → Milagros del Maestre.", 0.85, 0.65, 0.30)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_raise_nocomprado"), 0.85, 0.65, 0.30)
         return
     end
     -- Enviar toggle al server (server cambia el flag y devuelve confirmacion)
@@ -1145,7 +1145,7 @@ function HoldoorHUD:onTeleportBaseClick()
         return
     end
     if not (md.Holdoor_PuntoRetorno_X and md.Holdoor_PuntoRetorno_Y) then
-        HoldoorClient.chat("[HOLDOOR] No marcaste ningun punto todavia. Usa 'Marcar Punto' primero.", 1.00, 0.55, 0.20)
+        HoldoorClient.chat(getText("UI_Holdoor_chat_punto_nomarcado"), 1.00, 0.55, 0.20)
         return
     end
     pcall(function() sendClientCommand(HoldoorConfig.MODULE, "activarPuntoRetorno", {}) end)
@@ -1227,13 +1227,13 @@ function HoldoorHUD:actualizarHUD()
         -- Siempre visible si HUD expandido (incluso sin comprar), excepto si ya lo usaste
         self.besoZone:setVisible(self.expandido and not usado)
         if enBolsa then
-            self.btnBeso:setTitle("INVOCAR BESO DEL DIOS")
+            self.btnBeso:setTitle(getText("UI_Holdoor_hud_beso_invocar"))
             self.btnBeso.backgroundColor = { r=0.55, g=0.45, b=0.10, a=1 }  -- dorado activo
             self.btnBeso.borderColor     = { r=0.95, g=0.85, b=0.30, a=1 }
             self.btnBeso.textColor       = { r=1, g=1, b=1, a=1 }
         else
             -- v0.8 #10: mismo estilo que "Sin saldo" de la tienda
-            self.btnBeso:setTitle("Beso del Dios — no comprado")
+            self.btnBeso:setTitle(getText("UI_Holdoor_hud_beso_nocomprado"))
             self.btnBeso.backgroundColor = { r=0.18, g=0.18, b=0.20, a=1 }
             self.btnBeso.borderColor     = { r=0.30, g=0.30, b=0.30, a=1 }
             self.btnBeso.textColor       = { r=0.55, g=0.55, b=0.50, a=1 }
@@ -1267,34 +1267,34 @@ function HoldoorHUD:actualizarHUD()
         if snapshotTs > 0 then
             local minutos = math.floor((os.time() - snapshotTs) / 60)
             if minutos < 1 then
-                tagTiempo = " (recien)"
+                tagTiempo = getText("UI_Holdoor_hud_raise_tag_recien")
             elseif minutos >= 5 then
-                tagTiempo = " (" .. minutos .. "m ⟲)"  -- listo para renovar
+                tagTiempo = getText("UI_Holdoor_hud_raise_tag_renov", tostring(minutos))  -- listo para renovar
             else
-                tagTiempo = " (" .. minutos .. "m)"
+                tagTiempo = getText("UI_Holdoor_hud_raise_tag_min", tostring(minutos))
             end
         end
 
         self.raiseZone:setVisible(self.expandido)  -- siempre visible cuando HUD expandido
         if legadoDisp then
             -- v0.8.17: PRIORIDAD MAXIMA. Murio con Raise activo y revivio → ofrecer recuperar legado.
-            self.btnRaiseUp:setTitle("RAISE UP — RECUPERA TU LEGADO")
+            self.btnRaiseUp:setTitle(getText("UI_Holdoor_hud_raise_legado"))
             self.btnRaiseUp.backgroundColor = { r=0.55, g=0.42, b=0.10, a=1 }  -- dorado
             self.btnRaiseUp.borderColor     = { r=1.0, g=0.82, b=0.30, a=1 }
             self.btnRaiseUp.textColor       = { r=1, g=0.95, b=0.70, a=1 }
         elseif not enBolsa then
             -- v0.8 #10: mismo estilo que "Sin saldo" de la tienda
-            self.btnRaiseUp:setTitle("Raise up Snow — no comprado")
+            self.btnRaiseUp:setTitle(getText("UI_Holdoor_hud_raise_nocomprado"))
             self.btnRaiseUp.backgroundColor = { r=0.18, g=0.18, b=0.20, a=1 }
             self.btnRaiseUp.borderColor     = { r=0.30, g=0.30, b=0.30, a=1 }
             self.btnRaiseUp.textColor       = { r=0.55, g=0.55, b=0.50, a=1 }
         elseif activo then
-            self.btnRaiseUp:setTitle("RAISE: ACTIVO" .. tagTiempo)
+            self.btnRaiseUp:setTitle(getText("UI_Holdoor_hud_raise_activo") .. tagTiempo)
             self.btnRaiseUp.backgroundColor = { r=0.10, g=0.45, b=0.15, a=1 }  -- verde
             self.btnRaiseUp.borderColor     = { r=0.30, g=0.95, b=0.40, a=1 }
             self.btnRaiseUp.textColor       = { r=1, g=1, b=1, a=1 }
         else
-            self.btnRaiseUp:setTitle("RAISE: OFF" .. tagTiempo)
+            self.btnRaiseUp:setTitle(getText("UI_Holdoor_hud_raise_off") .. tagTiempo)
             self.btnRaiseUp.backgroundColor = { r=0.45, g=0.15, b=0.10, a=1 }  -- rojo
             self.btnRaiseUp.borderColor     = { r=0.95, g=0.40, b=0.30, a=1 }
             self.btnRaiseUp.textColor       = { r=1, g=1, b=1, a=1 }
@@ -1324,12 +1324,12 @@ function HoldoorHUD:actualizarHUD()
 
         -- BOTON IZQUIERDO: Marcar / Cambiar
         if not hayPunto then
-            self.btnMarcarPunto:setTitle("Marcar Punto")
+            self.btnMarcarPunto:setTitle(getText("UI_Holdoor_hud_punto_marcar"))
             self.btnMarcarPunto.backgroundColor = { r=0.30, g=0.30, b=0.50, a=1 }
             self.btnMarcarPunto.borderColor     = { r=0.55, g=0.55, b=0.85, a=1 }
             self.btnMarcarPunto.textColor       = { r=1, g=1, b=1, a=1 }
         else
-            self.btnMarcarPunto:setTitle("Cambiar Punto")
+            self.btnMarcarPunto:setTitle(getText("UI_Holdoor_hud_punto_cambiar"))
             self.btnMarcarPunto.backgroundColor = { r=0.40, g=0.30, b=0.55, a=1 }
             self.btnMarcarPunto.borderColor     = { r=0.70, g=0.55, b=0.95, a=1 }
             self.btnMarcarPunto.textColor       = { r=1, g=1, b=1, a=1 }
@@ -1337,17 +1337,17 @@ function HoldoorHUD:actualizarHUD()
 
         -- BOTON DERECHO: Teleport (texto corto para entrar en la mitad del HUD)
         if not enBolsaTp then
-            self.btnTeleportBase:setTitle("Teleport — no comp.")
+            self.btnTeleportBase:setTitle(getText("UI_Holdoor_hud_tp_nocomprado"))
             self.btnTeleportBase.backgroundColor = { r=0.18, g=0.18, b=0.20, a=1 }
             self.btnTeleportBase.borderColor     = { r=0.30, g=0.30, b=0.30, a=1 }
             self.btnTeleportBase.textColor       = { r=0.55, g=0.55, b=0.50, a=1 }
         elseif not hayPunto then
-            self.btnTeleportBase:setTitle("Marca un Punto")
+            self.btnTeleportBase:setTitle(getText("UI_Holdoor_hud_tp_marca"))
             self.btnTeleportBase.backgroundColor = { r=0.55, g=0.45, b=0.10, a=1 }
             self.btnTeleportBase.borderColor     = { r=0.95, g=0.85, b=0.30, a=1 }
             self.btnTeleportBase.textColor       = { r=1, g=1, b=1, a=1 }
         else
-            self.btnTeleportBase:setTitle("Teleport")
+            self.btnTeleportBase:setTitle(getText("UI_Holdoor_hud_tp_teleport"))
             self.btnTeleportBase.backgroundColor = { r=0.10, g=0.30, b=0.55, a=1 }
             self.btnTeleportBase.borderColor     = { r=0.30, g=0.60, b=0.95, a=1 }
             self.btnTeleportBase.textColor       = { r=1, g=1, b=1, a=1 }
@@ -1363,23 +1363,22 @@ function HoldoorHUD:actualizarHUD()
     -- Calcular modoLbl corto (3 letras)
     local modoCorto = ""
     if est.config and est.config.modoId then
-        local map = { facil="FAC", normal="NOR", dificil="DIF", pesadilla="PES", test="TST" }
-        modoCorto = map[est.config.modoId] or ""
+        modoCorto = getText("UI_Holdoor_hud_mc_" .. est.config.modoId)
     end
 
     if fase == "preparacion" then
         local segsLeft = math.max(0, math.ceil(est.countdownFinLocal - os.time()))
-        self.lblHeadInfo:setName("PREP " .. segsLeft .. "s " .. modoCorto)
+        self.lblHeadInfo:setName(getText("UI_Holdoor_hud_head_prep", tostring(segsLeft), modoCorto))
         self.lblHeadInfo:setColor(0.90, 0.85, 0.55, 1)
     elseif fase == "activa" then
         -- v0.6 modelo C: header muestra "OL.N MODO 23/45" (kills vs target)
         local kills  = est.oleadaKills or 0
         local target = est.oleadaTargetKills or 0
-        self.lblHeadInfo:setName("OL." .. oleada .. " " .. modoCorto .. " " .. kills .. "/" .. target)
+        self.lblHeadInfo:setName(getText("UI_Holdoor_hud_head_activa", tostring(oleada), modoCorto, tostring(kills), tostring(target)))
         self.lblHeadInfo:setColor(COLOR_HUD_RED.r, COLOR_HUD_RED.g, COLOR_HUD_RED.b, 1)
     elseif fase == "pausa" then
         local segsLeft = math.max(0, math.ceil(est.countdownFinLocal - os.time()))
-        self.lblHeadInfo:setName("OL." .. oleada .. " OK " .. segsLeft .. "s " .. modoCorto)
+        self.lblHeadInfo:setName(getText("UI_Holdoor_hud_head_pausa", tostring(oleada), tostring(segsLeft), modoCorto))
         self.lblHeadInfo:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
     else
         self.lblHeadInfo:setName("")
@@ -1392,20 +1391,20 @@ function HoldoorHUD:actualizarHUD()
     -- Estado (sin caracteres Unicode — solo ASCII)
     if activo then
         if fase == "activa" then
-            self.lblEstHUD:setName("[EN COMBATE]")
+            self.lblEstHUD:setName(getText("UI_Holdoor_hud_est_combate"))
             self.lblEstHUD:setColor(COLOR_HUD_RED.r, COLOR_HUD_RED.g, COLOR_HUD_RED.b, 1)
         elseif fase == "preparacion" then
-            self.lblEstHUD:setName("[PREPARACION]")
+            self.lblEstHUD:setName(getText("UI_Holdoor_hud_est_prep"))
             self.lblEstHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
         elseif fase == "pausa" then
-            self.lblEstHUD:setName("[PAUSA]")
+            self.lblEstHUD:setName(getText("UI_Holdoor_hud_est_pausa"))
             self.lblEstHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
         else
-            self.lblEstHUD:setName("[ACTIVO]")
+            self.lblEstHUD:setName(getText("UI_Holdoor_hud_est_activo"))
             self.lblEstHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
         end
     else
-        self.lblEstHUD:setName("[ Inactivo ]")
+        self.lblEstHUD:setName(getText("UI_Holdoor_hud_est_inactivo"))
         self.lblEstHUD:setColor(0.55, 0.55, 0.55, 1)
     end
 
@@ -1418,16 +1417,12 @@ function HoldoorHUD:actualizarHUD()
     end
     if oleada > 0 then
         local maxOl = (est.config and est.config.maxOleadas) or "?"
-        if modoLbl then
-            self.lblOlHUD:setName("Oleada " .. oleada .. "/" .. maxOl .. "  -- " .. modoLbl)
-        else
-            self.lblOlHUD:setName("Oleada " .. oleada .. "/" .. maxOl)
-        end
+        self.lblOlHUD:setName(getText("UI_Holdoor_hud_ol_fmt", tostring(oleada), tostring(maxOl), modoLbl or "?"))
     else
         if modoLbl then
-            self.lblOlHUD:setName("Modo: " .. modoLbl)
+            self.lblOlHUD:setName(getText("UI_Holdoor_hud_ol_modo", modoLbl))
         else
-            self.lblOlHUD:setName("Oleada: --")
+            self.lblOlHUD:setName(getText("UI_Holdoor_hud_ol_none"))
         end
     end
 
@@ -1435,13 +1430,13 @@ function HoldoorHUD:actualizarHUD()
     if fase == "preparacion" then
         local segsLeft = math.max(0, math.ceil(est.countdownFinLocal - os.time()))
         if segsLeft <= 10 then
-            self.lblTimHUD:setName("Proxima en: " .. segsLeft .. "s !")
+            self.lblTimHUD:setName(getText("UI_Holdoor_hud_tim_proxurg", tostring(segsLeft)))
             self.lblTimHUD:setColor(COLOR_HUD_RED.r, COLOR_HUD_RED.g, COLOR_HUD_RED.b, 1)
         elseif segsLeft <= 30 then
-            self.lblTimHUD:setName("Proxima en: " .. segsLeft .. "s")
+            self.lblTimHUD:setName(getText("UI_Holdoor_hud_tim_prox", tostring(segsLeft)))
             self.lblTimHUD:setColor(COLOR_HUD_WARN.r, COLOR_HUD_WARN.g, COLOR_HUD_WARN.b, 1)
         else
-            self.lblTimHUD:setName("Proxima en: " .. segsLeft .. "s")
+            self.lblTimHUD:setName(getText("UI_Holdoor_hud_tim_prox", tostring(segsLeft)))
             self.lblTimHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
         end
     elseif fase == "activa" then
@@ -1451,7 +1446,7 @@ function HoldoorHUD:actualizarHUD()
         local restante = math.max(0, total - (os.time() - inicio))
         local mm = math.floor(restante / 60)
         local ss = restante % 60
-        self.lblTimHUD:setName(string.format("Tiempo: %d:%02d", mm, ss))
+        self.lblTimHUD:setName(getText("UI_Holdoor_hud_tim_tiempo", string.format("%d:%02d", mm, ss)))
         if restante <= 15 then
             self.lblTimHUD:setColor(COLOR_HUD_RED.r, COLOR_HUD_RED.g, COLOR_HUD_RED.b, 1)
         elseif restante <= 45 then
@@ -1461,10 +1456,10 @@ function HoldoorHUD:actualizarHUD()
         end
     elseif fase == "pausa" then
         local segsLeft = math.max(0, math.ceil(est.countdownFinLocal - os.time()))
-        self.lblTimHUD:setName("Oleada " .. oleada .. " completada! (" .. segsLeft .. "s)")
+        self.lblTimHUD:setName(getText("UI_Holdoor_hud_tim_completada", tostring(oleada), tostring(segsLeft)))
         self.lblTimHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)
     else
-        self.lblTimHUD:setName("Proxima: --")
+        self.lblTimHUD:setName(getText("UI_Holdoor_hud_tim_none"))
         self.lblTimHUD:setColor(0.55, 0.55, 0.55, 1)
     end
 
@@ -1472,38 +1467,48 @@ function HoldoorHUD:actualizarHUD()
     if fase == "activa" then
         local kills  = est.oleadaKills or 0
         local target = est.oleadaTargetKills or 0
-        self.lblFzaHUD:setName(string.format("Kills: %d / %d", kills, target))
+        self.lblFzaHUD:setName(getText("UI_Holdoor_hud_kills_fmt", tostring(kills), tostring(target)))
         if target > 0 and kills >= target then
             self.lblFzaHUD:setColor(COLOR_HUD_OK.r, COLOR_HUD_OK.g, COLOR_HUD_OK.b, 1)   -- target alcanzado = cierre limpio
         else
             self.lblFzaHUD:setColor(0.85, 0.70, 0.40, 1)
         end
     elseif activo then
-        -- v0.6: target real de la oleada SIGUIENTE (lee oleadasV6 + mult del modo)
+        -- v0.9.x: target EXACTO de la oleada SIGUIENTE leido de hordasMP (MISMA tabla que usa el
+        -- server al lanzar la oleada: target = floor(hordasMP[modo].oleadas[N].targetKills), sin mult).
+        -- Antes leia oleadasV6 x multKills (tabla legacy) -> daba un numero distinto al real ("~62" vs 60).
+        -- Fallback a oleadasV6 solo si el modo no tiene hordasMP (test/edge).
         local modoId = (est.config and est.config.modoId) or "normal"
-        local modoCfg = (HoldoorConfig.modosV6 or {})[modoId] or HoldoorConfig.modosV6.normal or {}
         local prox   = oleada + 1
-        local idx    = math.min(prox, #(HoldoorConfig.oleadasV6 or {}))
-        local oleadaCfg = HoldoorConfig.oleadasV6 and HoldoorConfig.oleadasV6[idx]
-        if oleadaCfg then
-            local targetProx = math.floor((oleadaCfg.targetKills or 50) * (modoCfg.multKills or 1.0))
-            self.lblFzaHUD:setName("Siguiente: ~" .. targetProx .. " kills")
+        local mpCfg  = HoldoorConfig.hordasMP and HoldoorConfig.hordasMP[modoId]
+        local targetProx = nil
+        if mpCfg and mpCfg.oleadas and #mpCfg.oleadas > 0 then
+            local idx = math.min(prox, #mpCfg.oleadas)
+            targetProx = math.floor(mpCfg.oleadas[idx].targetKills or 0)
+        elseif HoldoorConfig.oleadasV6 and #HoldoorConfig.oleadasV6 > 0 then
+            local modoCfg = (HoldoorConfig.modosV6 or {})[modoId] or HoldoorConfig.modosV6.normal or {}
+            local idx = math.min(prox, #HoldoorConfig.oleadasV6)
+            local oc  = HoldoorConfig.oleadasV6[idx]
+            if oc then targetProx = math.floor((oc.targetKills or 50) * (modoCfg.multKills or 1.0)) end
+        end
+        if targetProx and targetProx > 0 then
+            self.lblFzaHUD:setName(getText("UI_Holdoor_hud_sig_kills", tostring(targetProx)))
         else
-            self.lblFzaHUD:setName("Siguiente: --")
+            self.lblFzaHUD:setName(getText("UI_Holdoor_hud_sig_none"))
         end
         self.lblFzaHUD:setColor(0.85, 0.70, 0.40, 1)
     else
-        self.lblFzaHUD:setName("Siguiente: --")
+        self.lblFzaHUD:setName(getText("UI_Holdoor_hud_sig_none"))
         self.lblFzaHUD:setColor(0.55, 0.55, 0.55, 1)
     end
 
     -- Amenaza
     if activo then
         local texto, r, g, b, nivel = amenazaInfo(oleada)
-        self.lblAmenHUD:setName("[" .. nivel .. "] " .. texto)
+        self.lblAmenHUD:setName(getText("UI_Holdoor_hud_amen_fmt", nivel, texto))
         self.lblAmenHUD:setColor(r, g, b, 1)
     else
-        self.lblAmenHUD:setName("Amenaza: --")
+        self.lblAmenHUD:setName(getText("UI_Holdoor_hud_amen_none"))
         self.lblAmenHUD:setColor(0.55, 0.55, 0.55, 1)
     end
 
@@ -1523,16 +1528,16 @@ function HoldoorHUD:actualizarHUD()
                 local absY = math.abs(dy)
                 local dir
                 if dist < 1.5 then
-                    dir = "AQUI"
+                    dir = getText("UI_Holdoor_dir_aqui")
                 elseif absX > absY * 2 then
-                    dir = (dx > 0) and "Este" or "Oeste"
+                    dir = (dx > 0) and getText("UI_Holdoor_dir_este") or getText("UI_Holdoor_dir_oeste")
                 elseif absY > absX * 2 then
-                    dir = (dy > 0) and "Sur" or "Norte"
+                    dir = (dy > 0) and getText("UI_Holdoor_dir_sur") or getText("UI_Holdoor_dir_norte")
                 else
-                    if dx > 0 and dy > 0 then dir = "Sureste"
-                    elseif dx > 0 and dy < 0 then dir = "Noreste"
-                    elseif dx < 0 and dy > 0 then dir = "Suroeste"
-                    else dir = "Noroeste" end
+                    if dx > 0 and dy > 0 then dir = getText("UI_Holdoor_dir_sureste")
+                    elseif dx > 0 and dy < 0 then dir = getText("UI_Holdoor_dir_noreste")
+                    elseif dx < 0 and dy > 0 then dir = getText("UI_Holdoor_dir_suroeste")
+                    else dir = getText("UI_Holdoor_dir_noroeste") end
                 end
 
                 -- Distancia categorica (umbrales absolutos para que matchee la intuicion).
@@ -1540,28 +1545,28 @@ function HoldoorHUD:actualizarHUD()
                 local radio = (est.config and est.config.radioSpawn) or 20
                 local cat, cr, cg, cb
                 if dist < 2 then
-                    cat = "EN LA BASE"; cr, cg, cb = 0.30, 1.00, 0.40
+                    cat = getText("UI_Holdoor_cat_base"); cr, cg, cb = 0.30, 1.00, 0.40
                 elseif dist < 8 then
-                    cat = "Muy Cerca";  cr, cg, cb = 0.50, 0.95, 0.50
+                    cat = getText("UI_Holdoor_cat_muycerca");  cr, cg, cb = 0.50, 0.95, 0.50
                 elseif dist < 20 then
-                    cat = "Cerca";      cr, cg, cb = 0.75, 0.95, 0.50
+                    cat = getText("UI_Holdoor_cat_cerca");      cr, cg, cb = 0.75, 0.95, 0.50
                 elseif dist < 50 then
-                    cat = "Media";      cr, cg, cb = 0.95, 0.85, 0.40
+                    cat = getText("UI_Holdoor_cat_media");      cr, cg, cb = 0.95, 0.85, 0.40
                 elseif dist < 120 then
-                    cat = "Lejos";      cr, cg, cb = 0.95, 0.55, 0.20
+                    cat = getText("UI_Holdoor_cat_lejos");      cr, cg, cb = 0.95, 0.55, 0.20
                 else
-                    cat = "Muy Lejos";  cr, cg, cb = 0.90, 0.30, 0.20
+                    cat = getText("UI_Holdoor_cat_muylejos");  cr, cg, cb = 0.90, 0.30, 0.20
                 end
                 -- Sufijo opcional si estas dentro del radio de spawn (zona donde aparecen zombis)
                 if dist > 2 and dist <= radio then
-                    cat = cat .. "  (en zona)"
+                    cat = cat .. "  " .. getText("UI_Holdoor_cat_enzona")
                 end
 
-                self.lblBaseDir:setName("Base: " .. dir .. "  --  " .. cat)
+                self.lblBaseDir:setName(getText("UI_Holdoor_hud_base_fmt", dir, cat))
                 self.lblBaseDir:setColor(cr, cg, cb, 1)
             end
         else
-            self.lblBaseDir:setName("Base: no marcada")
+            self.lblBaseDir:setName(getText("UI_Holdoor_hud_base_none"))
             self.lblBaseDir:setColor(0.55, 0.55, 0.50, 1)
         end
     end
@@ -1576,10 +1581,10 @@ function HoldoorHUD:actualizarHUD()
             if pct > 0.60 then cr, cg, cb = 0.30, 1.00, 0.40
             elseif pct > 0.30 then cr, cg, cb = 0.95, 0.85, 0.30
             else cr, cg, cb = 1.00, 0.30, 0.20 end
-            self.lblTronoHP:setName("Trono: " .. hp .. " / " .. maxHp .. "  HP")
+            self.lblTronoHP:setName(getText("UI_Holdoor_hud_trono_fmt", tostring(hp), tostring(maxHp)))
             self.lblTronoHP:setColor(cr, cg, cb, 1)
         else
-            self.lblTronoHP:setName("Trono: --")
+            self.lblTronoHP:setName(getText("UI_Holdoor_hud_trono_none"))
             self.lblTronoHP:setColor(0.55, 0.55, 0.50, 1)
         end
     end
@@ -1618,12 +1623,12 @@ function HoldoorHUD:actualizarHUD()
     if self.lblKillsHUD then
         if activo then
             local txt = esMP
-                and ("Bajas (oleada): " .. miOleada .. " / " .. eqOleada)
-                or  ("Bajas (oleada): " .. miOleada)
+                and getText("UI_Holdoor_hud_bajas_mp", tostring(miOleada), tostring(eqOleada))
+                or  getText("UI_Holdoor_hud_bajas_sp", tostring(miOleada))
             self.lblKillsHUD:setName(txt)
             self.lblKillsHUD:setColor(0.70, 0.95, 0.55, 1)
         else
-            self.lblKillsHUD:setName("Bajas (oleada): --")
+            self.lblKillsHUD:setName(getText("UI_Holdoor_hud_bajas_none"))
             self.lblKillsHUD:setColor(0.50, 0.55, 0.40, 1)
         end
     end
@@ -1632,12 +1637,12 @@ function HoldoorHUD:actualizarHUD()
     if self.lblKillsPartidaHUD then
         if miPartida > 0 or eqPartida > 0 then
             local txt = esMP
-                and ("Total partida: " .. miPartida .. " / " .. eqPartida)
-                or  ("Total partida: " .. miPartida)
+                and getText("UI_Holdoor_hud_total_mp", tostring(miPartida), tostring(eqPartida))
+                or  getText("UI_Holdoor_hud_total_sp", tostring(miPartida))
             self.lblKillsPartidaHUD:setName(txt)
             self.lblKillsPartidaHUD:setColor(0.55, 0.75, 0.45, 1)
         else
-            self.lblKillsPartidaHUD:setName("Total partida: --")
+            self.lblKillsPartidaHUD:setName(getText("UI_Holdoor_hud_total_none"))
             self.lblKillsPartidaHUD:setColor(0.45, 0.45, 0.38, 1)
         end
     end
@@ -1699,9 +1704,9 @@ function HoldoorHUD:render()
             local b, s, g = HoldoorClient.getSaldo()
             local x = 8
             local y = self.yMonedasHUD
-            self:drawText("Bronce: " .. b, x,       y, COL_BRONCE.r, COL_BRONCE.g, COL_BRONCE.b, 1, UIFont.Small)
-            self:drawText("Plata: "  .. s, x + 86,  y, COL_PLATA.r,  COL_PLATA.g,  COL_PLATA.b,  1, UIFont.Small)
-            self:drawText("Oro: "    .. g, x + 158, y, COL_ORO.r,    COL_ORO.g,    COL_ORO.b,    1, UIFont.Small)
+            self:drawText(getText("UI_Holdoor_hud_bronce") .. b, x,       y, COL_BRONCE.r, COL_BRONCE.g, COL_BRONCE.b, 1, UIFont.Small)
+            self:drawText(getText("UI_Holdoor_hud_plata")  .. s, x + 86,  y, COL_PLATA.r,  COL_PLATA.g,  COL_PLATA.b,  1, UIFont.Small)
+            self:drawText(getText("UI_Holdoor_hud_oro")    .. g, x + 158, y, COL_ORO.r,    COL_ORO.g,    COL_ORO.b,    1, UIFont.Small)
         end
 
         -- Linea de MATERIALES: Cu / Hi / Ac / Va / Ob (abreviaturas de 2 letras)
@@ -2126,14 +2131,14 @@ function HoldoorRaiseUpFade:render()
 
     -- 2) Texto principal — v0.8 #15: sin ¡ inicial (fuente PZ lo renderiza como "?")
     local tm = getTextManager()
-    local txt = "John Snow ha sido levantado por el R'hllor!"
+    local txt = getText("UI_Holdoor_anim_jon_tit")
     local txtW = tm:MeasureStringX(UIFont.Large, txt)
     local txtH = tm:MeasureStringY(UIFont.Large, txt)
     self:drawText(txt, sw/2 - txtW/2, cy - txtH/2 - 20,
                   0.95, 0.75, 0.20, alpha, UIFont.Large)
 
     -- 3) Subtexto en fuente mas chica
-    local sub = "El Senor de Luz te devuelve a la vida"
+    local sub = getText("UI_Holdoor_anim_jon_sub")
     local subW = tm:MeasureStringX(UIFont.Medium, sub)
     self:drawText(sub, sw/2 - subW/2, cy + 16,
                   0.85, 0.65, 0.30, alpha * 0.85, UIFont.Medium)
@@ -2178,11 +2183,11 @@ function HoldoorTransferModal:initialise()
     local pad = 14
     local y   = 12
 
-    self.lblTit = ISLabel:new(pad, y, 24, "Enviar Monedas", 0.95, 0.78, 0.30, 1, UIFont.Medium, true)
+    self.lblTit = ISLabel:new(pad, y, 24, getText("UI_Holdoor_tm_titulo"), 0.95, 0.78, 0.30, 1, UIFont.Medium, true)
     self:addChild(self.lblTit); y = y + 30
 
     -- Destinatario
-    self.lblDest = ISLabel:new(pad, y, 16, "Destinatario:", 0.85, 0.75, 0.40, 1, UIFont.Small, true)
+    self.lblDest = ISLabel:new(pad, y, 16, getText("UI_Holdoor_tm_destinatario"), 0.85, 0.75, 0.40, 1, UIFont.Small, true)
     self:addChild(self.lblDest); y = y + 18
 
     local jugadores = HoldoorClient.jugadoresConectados()
@@ -2190,39 +2195,39 @@ function HoldoorTransferModal:initialise()
     self.combo = ISComboBox:new(pad, y, TM_W - pad * 2, 24, self, HoldoorTransferModal.doNothing)
     self:addChild(self.combo)
     if self.sinJugadores then
-        self.combo:addOption("(no hay jugadores conectados)")
+        self.combo:addOption(getText("UI_Holdoor_tm_nojugadores"))
     else
         for _, name in ipairs(jugadores) do self.combo:addOption(name) end
     end
     y = y + 34
 
     -- Tipo
-    self.lblTipo = ISLabel:new(pad, y, 16, "Tipo de moneda:", 0.85, 0.75, 0.40, 1, UIFont.Small, true)
+    self.lblTipo = ISLabel:new(pad, y, 16, getText("UI_Holdoor_tm_tipo"), 0.85, 0.75, 0.40, 1, UIFont.Small, true)
     self:addChild(self.lblTipo); y = y + 18
 
     local btnW = math.floor((TM_W - pad * 2 - 8) / 3)
-    self.btnBronze = ISButton:new(pad, y, btnW, 28, "Bronce", self, HoldoorTransferModal.onSelectTipo)
+    self.btnBronze = ISButton:new(pad, y, btnW, 28, getText("UI_Holdoor_moneda_bronce"), self, HoldoorTransferModal.onSelectTipo)
     self.btnBronze.tipo = "bronze"
     self.btnBronze.backgroundColor = { r=0.45, g=0.25, b=0.05, a=1 }
     self:addChild(self.btnBronze)
 
-    self.btnSilver = ISButton:new(pad + btnW + 4, y, btnW, 28, "Plata", self, HoldoorTransferModal.onSelectTipo)
+    self.btnSilver = ISButton:new(pad + btnW + 4, y, btnW, 28, getText("UI_Holdoor_moneda_plata"), self, HoldoorTransferModal.onSelectTipo)
     self.btnSilver.tipo = "silver"
     self.btnSilver.backgroundColor = { r=0.40, g=0.40, b=0.45, a=1 }
     self:addChild(self.btnSilver)
 
-    self.btnGold = ISButton:new(pad + (btnW + 4) * 2, y, btnW, 28, "Oro", self, HoldoorTransferModal.onSelectTipo)
+    self.btnGold = ISButton:new(pad + (btnW + 4) * 2, y, btnW, 28, getText("UI_Holdoor_moneda_oro"), self, HoldoorTransferModal.onSelectTipo)
     self.btnGold.tipo = "gold"
     self.btnGold.backgroundColor = { r=0.55, g=0.40, b=0.10, a=1 }
     self:addChild(self.btnGold)
     y = y + 38
 
     -- Saldo
-    self.lblSaldo = ISLabel:new(pad, y, 16, "Saldo disponible: --", 0.65, 0.85, 0.50, 1, UIFont.Small, true)
+    self.lblSaldo = ISLabel:new(pad, y, 16, getText("UI_Holdoor_tm_saldo_none"), 0.65, 0.85, 0.50, 1, UIFont.Small, true)
     self:addChild(self.lblSaldo); y = y + 22
 
     -- Cantidad
-    self.lblCant = ISLabel:new(pad, y, 16, "Cantidad:", 0.85, 0.75, 0.40, 1, UIFont.Small, true)
+    self.lblCant = ISLabel:new(pad, y, 16, getText("UI_Holdoor_tm_cantidad"), 0.85, 0.75, 0.40, 1, UIFont.Small, true)
     self:addChild(self.lblCant); y = y + 18
 
     self.txtCantidad = ISTextEntryBox:new("", pad, y, TM_W - pad * 2, 24)
@@ -2234,12 +2239,12 @@ function HoldoorTransferModal:initialise()
 
     -- Acciones
     local bw = math.floor((TM_W - pad * 2 - 8) / 2)
-    self.btnEnviar = ISButton:new(pad, y, bw, 30, "ENVIAR", self, HoldoorTransferModal.onEnviar)
+    self.btnEnviar = ISButton:new(pad, y, bw, 30, getText("UI_Holdoor_tm_enviar"), self, HoldoorTransferModal.onEnviar)
     self.btnEnviar.backgroundColor = COLOR_BOTON_OK
     self.btnEnviar.borderColor     = { r=0.3, g=0.7, b=0.3, a=1 }
     self:addChild(self.btnEnviar)
 
-    self.btnCancel = ISButton:new(pad + bw + 8, y, bw, 30, "Cancelar", self, HoldoorTransferModal.onCancel)
+    self.btnCancel = ISButton:new(pad + bw + 8, y, bw, 30, getText("UI_Holdoor_tm_cancelar"), self, HoldoorTransferModal.onCancel)
     self.btnCancel.backgroundColor = COLOR_BOTON_STOP
     self.btnCancel.borderColor     = { r=0.7, g=0.2, b=0.2, a=1 }
     self:addChild(self.btnCancel)
@@ -2263,10 +2268,10 @@ function HoldoorTransferModal:_refreshTipo()
     if self.lblSaldo and HoldoorClient.getSaldo then
         local bz, sl, gd = HoldoorClient.getSaldo()
         local saldo, lbl
-        if self.tipoSeleccionado == "bronze" then saldo, lbl = bz, "Bronce"
-        elseif self.tipoSeleccionado == "silver" then saldo, lbl = sl, "Plata"
-        else saldo, lbl = gd, "Oro" end
-        self.lblSaldo:setName("Saldo disponible: " .. saldo .. " " .. lbl)
+        if self.tipoSeleccionado == "bronze" then saldo, lbl = bz, getText("UI_Holdoor_moneda_bronce")
+        elseif self.tipoSeleccionado == "silver" then saldo, lbl = sl, getText("UI_Holdoor_moneda_plata")
+        else saldo, lbl = gd, getText("UI_Holdoor_moneda_oro") end
+        self.lblSaldo:setName(getText("UI_Holdoor_tm_saldo_fmt", tostring(saldo), lbl))
     end
 end
 
@@ -2277,17 +2282,17 @@ end
 
 function HoldoorTransferModal:onEnviar()
     if self.sinJugadores then
-        HoldoorClient.chat("[HOLDOOR] No hay otros jugadores conectados.", 1, 0.6, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_tm_chat_nojug"), 1, 0.6, 0.2)
         return
     end
     local target = self.combo:getOptionText(self.combo.selected)
     if not target or target == "" then
-        HoldoorClient.chat("[HOLDOOR] Elegi un destinatario.", 1, 0.4, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_tm_chat_elegir"), 1, 0.4, 0.2)
         return
     end
     local cantidad = tonumber(self.txtCantidad:getInternalText()) or 0
     if cantidad <= 0 then
-        HoldoorClient.chat("[HOLDOOR] Ingresa una cantidad valida.", 1, 0.4, 0.2)
+        HoldoorClient.chat(getText("UI_Holdoor_tm_chat_cantidad"), 1, 0.4, 0.2)
         return
     end
     HoldoorClient.transferir(target, self.tipoSeleccionado, cantidad)

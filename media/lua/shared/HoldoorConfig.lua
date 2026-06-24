@@ -693,6 +693,22 @@ HoldoorConfig.hordasMP = {
     },
 }
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- v0.9.x HORDA SORPRESA — evento random 1x/OLEADA (no por tanda). Si sale, un spike
+-- cae en un momento random (30-70% de la oleada), telegrafiado N seg antes. Reusa el
+-- spawn normal (/createhorde2 via ejecutarHordaAdmin) + HoldoorAnnounce (cartel MP-safe).
+-- Premio en oro al SOBREVIVIR: oro = oroBase + (oroChance? +1) + (oro2Chance? +1).
+--   facil:     30% de +1        normal:   50% de +1
+--   dificil:   +1 fijo + 70% 2º pesadilla: +2 fijos
+-- ════════════════════════════════════════════════════════════════════════════
+HoldoorConfig.hordaSorpresaTelegraphSeg = 6   -- segundos de aviso antes del impacto
+HoldoorConfig.hordaSorpresa = {
+    facil     = { chance = 0.10, puntos = 2, zPorPunto = 5,  oroBase = 0, oroChance = 0.30 },
+    normal    = { chance = 0.15, puntos = 3, zPorPunto = 6,  oroBase = 0, oroChance = 0.50 },
+    dificil   = { chance = 0.20, puntos = 4, zPorPunto = 8,  oroBase = 1, oro2Chance = 0.70 },
+    pesadilla = { chance = 0.30, puntos = 4, zPorPunto = 12, oroBase = 2 },
+}
+
 -- ─── v0.7 #13: TEST FLOW PARALELO con hordas MP ──────────────
 -- Solo aplica si modoId == "test" Y testHordasMP.activo == true.
 -- NO afecta otros modos. NO toca _spawnTick original.

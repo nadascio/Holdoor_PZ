@@ -28,7 +28,7 @@ HoldoorShopCatalog.mdKeyMap = {
     obsidiana = "Holdoor_Obsidiana",
 }
 
--- Etiquetas humanas para mostrar
+-- Etiquetas humanas para mostrar (FALLBACK en español si no hay traduccion)
 HoldoorShopCatalog.labels = {
     bronze    = "Bronce",
     silver    = "Plata",
@@ -39,6 +39,41 @@ HoldoorShopCatalog.labels = {
     valyrio   = "Valyrio",
     obsidiana = "Obsidiana",
 }
+
+-- i18n (2026-06-23): clave getText por moneda/material. Las monedas reusan las claves
+-- del HUD (UI_Holdoor_moneda_*); los materiales tienen claves propias (UI_Holdoor_material_*).
+HoldoorShopCatalog.labelKeys = {
+    bronze    = "UI_Holdoor_moneda_bronce",
+    silver    = "UI_Holdoor_moneda_plata",
+    gold      = "UI_Holdoor_moneda_oro",
+    cuero     = "UI_Holdoor_material_cuero",
+    hierro    = "UI_Holdoor_material_hierro",
+    acero     = "UI_Holdoor_material_acero",
+    valyrio   = "UI_Holdoor_material_valyrio",
+    obsidiana = "UI_Holdoor_material_obsidiana",
+}
+
+-- Nombre traducido de una moneda/material con FALLBACK al label ES si falta la clave.
+function HoldoorShopCatalog.labelOf(k)
+    local key = HoldoorShopCatalog.labelKeys[k]
+    if key then
+        local v = getText(key)
+        if v ~= key then return v end
+    end
+    return HoldoorShopCatalog.labels[k] or k
+end
+
+-- i18n (2026-06-23): traduce un campo del catalogo por id → clave UI_Holdoor_shop_<id>_<campo>,
+-- con FALLBACK al texto hardcodeado en español si la clave no existe (getText devuelve la key).
+-- Permite traducir la tienda INCREMENTALMENTE por categoria sin romper: lo aun no traducido
+-- queda mostrandose en ES (no en clave cruda). El render del cliente llama a este helper.
+function HoldoorShopCatalog.t(id, campo, fallback)
+    if not id then return fallback or "" end
+    local key = "UI_Holdoor_shop_" .. tostring(id) .. "_" .. campo
+    local v = getText(key)
+    if v == key then return fallback or "" end
+    return v
+end
 
 -- Orden de display (en precio y en saldo header)
 HoldoorShopCatalog.monedasOrden    = { "bronze", "silver", "gold" }
@@ -515,12 +550,12 @@ function HoldoorShopCatalog.precioStr(precio)
     local parts = {}
     for _, k in ipairs(HoldoorShopCatalog.monedasOrden) do
         if (precio[k] or 0) > 0 then
-            table.insert(parts, precio[k] .. " " .. HoldoorShopCatalog.labels[k])
+            table.insert(parts, precio[k] .. " " .. HoldoorShopCatalog.labelOf(k))
         end
     end
     for _, k in ipairs(HoldoorShopCatalog.materialesOrden) do
         if (precio[k] or 0) > 0 then
-            table.insert(parts, precio[k] .. " " .. HoldoorShopCatalog.labels[k])
+            table.insert(parts, precio[k] .. " " .. HoldoorShopCatalog.labelOf(k))
         end
     end
     return table.concat(parts, " + ")
@@ -563,6 +598,9 @@ HoldoorShopCatalog.perkDisplayName = {
 
 function HoldoorShopCatalog.perkLabel(slug)
     if not slug then return "?" end
+    local key = "UI_Holdoor_perk_" .. tostring(slug)
+    local v = getText(key)
+    if v ~= key then return v end
     return (HoldoorShopCatalog.perkDisplayName and HoldoorShopCatalog.perkDisplayName[slug]) or slug
 end
 
