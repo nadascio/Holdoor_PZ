@@ -2723,10 +2723,23 @@ function HoldoorClient.instalarComandoChat()
             if lower == "/holdoor" or lower:sub(1, 9) == "/holdoor " then
                 pcall(function() selfTE:setText("") end)
                 pcall(function() ISChat.instance:unfocus() end)
-                if HoldoorClient.esAdmin() then
+                -- Todo /holdoor es admin/host only.
+                if not HoldoorClient.esAdmin() then
+                    HoldoorClient.chat(getText("UI_Holdoor_chat_solo_host_comando"), 1, 0.4, 0.2)
+                    return
+                end
+                -- Subcomando despues de "/holdoor " (vacio = abrir panel).
+                local resto = lower:sub(10):gsub("^%s+", ""):gsub("%s+$", "")
+                if resto == "" then
                     HoldoorUI.abrir()
                 else
-                    HoldoorClient.chat(getText("UI_Holdoor_chat_solo_host_comando"), 1, 0.4, 0.2)
+                    local sub, num = resto:match("^(%a+)%s*(%d*)")
+                    local cant = (num and num ~= "") and tonumber(num) or nil
+                    if sub == "addall" or sub == "addbronce" or sub == "addsilver" or sub == "addgold" then
+                        HoldoorClient.adminDarRecurso(sub, cant)
+                    else
+                        HoldoorClient.chat(getText("UI_Holdoor_cmd_usage"), 1, 0.7, 0.3)
+                    end
                 end
                 return  -- corto el flujo original
             end
@@ -2750,6 +2763,42 @@ function HoldoorClient._tickInstalarChat()
     if _instalarChatTickCount < 60 then return end  -- ~1s a 60fps
     _instalarChatTickCount = 0
     HoldoorClient.instalarComandoChat()
+end
+
+-- v0.10: comandos admin de monedas (reemplazan el viejo boton TEST de la UI).
+-- Solo admin/host (el gate esAdmin esta en el parser del chat). Escribe md +
+-- transmitModData (persiste, gotcha #51). 'sub' = addall|addbronce|addsilver|addgold.
+-- Los individuales aceptan [N] opcional (default 50/10/10); addall = bundle reducido.
+function HoldoorClient.adminDarRecurso(sub, cantidad)
+    local p = getSpecificPlayer(0)
+    if not p then return false end
+    local md = nil
+    pcall(function() md = p:getModData() end)
+    if not md then return false end
+    local function add(key, n) md[key] = (md[key] or 0) + n end
+
+    local detalle = nil
+    if sub == "addall" then
+        add("Holdoor_Bronze", 50); add("Holdoor_Silver", 10); add("Holdoor_Gold", 10)
+        add("Holdoor_Cuero", 10); add("Holdoor_Hierro", 10); add("Holdoor_Acero", 10)
+        add("Holdoor_Valyrio", 10); add("Holdoor_Obsidiana", 10)
+        detalle = getText("UI_Holdoor_cmd_all")
+    elseif sub == "addbronce" then
+        local n = cantidad or 50; add("Holdoor_Bronze", n); detalle = n .. " " .. HoldoorShopCatalog.labelOf("bronze")
+    elseif sub == "addsilver" then
+        local n = cantidad or 10; add("Holdoor_Silver", n); detalle = n .. " " .. HoldoorShopCatalog.labelOf("silver")
+    elseif sub == "addgold" then
+        local n = cantidad or 10; add("Holdoor_Gold", n); detalle = n .. " " .. HoldoorShopCatalog.labelOf("gold")
+    else
+        return false
+    end
+
+    pcall(function() p:transmitModData() end)
+    HoldoorClient.chat(getText("UI_Holdoor_cmd_added", detalle), 0.55, 0.85, 0.45)
+    if HoldoorUI and HoldoorUI.actualizarTodo then pcall(HoldoorUI.actualizarTodo) end
+    if HoldoorShop and HoldoorShop.refrescar then pcall(HoldoorShop.refrescar) end
+    print("[Holdoor] cmd admin: " .. tostring(sub) .. " -> " .. tostring(detalle))
+    return true
 end
 
 function HoldoorClient.init()

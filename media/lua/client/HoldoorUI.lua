@@ -13,7 +13,7 @@ HoldoorUI.overlay   = nil
 
 
 local PANEL_W = 500
-local PANEL_H = 624  -- +18 por lbl HP Trono + +42 por boton TEST + +24 padding inferior (2026-06-16)
+local PANEL_H = 590  -- +18 por lbl HP Trono + +24 padding inferior (boton TEST removido v0.10)
 
 local COLOR_FONDO      = { r=0.05, g=0.04, b=0.03, a=0.97 }
 local COLOR_BORDE      = { r=0.6,  g=0.4,  b=0.1,  a=1    }
@@ -418,14 +418,8 @@ function HoldoorPanel:crearContenido()
     self:addChild(self.btnOnda)
     y = y + bh + 8
 
-    -- BOTON TESTING: da monedas + materiales + items a uno mismo (para probar la tienda)
-    self.btnTest = ISButton:new(pad, y, PANEL_W - pad * 2, 26,
-        getText("UI_Holdoor_panel_btntest"),
-        self, self.onTestDarme)
-    self.btnTest.backgroundColor = { r=0.30, g=0.15, b=0.40, a=1 }
-    self.btnTest.borderColor     = { r=0.7,  g=0.4,  b=0.85, a=1 }
-    self:addChild(self.btnTest)
-    y = y + 26 + 8
+    -- v0.10: el boton TEST de monedas se removio (anti-cheat). Ahora es comando
+    -- admin: /holdoor addbronce|addsilver|addgold [N] | addall (ver HoldoorClient).
 
     self.btnCerrar = ISButton:new(pad, y, PANEL_W - pad * 2, 26, getText("UI_Holdoor_panel_btncerrar"), self, self.onCerrar)
     self.btnCerrar.backgroundColor = { r=0.1, g=0.1, b=0.1, a=1 }
@@ -442,40 +436,8 @@ end
 
 function HoldoorPanel:doNothing(button) end
 
--- [TEST ONLY] Auto-darse monedas + materiales + items para probar la tienda.
--- Solo funciona en SP/host. Es trampa intencional pensada para testeo del balance.
-function HoldoorPanel:onTestDarme()
-    local p
-    pcall(function() p = getSpecificPlayer(0) end)
-    if not p then return end
-
-    local md
-    pcall(function() md = p:getModData() end)
-    if not md then return end
-
-    -- Monedas: 500 bronce, 100 plata, 100 oro
-    md.Holdoor_Bronze = (md.Holdoor_Bronze or 0) + 500
-    md.Holdoor_Silver = (md.Holdoor_Silver or 0) + 100
-    md.Holdoor_Gold   = (md.Holdoor_Gold   or 0) + 100
-
-    -- Materiales: 50 de cada uno
-    md.Holdoor_Cuero     = (md.Holdoor_Cuero     or 0) + 50
-    md.Holdoor_Hierro    = (md.Holdoor_Hierro    or 0) + 50
-    md.Holdoor_Acero     = (md.Holdoor_Acero     or 0) + 50
-    md.Holdoor_Valyrio   = (md.Holdoor_Valyrio   or 0) + 50
-    md.Holdoor_Obsidiana = (md.Holdoor_Obsidiana or 0) + 50
-
-    -- Persistir ModData server-side (gotcha #51)
-    pcall(function() p:transmitModData() end)
-
-    -- NO se agregan items al inventario por pedido del user (solo monedas y materiales)
-    pcall(function() p:setHaloNote("[TEST] +500B +100P +100O +50 c/u de materiales", 200, 220, 255, 360) end)
-    print("[Holdoor] TEST DARME: monedas + materiales entregados a " .. p:getUsername())
-
-    -- Refrescar el HUD/tienda si está abierta
-    if HoldoorShop and HoldoorShop.refrescar then HoldoorShop.refrescar() end
-    if HoldoorUI and HoldoorUI.actualizarTodo then HoldoorUI.actualizarTodo() end
-end
+-- v0.10: onTestDarme (boton TEST de monedas) REMOVIDO (anti-cheat). Reemplazado por
+-- comandos admin /holdoor addbronce|addsilver|addgold [N] | addall (HoldoorClient, gate esAdmin).
 
 function HoldoorPanel:onToggleDefensa(idx, selected)
     -- ISTickBox callback: idx=1, selected=true/false

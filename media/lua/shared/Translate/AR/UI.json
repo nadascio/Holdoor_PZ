@@ -728,5 +728,8 @@
     "UI_Holdoor_venta_subtab_herramientas": "Herramientas",
     "UI_Holdoor_venta_subtab_ropa": "Armadura",
     "UI_Holdoor_venta_subtab_componentes": "Componentes",
-    "UI_Holdoor_venta_subtab_valiosos": "Valiosos"
+    "UI_Holdoor_venta_subtab_valiosos": "Valiosos",
+    "UI_Holdoor_cmd_added": "[HOLDOOR] Agregado: %1",
+    "UI_Holdoor_cmd_all": "+50 Bronce +10 Plata +10 Oro +10 de cada material",
+    "UI_Holdoor_cmd_usage": "[HOLDOOR] Admin: /holdoor addbronce | addsilver | addgold [N] | addall"
 }
